@@ -1,0 +1,38 @@
+{
+  "version": "1.0.0",
+  "tree": [
+    {
+      "key": "01-getting-started",
+      "title": "快速开始",
+      "children": [
+        { "key": "zh-cn/01-getting-started/01-overview", "title": "平台概览" },
+        { "key": "zh-cn/01-getting-started/02-first-task", "title": "创建你的第一个同步任务" }
+      ]
+    },
+    {
+      "key": "02-sync-strategies",
+      "title": "同步策略",
+      "children": [
+        { "key": "zh-cn/02-sync-strategies/01-strategies-overview", "title": "同步策略说明" },
+        { "key": "zh-cn/02-sync-strategies/02-strategy-validation-integrated", "title": "策略与校验联动指南（spec 053+054）" }
+      ]
+    },
+    {
+      "key": "03-validation",
+      "title": "数据校验",
+      "children": [
+        { "key": "zh-cn/03-validation/01-validation-overview", "title": "校验体系总览" },
+        { "key": "zh-cn/03-validation/02-validation-config-guide", "title": "任务级校验配置指南" }
+      ]
+    },
+    {
+      "key": "99-faq",
+      "title": "常见问题",
+      "children": [
+        { "key": "zh-cn/99-faq/01-uuid-pk", "title": "UUID 业务主键如何接入" },
+        { "key": "zh-cn/99-faq/02-troubleshooting-flow", "title": "同步失败排查流程" },
+        { "key": "zh-cn/99-faq/03-daily-ops-checklist", "title": "日常运维检查清单" }
+      ]
+    }
+  ]
+}

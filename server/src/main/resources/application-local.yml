@@ -1,0 +1,23 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    password: ${DB_PASSWORD}
+
+dfetl:
+  security:
+    aes-key: ${AES_KEY}
+  jwt:
+    secret: ${JWT_SECRET}
+
+debug: false
+
+logging:
+  level:
+    root: INFO
+    org.springframework: INFO
+    org.springframework.web: INFO
+    org.springframework.boot.autoconfigure: INFO
+    org.springframework.boot.autoconfigure.logging.ConditionEvaluationReportLogger: "OFF"
+    org.hibernate.orm.deprecation: WARN

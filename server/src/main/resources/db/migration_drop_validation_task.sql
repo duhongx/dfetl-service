@@ -1,0 +1,37 @@
+-- =============================================================================
+-- Spec: validation-table-consolidation · Step 11
+-- Validates: Requirement 9 (AC 1, 2, 3, 4)
+--
+-- 删除已废弃的 validation_task 表。
+-- ⚠️ 不可逆操作！执行前必须先运行 Java 安全校验工具类：
+--    MigrationDropValidationTaskCheck
+--
+-- 安全校验逻辑（由 Java 工具类实现）：
+--   1. 检查 validation_run 中 status IS NOT NULL 的记录数 ≥ validation_task 总数
+--   2. 校验失败时中止执行并输出错误提示
+--   3. 若 validation_task 表已不存在，则静默成功
+--
+-- 前置条件：
+--   - Step 1（migration_add_columns_to_validation_run.sql）已执行
+--   - Step 2（migration_copy_data_from_validation_task.sql）已执行
+--   - 所有代码路径已改造完成（ValidationTask entity 已删除）
+--   - Java 安全校验工具类 MigrationDropValidationTaskCheck 执行通过
+--
+-- 执行方式：
+--   1. 先运行 Java 校验：
+--      java -cp server.jar com.dfygt.dfetl.server.migration.MigrationDropValidationTaskCheck
+--   2. 校验通过后手动执行本 SQL 脚本
+-- =============================================================================
+
+-- 删除 validation_task 表（IF EXISTS 保证幂等性）
+DROP TABLE IF EXISTS validation_task;
+
+-- =============================================================================
+-- 上线后验证 SQL
+-- =============================================================================
+-- -- 确认表已删除
+-- SELECT table_name FROM information_schema.tables
+--  WHERE table_schema = current_schema()
+--    AND table_name = 'validation_task';
+-- -- 预期结果：0 行
+-- =============================================================================

@@ -1,0 +1,242 @@
+server:
+  port: ${SERVER_PORT:8888}
+  # 优雅停机：收到 SIGTERM 后停止接受新请求，等待在途请求完成
+  shutdown: graceful
+  compression:
+    enabled: true
+    mime-types: text/html,text/css,application/javascript,application/json,text/event-stream
+    min-response-size: 1024
+
+debug: false
+
+spring:
+  task:
+    scheduling:
+      # 预检恢复、消息补写、状态对账等定时任务必须相互隔离，避免单个慢查询阻塞全部调度。
+      pool:
+        size: ${DFETL_SCHEDULING_POOL_SIZE:4}
+      thread-name-prefix: scheduling-
+  lifecycle:
+    # 优雅停机每阶段超时。必须 < systemd TimeoutStopSec(30s)，预留 5s 给容器销毁。
+    timeout-per-shutdown-phase: 25s
+  web:
+    resources:
+      cache:
+        period: 365d
+        cachecontrol:
+          max-age: 365d
+          cache-public: true
+      static-locations: classpath:/static/
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.199.42}
+      port: ${REDIS_PORT:6379}
+      # 不在仓库提供非空口令；无鉴权 Redis 可保持空值，生产必须由环境注入。
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 1
+  rabbitmq:
+    host: ${RABBITMQ_HOST:192.168.199.42}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    # 默认传输为 REDIS_STREAM；启用 RABBITMQ 时必须显式注入口令。
+    password: ${RABBITMQ_PASSWORD:}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:192.168.1.10}:${DB_PORT:5432}/${DB_NAME:df_ygt}?sslmode=disable&ssl=false&gssEncMode=disable
+    username: ${DB_USER:df_etl}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      initialization-fail-timeout: -1
+      # 连接最大生存期 30 分钟，避免被 PG 端 idle 杀死后仍被复用
+      max-lifetime: 1800000
+      # 连接验证超时 5s，避免拿到一个已损坏的连接
+      validation-timeout: 5000
+      # 连接泄漏检测：60s 不归还认为是泄漏，便于排查长查询
+      leak-detection-threshold: 60000
+      # 注意：未设置全局 statement_timeout，避免误伤 capture/repair/checksum 等重活
+      # 如需在特定接口上限制，使用 @Transactional(timeout=...) 或调用方 SET LOCAL statement_timeout
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL:none}
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    deserialization:
+      # 收到前端传入未声明字段时直接 400，避免静默漂移
+      fail-on-unknown-properties: true
+
+  quartz:
+    job-store-type: jdbc
+    jdbc:
+      initialize-schema: never
+    properties:
+      org.quartz.scheduler.instanceName: DfetlScheduler
+      org.quartz.scheduler.instanceId: AUTO
+      org.quartz.threadPool.threadCount: 4
+      org.quartz.jobStore.misfireThreshold: 60000
+      org.quartz.jobStore.driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
+
+dfetl:
+  data-precheck:
+    doris:
+      # 预检 STRING 暂存表写入路由目标数据源的现有数据库，不创建独立预检库。
+      raw-retention-days: ${DFETL_PRECHECK_RAW_RETENTION_DAYS:30}
+      issue-retention-days: ${DFETL_PRECHECK_ISSUE_RETENTION_DAYS:90}
+      summary-retention-days: ${DFETL_PRECHECK_SUMMARY_RETENTION_DAYS:90}
+      buckets: ${DFETL_PRECHECK_DORIS_BUCKETS:16}
+      replication-num: ${DFETL_PRECHECK_DORIS_REPLICATION_NUM:1}
+    export:
+      retention-days: ${DFETL_PRECHECK_EXPORT_RETENTION_DAYS:7}
+      local-root: ${DFETL_PRECHECK_EXPORT_LOCAL_ROOT:/var/lib/dfetl/precheck-exports}
+      page-size: ${DFETL_PRECHECK_EXPORT_PAGE_SIZE:5000}
+      rows-per-file: ${DFETL_PRECHECK_EXPORT_ROWS_PER_FILE:500000}
+      outfile-threshold-rows: ${DFETL_PRECHECK_OUTFILE_THRESHOLD_ROWS:1000000}
+      outfile-uri: ${DFETL_PRECHECK_OUTFILE_URI:}
+      # 只有对象存储/HDFS 已配置 7 天生命周期时才允许下推 OUTFILE。
+      outfile-lifecycle-managed: ${DFETL_PRECHECK_OUTFILE_LIFECYCLE_MANAGED:false}
+      outfile-properties-json: '${DFETL_PRECHECK_OUTFILE_PROPERTIES_JSON:{}}'
+      running-timeout-minutes: ${DFETL_PRECHECK_EXPORT_RUNNING_TIMEOUT_MINUTES:120}
+      recovery-delay-ms: ${DFETL_PRECHECK_EXPORT_RECOVERY_DELAY_MS:60000}
+      recovery-initial-delay-ms: ${DFETL_PRECHECK_EXPORT_RECOVERY_INITIAL_DELAY_MS:10000}
+    cleanup:
+      passed-raw-retention-days: ${DFETL_PRECHECK_PASSED_RAW_RETENTION_DAYS:1}
+      error-raw-retention-days: ${DFETL_PRECHECK_ERROR_RAW_RETENTION_DAYS:30}
+      cron: '${DFETL_PRECHECK_CLEANUP_CRON:0 30 3 * * ?}'
+      zone: ${DFETL_PRECHECK_CLEANUP_ZONE:Asia/Shanghai}
+  # Quartz 调度器独立 JDBC 连接池（与业务 spring.datasource.hikari 完全独立，避免高并发抢池）。
+  # 库连接串/账号沿用 spring.datasource，本块仅控制连接池参数。详见 QuartzDataSourceConfig.
+  quartz:
+    datasource:
+      maximum-pool-size: ${QUARTZ_DB_POOL_MAX:10}
+      minimum-idle: ${QUARTZ_DB_POOL_MIN:2}
+      connection-timeout-ms: ${QUARTZ_DB_CONN_TIMEOUT_MS:30000}
+      max-lifetime-ms: ${QUARTZ_DB_MAX_LIFETIME_MS:1800000}
+      idle-timeout-ms: ${QUARTZ_DB_IDLE_TIMEOUT_MS:600000}
+      validation-timeout-ms: ${QUARTZ_DB_VALIDATION_TIMEOUT_MS:5000}
+  shutdown:
+    # 等待在途 ETL 任务完成的最大时长（秒）。
+    # 约束：graceful-timeout-seconds + 5 <= systemd TimeoutStopSec(30)
+    graceful-timeout-seconds: ${DFETL_GRACEFUL_TIMEOUT:25}
+  retry:
+    seatunnel:
+      # submitJob 重试：最大 3 次，初始间隔 1s，倍数 2.0（1s → 2s → 4s）
+      submit-max-attempts: 3
+      submit-initial-interval-ms: 1000
+      submit-multiplier: 2.0
+      # getJobInfo 重试：最大 3 次，初始间隔 500ms
+      query-max-attempts: 3
+      query-initial-interval-ms: 500
+      query-multiplier: 2.0
+      # stopJob 重试：最大 2 次
+      stop-max-attempts: 2
+      stop-initial-interval-ms: 1000
+      stop-multiplier: 2.0
+      # 断路器：连续 5 次失败后 OPEN，冷却 30s
+      circuit-breaker-threshold: 5
+      circuit-breaker-cooldown-ms: 30000
+    redis:
+      # Redis XADD 重试：最大 3 次，固定间隔 500ms
+      max-attempts: 3
+      interval-ms: 500
+    webhook:
+      # Webhook 告警推送重试：最大 3 次，固定间隔 2s
+      max-attempts: 3
+      interval-ms: 2000
+    task-execution:
+      # 任务自动重试：默认不重试（0），间隔 30s
+      default-max-attempts: 0
+      default-interval-seconds: 30
+    rabbitmq:
+      # RabbitMQ 发布重试：最大 3 次，固定间隔 500ms
+      max-attempts: 3
+      interval-ms: 500
+  message-publish:
+    # 传输方式：REDIS_STREAM（默认）或 RABBITMQ
+    transport: ${DFETL_MESSAGE_TRANSPORT:REDIS_STREAM}
+    # topic 前缀（可选，默认空）
+    topic-prefix: ${DFETL_TOPIC_PREFIX:}
+    # Doris 数据可见延迟（毫秒），等待 Stream Load 后 tablet publish
+    doris-visibility-delay-ms: ${DFETL_DORIS_VISIBILITY_DELAY_MS:5000}
+    # RabbitMQ correlated confirm/return 单批等待上限，超时按 SEND_FAILED 收敛
+    rabbit-confirm-timeout-ms: ${DFETL_RABBIT_CONFIRM_TIMEOUT_MS:5000}
+    # 外部 API 全量逐行发布的受控默认/最大限速（条/秒）
+    default-rate-limit: ${DFETL_MESSAGE_DEFAULT_RATE_LIMIT:1000}
+    max-rate-limit: ${DFETL_MESSAGE_MAX_RATE_LIMIT:10000}
+    pending-retry-timeout-seconds: ${DFETL_MESSAGE_PENDING_RETRY_TIMEOUT_SECONDS:1800}
+  executor:
+    seatunnel:
+      enabled: ${SEATUNNEL_ENABLED:true}
+      cluster:
+        rest-base-url: ${SEATUNNEL_REST_URL:http://192.168.1.57:8080/seatunnel}
+      probe:
+        interval-ms: 3000
+        max-poll-minutes: 720
+  security:
+    aes-key: ${AES_KEY}
+    webhook:
+      # 告警 webhook 出站 SSRF 防护。回环/链路本地(含 169.254.169.254 云元数据)/通配/组播
+      # 始终拒绝；以下仅控制私有网段是否放行。
+      # 私有化现场部署 webhook 目标常为内网 IM 网关，默认放行私有网段。
+      allow-private-network: ${DFETL_WEBHOOK_ALLOW_PRIVATE:true}
+      # 主机白名单（精确匹配）。非空时仅放行列表内主机；留空表示按上面的网段规则放行。
+      allowed-hosts: ${DFETL_WEBHOOK_ALLOWED_HOSTS:}
+      # 端口黑名单（命中即拒绝）。留空不限制。
+      blocked-ports: ${DFETL_WEBHOOK_BLOCKED_PORTS:}
+  scheduler:
+    max-concurrent: ${DFETL_MAX_CONCURRENT:4}   # 最大同时执行任务数
+  datasource-pool:
+    # 外部源库/目标 Doris 的运行时连接池（独立于 spring.datasource 元数据库池）。
+    # 收口 checksum/审计/字段回读/count 等热路径散落的 DriverManager.getConnection。
+    enabled: ${DFETL_DS_POOL_ENABLED:true}
+    max-pool-size: ${DFETL_DS_POOL_MAX:4}          # 单个外部库最大连接数
+    min-idle: ${DFETL_DS_POOL_MIN_IDLE:0}          # 空闲不保活，按需创建
+    connection-timeout-ms: 30000
+    idle-timeout-ms: 60000
+    max-lifetime-ms: 600000
+    validation-timeout-ms: 5000
+    max-pools: ${DFETL_DS_POOL_MAX_POOLS:32}       # 最多保留的池数量（LRU 淘汰）
+  checksum:
+    default-algo: ${DFETL_CHECKSUM_ALGO:MD5}    # MD5 | XXHASH64
+    chunk-size-rows: 100000                     # 单分片预期行数
+    chunk-page-size: 5000                       # Java 回退路径分页大小
+    parallelism: 4                              # 分片并发度（v1 仍顺序，预留）
+    drill-down-max-rows: 50000                  # 不一致分片下钻行数上限
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-seconds: ${JWT_EXPIRATION:28800}
+    refresh-expiration-seconds: ${JWT_REFRESH_EXPIRATION:604800}
+
+# spec validation-table-consolidation · Step 10：双写兼容期已结束，配置已移除。
+# validation_task 表已废弃，所有读写路径统一指向 validation_run。
+
+logging:
+  level:
+    com.dfygt.dfetl.server: INFO
+    org.springframework.boot.autoconfigure.logging.ConditionEvaluationReportLogger: "OFF"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+  health:
+    db:
+      enabled: false   # 避免 health 探测打扰 PG 元数据库
