@@ -49,6 +49,8 @@
 
 因此，新 V1 必须从最终业务合同和代码模型重新构建，而不是把历史 SQL 排序后执行。
 
+62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；阶段 1 冻结的 P0 关系模型、状态、约束、索引和现有代码差异见 `spec/TARGET_METADATA_MODEL.md`。目标模型 Review 完成前不得创建或固化 `V1__baseline.sql`。
+
 ## 4. Flyway 目录和命名
 
 运行时只扫描：
