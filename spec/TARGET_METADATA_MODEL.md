@@ -14,7 +14,7 @@
 3. 标准数据集只允许人工同步。只有规范化定义内容及 `definition_hash` 变化时才追加不可变版本；未变化只更新同步时间和结果。
 4. 采集链路身份与不可变版本分离。链路版本只在源对象、目标 Doris、数据集版本、覆盖机构或字段解析快照等定义内容变化时生成；重复核对不生成版本。
 5. 同步任务身份与任务版本分离。未删除任务按机构和数据集唯一；任务没有重复的生命周期状态，当前版本由 `current_version_id` 唯一确定。
-6. 正式水位属于长期任务运行态。恢复检查点直接采用最后一个确认提交且具有真实游标的载入批次，不另建重复的检查点表；没有业务主键时不生成假检查点。
+6. 正式水位属于长期任务运行态。载入批次只记录单次执行进度和 Doris 最终状态，不提供跨执行断点续跑；普通失败后由人工从第 1 批重新采集。
 7. 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW。PostgreSQL 不登记 Doris 物理表或结构版本，直接读取 Doris 实际元数据并与数据集版本生成的期望合同核对。
 8. 预检每次扫描整条采集链路，只持久化运行记录和字段级/组合规则级汇总，不保存问题行、业务键明细、样例、严重级别或修复状态。
 9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
@@ -188,19 +188,17 @@ WHERE deleted_at IS NULL;
 
 以下字段不进入目标任务版本：`CUSTOM_SQL`、任意 static/per-table filter、`ID_RANGE`、`split_pk` 作为业务键、自动重试参数、可调 Reader 并发、脏数据分流、STRICT/PERMISSIVE 切换。
 
-## 8. 执行、载入批次、恢复位置和正式水位
+## 8. 执行、载入批次、重新采集和正式水位
 
 ### 8.1 执行模型
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `retry_of_execution_id`, `recollect_of_execution_id`, `resume_from_batch_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。重试以 `resume_from_batch_id` 明确引用历史成功批次；补采为独立运行，窗口显式记录且不改正式水位。 |
-| `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, `committed_at`, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。最后一个确认提交且有真实游标的批次就是恢复位置。 |
+| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `recollect_of_execution_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。普通失败后的人工恢复使用 `RECOLLECT` 新建执行，可关联原失败执行，但始终从任务数据范围起点读取；补采为独立运行，窗口显式记录且不改正式水位。 |
+| `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, `committed_at`, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。批次记录只描述当前执行的进度和 Doris 最终状态，不作为后续执行的恢复位置。 |
 | `task_watermark` | `task_id`, `watermark_value`, `last_success_execution_id`, `revision`, `updated_at` | 每个未删除任务一行；只在完整执行和阻断校验通过后推进。 |
 | `task_watermark_history` | `id`, `task_id`, `execution_id`, `before_value`, `after_value`, `reason`, `operator`, `created_at` | `execution_id` 唯一；重置水位需要权限、确认和审计。补采不插入推进记录。 |
-| `execution_reconciliation` | `id`, `execution_id`, `load_batch_id`, probe result, final decision, operator/note/timestamps | Doris 返回不明确时记录 Label/事务探测和人工处置；未明确前禁止盲目重发。 |
-
-不建立 `execution_checkpoint` 表。单 Reader、单个在途批次下，`load_batch` 已完整记录提交顺序、游标和 Doris 最终状态；重复保存指针和游标反而可能不一致。有真实联合业务主键的任务从最后成功批次继续；无业务主键任务没有稳定游标，失败后清理当前机构范围并重新全量执行。
+不建立 `execution_checkpoint` 或 `execution_reconciliation` 表，也不在 `sync_execution` 保存 `retry_of_execution_id`、`resume_from_batch_id`。`load_batch` 已完整记录本次执行的提交顺序、游标、Label 探测和 Doris 最终状态；失败后只允许人工“重新采集”，新执行从第 1 批重新读取。有真实联合业务主键时使用 UPSERT 收敛；无业务主键时清理当前机构范围后重新全量执行。
 
 ### 8.2 状态和并发约束
 
@@ -211,20 +209,20 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
                          |            |
                          +----------> FAILED
                          +----------> CANCELLED
-                         +----------> RECONCILE_REQUIRED
 ```
 
-- 失败、取消和待核对均不推进正式水位并阻断调度。
+- 失败和取消均不推进正式水位并阻断调度。
 - 不存在 `SUCCESS_WITH_DIRTY_ROWS`，因为正式 ODS 不接受跳过问题行。
-- 人工重试新建执行并指向 `retry_of_execution_id`；有真实游标时引用原执行最后确认提交的 `load_batch`，不在原行上增加 `retry_count` 自动循环。
+- 人工重新采集新建 `RECOLLECT` 执行并可指向 `recollect_of_execution_id`；始终从任务数据范围起点和第 1 批读取，不在原行增加自动重试循环。
+- Doris 响应不明确时自动探测原 Label，结果直接回写 `load_batch` 并记录审计；新执行启动前再次核对旧 Label，避免旧批次仍可能提交时盲目重放。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
-- 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING','RECONCILE_REQUIRED')`。
+- 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')`。
 - 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次，失败后保留阻断而不自动启动。
 - `load_batch(execution_id, status, batch_no)`、`sync_execution(task_id, created_at DESC)` 和所有父外键列建立查询索引。
 
 ### 8.3 原子完成边界
 
-一次普通/追赶/人工重试执行完成时使用一个短 PostgreSQL 事务：
+一次普通、追赶或人工重新采集执行完成时使用一个短 PostgreSQL 事务：
 
 1. 锁定 `sync_execution` 和 `task_watermark`；
 2. 确认全部载入批次已提交且最终阻断 `validation_run` 通过；
@@ -323,8 +321,8 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 数据集 | `DfetlDataset`/`DfetlField` 只代表当前行，历史脚本一度删除 definition version。 | 数据集身份、不可变版本、字段版本和合同版本；仅定义 Hash 变化才生成版本。 | 同步改为人工操作；未变化只记录同步时间和结果，任务继续引用明确版本。 |
 | 任务 | `SyncTask` 是大型扁平实体，混放定义、调度、运行状态、水位、JSON 映射、过滤、重试和已废止模式。 | `sync_task` 身份 + `sync_task_version` + governance override + runtime state；不保存生命周期状态或版本状态。 | 新版本插入与当前指针切换原子完成；移除 `CUSTOM_SQL/ID_RANGE/自动重试/问题分流`。 |
 | 执行 | `TaskExecution` 不引用任务版本，快照仅覆盖少数字段，并含 `SUCCESS_WITH_DIRTY_ROWS`。 | 执行引用不可变任务版本并保存最终有效配置；移除分流成功状态。 | 执行组装器和监控 DTO 按版本/执行快照读取。 |
-| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 正式水位进入 `task_watermark`/history；恢复位置由最后成功 `load_batch` 表达。 | `WatermarkService` 改为独立事务边界；不建立重复的 `execution_checkpoint` 表。 |
-| 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；无业务键时不生成恢复游标，失败后重新全量。 |
+| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 正式水位进入 `task_watermark`/history；`load_batch` 只记录单次执行进度，不承担跨执行恢复。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint`，失败后从头重新采集。 |
+| 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 run/segment；执行 ID 为正式关系。 | 合并策略解析器和运行查询；去除 legacy identity。 |
 | 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + outbox/attempt。 | 完成事务插入事件，独立发布器消费；旧 recovery/log 扫描退出。 |
@@ -334,11 +332,11 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 当前状态/默认 | 问题 | 目标 |
 | --- | --- | --- |
-| `SUCCESS_WITH_DIRTY_ROWS` | 表示跳过/分流问题数据后仍成功。 | 删除；正式执行要么完整通过，要么失败/取消/待核对。 |
+| `SUCCESS_WITH_DIRTY_ROWS` | 表示跳过/分流问题数据后仍成功。 | 删除；正式执行要么完整通过，要么失败或取消。 |
 | route `PENDING/PASSED/FAILED` + `enabled` | 把结构检查当准入门禁。 | 结构诊断进入预检；链路只有配置生命周期，不阻断任务创建。 |
 | precheck 一个 `status` | 无法区分技术失败与检查出问题。 | `execution_status` 与 `result_status` 分开。 |
 | validation 默认 lookback 24/自动复检 | 扩大本批范围且会自动重复执行。 | 默认 lookback 0，自动复检关闭，人工复检新建运行。 |
-| task auto retry/retry count | 与人工处理基线冲突。 | 执行失败阻断；人工重试新建关联执行。 |
+| task auto retry/retry count/checkpoint resume | 增加恢复状态和分支复杂度，业务收益有限。 | 删除；失败后只允许人工重新采集，新执行从第 1 批读取。 |
 | task lifecycle/version status | 与执行结果、调度开关和当前版本指针重复。 | 删除；分别由执行记录、调度控制字段和 `current_version_id` 表达。 |
 | `ID_RANGE`/`CUSTOM_WINDOW` 混入普通任务 | 与标准医疗时间增量和补采边界混淆。 | 标准增量只用 `XIUGAISJ`；历史范围使用独立 `BACKFILL` 执行。 |
 
@@ -365,7 +363,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `InstitutionDatasetRouteResolver` 检查 route.institution 与 datasource.institution | 通过复合外键保证覆盖关系，resolver 读取明确 route version 和 resolution snapshot。 |
 | `SyncTaskApplicationService.findExistingTaskId` 扫机构任务再比 dataset | 直接按部分唯一键查询；创建依赖唯一冲突处理，不先扫列表。 |
 | `SyncTaskRepository` 含修复空机构和数据源归属的 JPQL | 新库无历史脏数据修复查询；配置迁移由 `DB-002` 工具显式完成。 |
-| `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；恢复位置按 `sync_execution` 和最后确认提交的 `load_batch` 查询。 |
+| `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；只在完整执行和校验成功后推进，失败后的重新采集从任务范围起点开始。 |
 | 预检 issue/dirty 行分页 | 按 run/institution/field/rule 查询 summary；不再提供行级索引。 |
 | publish log/recovery 定时扫描 | outbox 使用 `(status, available_at)` 索引和 `SKIP LOCKED`。 |
 
@@ -377,7 +375,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `dfetl_dataset`, `dfetl_field` | 由 `standard_dataset*` 版本模型替代。 |
 | `institution_dataset_route` | 由 `collection_route*` 和覆盖/解析快照替代。 |
 | `sync_task`, `task_view_config` | 由任务身份/版本/治理覆盖替代；字段映射不再可编辑。 |
-| `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；恢复检查点是成功载入批次，不另建表。 |
+| `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；不保留跨执行恢复检查点，失败后从头重新采集。 |
 | `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
 | `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 validation run/segment/summary。 |
 | message policy/config/log/send record | 合并为策略、执行快照、outbox 和 attempt。 |

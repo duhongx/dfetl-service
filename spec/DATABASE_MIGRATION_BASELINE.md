@@ -86,7 +86,7 @@ V1 不得包含：
 - 老库中的运行数据、执行历史、Quartz 状态、预检行级明细或消息发送历史；
 - 已废止的 `validation_task`、`dfetl_task`、`task_group`、行级问题和问题分流模型；
 - 单医共体部署下不需要的 `medical_community`、`community_id` 和机构层级 `parent_id`；
-- PostgreSQL Doris 物理表登记/结构版本表、重复的 `execution_checkpoint` 表，以及预检/校验异步导出任务表；
+- PostgreSQL Doris 物理表登记/结构版本表、`execution_checkpoint`、`execution_reconciliation`、独立重试关联/恢复字段，以及预检/校验异步导出任务表；
 - 与执行结果或当前版本指针重复的任务生命周期状态和任务版本状态；
 - 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；
