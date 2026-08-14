@@ -97,9 +97,11 @@ erDiagram
 | --- | --- |
 | `dataset_sync_policy` | 数据集级调度、fetch size、时间上界延迟、回看窗口等默认值；含 `revision` 和乐观锁。Reader 并发不提供可编辑字段，执行合同固定为 1。 |
 | `dataset_validation_policy` | 数据集级 `ROW_COUNT`/`ROW_COUNT_CHECKSUM`、容差、是否同步后阻断校验等覆盖；默认 `ROW_COUNT`、容差 0、`lookback_hours=0`、自动复检关闭。 |
-| `dataset_message_policy` | 数据集级 RabbitMQ 消息启用、来源系统、租户、routing key、topic、messageKey 模板、首次全量模式、限速和分页大小。默认关闭；不保存 transport，不提供任务级覆盖。 |
+| `dataset_message_policy` | 数据集级 RabbitMQ 消息启用、来源系统、租户、routing key、topic、messageKey 模板、首次全量模式、限速和分页大小。默认关闭；不保存 transport、Exchange 或连接参数，不提供任务级覆盖。三个允许启用的数据集固定使用 `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX`，topic 默认与 routing key 相同。 |
 
 策略表是可变治理配置而不是执行历史。同步和校验按各自层级生成有效策略。消息只读取 `dataset_message_policy`，每次执行把数据集消息策略版本和值固化到执行及 Outbox 指令快照，防止运行中配置漂移，不复制为任务级消息配置。
+
+RabbitMQ 连接参数由部署配置提供。发布器按已确认契约使用持久化 Topic Exchange `YL`、持久化消息和 Publisher Confirm/Return，幂等声明 Exchange；数据库不保存可编辑 `exchange_name`。
 
 ### 5.3 Doris 实际表与固定命名
 

@@ -430,6 +430,7 @@ DFETL 是面向医共体的数据采集与传输平台，负责把 PostgreSQL、
 
 - 当前只有 3 个数据集启用消息，其他数据集默认关闭。
 - P0 只保留 RabbitMQ，删除 Redis Stream 发布器、传输枚举和切换配置；消息策略不再保存 `transport` 字段。
+- RabbitMQ 地址、端口、账号、密码和连接参数属于部署级全局配置，不进入数据集策略或数据库业务表。P0 沿用旧代码的外部契约：使用持久化 Topic Exchange `YL`，三个数据集分别使用完整 Routing Key `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX`，`topic` 默认与完整 Routing Key 相同并写入消息体；消息持久化并启用 Publisher Confirm 和 Return。Exchange 由平台幂等声明。
 - 消息配置只允许在数据集级维护，不设置任务级启用、禁用或参数覆盖。旧代码虽然把数据集策略复制到每个任务的 `message_publish_config`，但任务间的消息业务参数没有必要不同，新模型不保留这份重复配置。
 - 不同任务只提供机构编码、Doris 目标对象、执行批次或水位范围等运行上下文；这些值来自任务版本和执行记录并进入 Outbox 发布指令快照，不属于消息策略。
 - 关闭的消息配置不在列表中制造噪音，但数据集详情必须保留重新开启入口。

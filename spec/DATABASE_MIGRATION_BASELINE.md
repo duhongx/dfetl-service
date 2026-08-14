@@ -100,6 +100,7 @@ V1 不得包含：
 - Redis Stream 专用配置、transport 选择字段及运行时传输切换结构；P0 只使用 RabbitMQ；
 - 从数据集消息策略重复复制出来的任务级 `message_publish_config` 或任务级消息覆盖字段；任务差异通过执行和 Outbox 指令快照表达；
 - 一次执行只有一条发布指令时固定且无区分价值的 `message_outbox.event_type`；直接以 `execution_id` 唯一；
+- RabbitMQ 地址、凭据、连接参数或固定 Exchange `YL` 的数据库配置字段；连接信息属于部署配置，Exchange 由平台按固定契约幂等声明；
 - 与执行结果或当前版本指针重复的任务生命周期状态、任务版本状态，以及自动失败阻断字段 `schedule_blocked/block_reason` 和待追赶字段 `catch_up_pending`；
 - 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；

@@ -665,6 +665,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 
 - [ ] 只实现 RabbitMQ，删除 Redis Stream 发布器、传输枚举、切换配置和相关依赖路径；消息策略不保存 transport。
 - [ ] 消息配置只保存在数据集级；不建立任务级消息配置或覆盖，执行和 Outbox 指令只快照当次使用的数据集策略及任务运行上下文。
+- [ ] RabbitMQ 连接参数使用部署级全局配置；持久化 Topic Exchange 固定为 `YL` 并由平台幂等声明，三个数据集使用 `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX` Routing Key，消息持久化并启用 Confirm/Return；数据库不保存 Exchange 或连接参数。
 - [ ] 只有配置启用的数据集发布消息。
 - [ ] 首次全量发布模式、限速、分页大小正确执行。
 - [ ] 消息投递失败支持重试、死信和日志定位。
@@ -804,6 +805,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认 P0 删除 Redis Stream，只保留 RabbitMQ；同时删除 transport 选择字段和运行时切换分支。
 - [x] 2026-08-14 已确认消息只允许数据集级配置；三个启用消息的数据集分别维护一份策略，任务只保存执行快照，不允许消息参数覆盖。
 - [x] 2026-08-14 对照旧发布运行确认删除 `message_outbox.event_type`：旧代码也是一次执行/批次对应一次发布运行，新模型直接以 `execution_id` 唯一。
+- [x] 2026-08-14 已确认沿用旧 RabbitMQ 外部契约：全局连接配置、持久化 Topic Exchange `YL`、三个完整 Routing Key、topic 默认同 Routing Key、持久化消息及 Publisher Confirm/Return。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1147,6 +1149,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 Redis Stream 传输路径和消息 transport 字段，只保留 RabbitMQ。
 - 删除按任务复制的 `MessagePublishConfig` 和任务级消息覆盖；消息策略按数据集唯一，任务/执行只提供机构、Doris 目标、批次和窗口等运行上下文并保存当次快照。
 - 删除 `message_outbox.event_type`，对 `execution_id` 建唯一约束，一次执行只创建一条发布指令。
+- RabbitMQ Exchange 固定为 `YL` 并由平台幂等声明，连接参数留在部署配置；数据库仅保存数据集级 Routing Key、Topic 和消息业务参数。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。
