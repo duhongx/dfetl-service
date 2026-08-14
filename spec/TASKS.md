@@ -818,7 +818,9 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
-- [ ] 完成目标模型 Review；通过后进入阶段 2。
+- [ ] Review P0 支撑对象的实际范围：本地账号/角色/审计、系统设置、告警、外部 API、Quartz JobStore；只对业务范围存在选择的内容逐项向用户确认。
+- [ ] 在业务范围确认后完成物理表字典复核：字段类型、长度、空值、默认值、枚举 CHECK、外键删除行为、唯一约束和索引；能由业务基线与代码直接判断的技术细节不重复询问。
+- [ ] 对 `PRODUCT_AND_BUSINESS_DECISIONS.md`、目标模型、SQL 审计和任务清单进行最终一致性检查，完成目标模型 Review 签字；通过后进入阶段 2。
 
 Review 通过后的执行顺序：
 
