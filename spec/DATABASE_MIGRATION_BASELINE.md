@@ -90,6 +90,7 @@ V1 不得包含：
 - 与成功执行窗口和通用审计重复的 `task_watermark_history` 表；
 - 仅服务内部计算分批且不需要恢复的 `validation_run_segment` 表；
 - 可由触发类型、同步执行和通用审计替代的 `validation_run.recheck_of_run_id` 自关联；
+- 可内嵌在 `validation_run.difference_summary JSONB` 的独立 `validation_difference_summary` 表；
 - 与执行结果或当前版本指针重复的任务生命周期状态、任务版本状态，以及自动失败阻断字段 `schedule_blocked/block_reason` 和待追赶字段 `catch_up_pending`；
 - 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；

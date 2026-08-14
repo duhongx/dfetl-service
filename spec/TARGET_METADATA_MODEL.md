@@ -276,16 +276,15 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `validation_run` | `id`, `run_uuid`, optional `execution_id`, `task_id`, `task_version_id`, `validation_type`, `trigger_type`, `status`, `result`, policy/range/protocol snapshot, source/target counts and checksum, error, timestamps | 同步门禁、人工复检、全量治理和删除对账均新建独立运行。只对 `trigger_type=SYNC_GATE` 建立 `(execution_id, validation_type)` 部分唯一约束；同一执行允许多次人工重新校验。 |
-| `validation_difference_summary` | `id`, `validation_run_id`, `difference_type`, optional field code, affected rows, metrics JSON | 只为页面和汇总导出提供聚合，不保存或导出逐行业务差异。 |
+| `validation_run` | `id`, `run_uuid`, optional `execution_id`, `task_id`, `task_version_id`, `validation_type`, `trigger_type`, `status`, `result`, policy/range/protocol snapshot, source/target counts and checksum, `difference_summary` JSONB, error, timestamps | 同步门禁、人工复检、全量治理和删除对账均新建独立运行。只对 `trigger_type=SYNC_GATE` 建立 `(execution_id, validation_type)` 部分唯一约束；同一执行允许多次人工重新校验。差异汇总是小型 JSON 数组，不保存逐行业务差异。 |
 
 `validation_run.status`：`PENDING/RUNNING/COMPLETED/FAILED/CANCELLED`；`result`：`PASS/MISMATCH`。校验异常是 `FAILED`，数据不一致是 `COMPLETED + MISMATCH`，两者都阻止同步执行成功。
 
-校验实现内部可以分批读取和计算，但只把整次源/目标行数、Checksum、最终状态和差异汇总写入 PostgreSQL；不建立 `validation_run_segment`，失败后整次重新校验，不做分段恢复。
+校验实现内部可以分批读取和计算，但只把整次源/目标行数、Checksum、最终状态和 `difference_summary` 写入 `validation_run`；不建立 `validation_run_segment` 或 `validation_difference_summary`，失败后整次重新校验，不做分段恢复。
 
 人工重新校验使用 `trigger_type=MANUAL_RECHECK`，可继续关联原 `sync_execution` 以复用相同快照和数据范围，但不保存 `recheck_of_run_id` 或其他 `validation_run` 自关联；发起入口和操作者写入 `audit_log`。
 
-索引：`validation_run(task_id, created_at DESC)`、`validation_run(execution_id)`、`validation_run(status, created_at)`、`validation_difference_summary(validation_run_id, difference_type)`。
+索引：`validation_run(task_id, created_at DESC)`、`validation_run(execution_id)`、`validation_run(status, created_at)`。不为只在单次运行详情中整体读取的小型 `difference_summary` 建 GIN 或表达式索引。
 
 校验结果只直接导出汇总 XLSX/CSV；不建立异步导出任务表或临时文件生命周期。
 
@@ -329,7 +328,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 当前正式水位进入 `task_watermark`；成功执行窗口和通用审计分别承担正常推进、人工重置追溯。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint` 或 `task_watermark_history`，失败后从头重新采集。 |
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
-| 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 run/summary；执行 ID 为正式关系。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段。 |
+| 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
 | 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + outbox/attempt。 | 完成事务插入事件，独立发布器消费；旧 recovery/log 扫描退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
 
@@ -382,7 +381,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `sync_task`, `task_view_config` | 由任务身份/版本/治理覆盖替代；字段映射不再可编辑。 |
 | `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；不保留跨执行恢复检查点，失败后从头重新采集。 |
 | `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
-| `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 validation run/summary；内部计算分批不单独持久化。 |
+| `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 `validation_run`；内部计算分批和小型差异汇总不拆成独立表。 |
 | message policy/config/log/send record | 合并为策略、执行快照、outbox 和 attempt。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |
 

@@ -481,7 +481,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] 校验结果记录实际使用的方法、字段范围、数据范围和数据版本。
 - [ ] 校验使用执行快照中当前机构和本批实际同步范围：首次全量及两类 `FULL_ONLY` 使用当前机构全量，日常增量使用当前机构本批真实增量窗口，不额外回看历史窗口。
 - [ ] 与同步批次绑定的阻断型校验失败时，将当前执行批次标记为失败，水位保留为上一次成功提交值。
-- [ ] 校验内部可分批计算，但 PostgreSQL 只保存整次 `validation_run` 的最终结果和差异汇总；不建立 `validation_run_segment`，失败后整次重新校验。
+- [ ] 校验内部可分批计算，但 PostgreSQL 只在 `validation_run` 保存整次最终结果和 `difference_summary JSONB`；不建立 `validation_run_segment` 或 `validation_difference_summary`，失败后整次重新校验。
 - [ ] 失败后重新采集使用新执行启动时固定的数据范围和上界，从任务范围起点完整处理；成功前不推进正式水位。
 - [ ] 不允许用行数相等替代 Checksum 成功。
 
@@ -513,7 +513,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] “运行校验”执行当前选择的校验类型。
 - [ ] 支持全量、修改窗口和删除校验。
 - [ ] 支持历史刷新、重新校验和与上次对比。
-- [ ] 支持差异汇总筛选、分页和导出，不提供逐行差异明细。
+- [ ] 在单次校验详情中展开、筛选和直接导出 `difference_summary` 小型汇总数组，不提供独立差异记录分页或逐行差异明细。
 - [ ] 运行按钮必须绑定当前任务，不能复用上一次选中任务。
 - [ ] 修复、删除等破坏性操作必须先 dry-run，再确认执行。
 
@@ -786,6 +786,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认删除 `sync_execution.recollect_of_execution_id`：重新采集只由操作类型标识，操作来源和原因进入通用审计日志。
 - [x] 2026-08-14 已确认删除 `validation_run_segment`：校验可在内部按批计算，但只持久化整次运行结果，失败后整次重新校验。
 - [x] 2026-08-14 已确认删除 `validation_run.recheck_of_run_id`：人工重新校验使用触发类型标识，可关联原同步执行但不关联历史校验运行。
+- [x] 2026-08-14 已确认删除 `validation_difference_summary`：小型差异汇总数组直接进入 `validation_run.difference_summary JSONB`，页面展开并直接导出。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -877,7 +878,7 @@ Review 通过后的执行顺序：
 - Checksum 覆盖当前版本医共体数据集定义中的全部字段。
 - DFETL 为内部维护而新增的 `_etl_*` 字段不属于医共体数据集，不参与源目标 Checksum。
 - 源端与 Doris 端必须使用相同字段顺序和统一的空值、日期时间、数值精度及字符规范，避免不同数据库表示差异造成误报。
-- Checksum 可以在执行内部按稳定规则分批计算，但只持久化整次最终结果和差异汇总；不得降级为只比较行数，也不提供分段恢复。
+- Checksum 可以在执行内部按稳定规则分批计算，但只在 `validation_run` 持久化整次最终结果和小型差异汇总 JSON；不得降级为只比较行数，也不提供分段恢复。
 - 与同步批次绑定的阻断校验失败时，该执行批次直接判定为失败。
 - 失败批次不提交新水位；任务保存的水位仍表示“上一次成功完成并通过校验的位置”。人工重新采集新建执行，并从任务数据范围起点完整读取。
 - 独立的定期全量治理校验失败时，记录校验失败和告警，但不追溯修改已经成功提交的历史同步水位。
@@ -1117,6 +1118,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `sync_execution.recollect_of_execution_id`；执行表不建立重新采集自关联。
 - 删除 `validation_run_segment`；校验内部可分批计算，但不持久化分段状态或提供分段恢复。
 - 删除 `validation_run.recheck_of_run_id`；人工重新校验是独立运行，同一同步执行允许产生多次人工重新校验记录。
+- 删除 `validation_difference_summary`；小型差异汇总直接保存到 `validation_run.difference_summary JSONB`。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。
