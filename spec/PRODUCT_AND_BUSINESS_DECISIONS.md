@@ -441,6 +441,7 @@ DFETL 是面向医共体的数据采集与传输平台，负责把 PostgreSQL、
 - Outbox 状态只使用 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置 `FAILED`：临时失败回到 `PENDING` 并设置下次重试时间，达到最大次数进入 `DEAD_LETTER`，人工重发再回到 `PENDING`。
 - Outbox 只使用 `available_at` 表示下一次允许投递的时间，不再设置语义重复的 `next_attempt_at`：首次发送写入首次可投递时间，临时失败覆盖为下次重试时间，人工重发覆盖为当前时间。
 - 每次同步执行只创建一条 Outbox 发布指令，保存执行、数据范围、Doris 目标对象和消息路由等小型快照，不保存本次业务数据明细。发布器按执行批次或水位范围从 Doris 分页读取并逐条发送；中途失败后重新发布整段数据，不建立分页进度表、分页明细表或逐条消息表。
+- Outbox 不保存固定且无区分价值的 `event_type`，直接以 `execution_id` 唯一保证一次同步执行最多创建一条发布指令；全量发布行为由指令中的数据范围和首次全量模式表达。
 - Outbox 不保存 `provider_message_id`：一条发布指令对应多条 RabbitMQ 业务消息，确认标识均为逐条产生，单个字段不能代表整段发布；逐条标识只进入应用日志。
 - 发布器抢占事件时将 `PENDING` 改为 `PUBLISHING` 并更新 `last_attempt_at`。进程异常退出后，由恢复扫描把超过全局超时时间的 `PUBLISHING` 增加尝试次数并改回 `PENDING`，达到最大次数则进入 `DEAD_LETTER`；不增加租约表、工作节点字段或其他恢复状态。该恢复只处理消息发布，不修改同步结果和任务调度。
 - 配置字段沿用原代码中的来源系统、租户 ID、Routing Key、Topic、messageKey 模板、首次全量模式、限速和分页大小。

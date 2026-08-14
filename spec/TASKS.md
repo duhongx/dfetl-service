@@ -672,6 +672,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] `message_outbox.status` 只允许 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`；临时失败回到 `PENDING`，达到最大次数进入死信，人工重发从死信回到 `PENDING`。
 - [ ] `message_outbox` 只保留 `available_at` 作为下一次允许投递时间；首次发送、失败重试和人工重发统一更新该字段，不设置 `next_attempt_at`，发布扫描使用 `(status, available_at)` 索引。
 - [ ] 每次同步执行只创建一条 Outbox 发布指令；指令只快照执行范围、Doris 目标对象和消息路由，不保存业务数据。发布器从 Doris 分页发送，中途失败后整段重发，以 `event_id + 业务主键/messageKey` 生成稳定消息 ID，不建立分页进度、分页明细或逐条消息表。
+- [ ] `message_outbox` 不保存 `event_type`，直接对 `execution_id` 建唯一约束；一次执行的全量/增量行为由发布指令快照表达。
 - [ ] `message_outbox` 不保存只能代表单条 RabbitMQ 消息的 `provider_message_id`；逐条确认标识写应用日志。
 - [ ] 发布器抢占时原子执行 `PENDING → PUBLISHING` 并更新 `last_attempt_at`；恢复扫描把超时的 `PUBLISHING` 增加尝试次数后恢复为 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约表或工作节点字段，也不联动同步结果和任务调度。
 - [ ] 前端关闭消息后仍能重新进入配置并启用。
@@ -802,6 +803,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 核实现有消息代码：`DfetlMessagePolicy` 已按数据集唯一，`DatasetTaskSnapshotAssembler` 将其复制为每任务 `MessagePublishConfig`；任务差异实际是机构、Doris 目标、批次和窗口等执行上下文，不是消息业务参数。
 - [x] 2026-08-14 已确认 P0 删除 Redis Stream，只保留 RabbitMQ；同时删除 transport 选择字段和运行时切换分支。
 - [x] 2026-08-14 已确认消息只允许数据集级配置；三个启用消息的数据集分别维护一份策略，任务只保存执行快照，不允许消息参数覆盖。
+- [x] 2026-08-14 对照旧发布运行确认删除 `message_outbox.event_type`：旧代码也是一次执行/批次对应一次发布运行，新模型直接以 `execution_id` 唯一。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1144,6 +1146,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - `PUBLISHING` 异常恢复复用 `last_attempt_at` 和全局超时参数；不建立发布租约表或工作节点归属字段，恢复仅改变 Outbox 状态。
 - 删除 Redis Stream 传输路径和消息 transport 字段，只保留 RabbitMQ。
 - 删除按任务复制的 `MessagePublishConfig` 和任务级消息覆盖；消息策略按数据集唯一，任务/执行只提供机构、Doris 目标、批次和窗口等运行上下文并保存当次快照。
+- 删除 `message_outbox.event_type`，对 `execution_id` 建唯一约束，一次执行只创建一条发布指令。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。

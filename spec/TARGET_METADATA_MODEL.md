@@ -292,7 +292,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, `publish_command` JSONB, routing/topic/message key template snapshot, `status`, `available_at`, `attempt_count`, `last_attempt_at`, `published_at`, `last_error`, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入；每次执行一条发布指令，同一行承担整段发布的重试、死信和人工重发状态。`publish_command` 只保存数据范围、Doris 目标对象等小型指令快照，不保存业务数据明细；`available_at` 统一表示下一次允许投递的时间。 |
+| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `publish_command` JSONB, routing/topic/message key template snapshot, `status`, `available_at`, `attempt_count`, `last_attempt_at`, `published_at`, `last_error`, timestamps | `event_id` 和 `execution_id` 分别唯一。只在执行成功和水位推进事务中插入；每次执行一条发布指令，不保存固定且无区分价值的 `event_type`。同一行承担整段发布的重试、死信和人工重发状态。`publish_command` 只保存数据范围、Doris 目标对象等小型指令快照，不保存业务数据明细；`available_at` 统一表示下一次允许投递的时间。 |
 
 `message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置与可重试 `PENDING` 重复的 `FAILED`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占 `available_at <= 当前时间` 的 `PENDING` 事件，原子改为 `PUBLISHING` 并更新 `last_attempt_at`。首次发送写入首次可投递时间；临时失败增加 `attempt_count`、记录 `last_error`，回到 `PENDING` 并把 `available_at` 覆盖为下次重试时间；达到最大次数进入 `DEAD_LETTER`。恢复扫描把 `last_attempt_at` 超过全局超时时间的 `PUBLISHING` 视为异常中断，增加 `attempt_count` 后改回 `PENDING`，耗尽次数则进入 `DEAD_LETTER`。不增加租约表、工作节点字段或额外恢复状态。发送失败或异常恢复只改变 outbox，不改变 `sync_execution=SUCCEEDED`、正式水位或任务调度。人工重发从 `DEAD_LETTER` 改回 `PENDING`，把 `available_at` 覆盖为当前时间，沿用同一 `event_id`，由下游幂等消费。不设置语义重复的 `next_attempt_at`。
 
@@ -358,7 +358,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 同任务一个活动执行、同链路一个活动预检 | 当前主要靠查询/内存或调度控制，不能抵抗多节点并发。 |
 | 每执行/类型一个门禁校验 | 当前围绕 `task_id + legacy_exec_id` 的兼容唯一键。 |
 | `execution_id + batch_no` 和 Doris Label 唯一 | 当前 Label 幂等身份未成为统一数据库约束。 |
-| `execution_id + event_type`/event UUID 唯一 | 当前消息日志和发送记录不能保证成功事务只产生一个事件。 |
+| `execution_id`/event UUID 分别唯一 | 当前消息日志和发送记录不能保证成功事务只产生一条发布指令；新模型每次执行最多一条，不需要 `event_type`。 |
 | 枚举 CHECK、非负计数、窗口 `lower < upper`、合理策略组合 | 当前大量状态和模式为无约束 String，错误组合可直接持久化。 |
 
 ### 13.4 查询和索引差异
