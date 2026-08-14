@@ -95,8 +95,10 @@ V1 不得包含：
 - 与可重试 `PENDING` 重复的 `message_outbox.status=FAILED` 状态；
 - 与统一“下一次允许投递时间”字段 `message_outbox.available_at` 语义重复的 `next_attempt_at` 字段；
 - 存放批量业务数据的 Outbox payload，以及仅用于恢复消息发布位置的分页进度、分页明细或逐条消息持久化表；新模型每次执行只保存一条小型发布指令，发布数据从 Doris 重新读取；
-- 只能表示单条 RabbitMQ 或 Redis Stream 消息、无法代表整段发布指令的 `message_outbox.provider_message_id` 字段；逐条提供方标识写应用日志；
+- 只能表示单条 RabbitMQ 消息、无法代表整段发布指令的 `message_outbox.provider_message_id` 字段；逐条确认标识写应用日志；
 - 仅用于恢复超时 `PUBLISHING` 的消息发布租约表、工作节点归属字段或额外恢复状态；新模型复用 `last_attempt_at`、全局超时参数和现有状态完成恢复；
+- Redis Stream 专用配置、transport 选择字段及运行时传输切换结构；P0 只使用 RabbitMQ；
+- 从数据集消息策略重复复制出来的任务级 `message_publish_config` 或任务级消息覆盖字段；任务差异通过执行和 Outbox 指令快照表达；
 - 与执行结果或当前版本指针重复的任务生命周期状态、任务版本状态，以及自动失败阻断字段 `schedule_blocked/block_reason` 和待追赶字段 `catch_up_pending`；
 - 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；

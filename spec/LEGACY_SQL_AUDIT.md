@@ -53,7 +53,7 @@
 | 13 | `migration_20260806_data_precheck_staging.sql` | 由新模型替代 | 分阶段状态、导出和 RAW 清理元数据有参考价值，但状态、保留期和问题存储按最终合同重建。 |
 | 14 | `migration_20260806_dataset_task_policy.sql` | 由新模型替代 | 数据集默认策略与任务覆盖仍需要；改为有修订号的治理策略和任务版本执行参数，Reader 并发固定为 1。 |
 | 15 | `migration_20260806_remove_redundant_dataset_metadata.sql` | 废止 | 删除定义版本等字段与标准元数据可追溯要求冲突；新模型必须保留版本和合同哈希。 |
-| 16 | `migration_20260806_split_dataset_policy.sql` | 由新模型替代 | 同步、校验、消息三类策略边界保留，重新定义层级覆盖、修订号和执行时有效快照。 |
+| 16 | `migration_20260806_split_dataset_policy.sql` | 由新模型替代 | 同步、校验、消息三类策略边界保留；消息继续按数据集唯一，但只保留 RabbitMQ，不再复制任务级消息配置，执行时保存数据集策略和任务运行上下文快照。 |
 | 17 | `migration_20260810_remove_source_datasource_group.sql` | 保留 | 最终模型继续不使用数据源组；新 `V1` 直接不创建 `group_id` 和 `task_group`。 |
 | 18 | `migration_20260811_remove_external_api_business_scope.sql` | 保留 | 外部授权不再以旧 `business_scope` 字段表达；保留机构/API 范围的最小授权语义并按新关系解析。 |
 
@@ -85,7 +85,7 @@
 | 40 | `migration_source_datasource_realign.sql` | 仅作历史参考 | 这是对老库数据源归属的停机校正，新系统以实例/数据源/机构多对多关系直接初始化。 |
 | 41 | `migration_spec048_window_checksum.sql` | 由新模型替代 | 固定校验窗口和 checksum 协议版本进入校验运行快照；不再依赖旧 `validation_task`。 |
 | 42 | `migration_spec053_cron_builder.sql` | 由新模型替代 | 可视化调度配置、Cron 和时区进入不可变任务版本；调度运行态与版本定义分离。 |
-| 43 | `migration_spec075_message_publish_mode.sql` | 由新模型替代 | 数据集默认、任务覆盖和禁用三态保留，按治理层级计算有效策略。 |
+| 43 | `migration_spec075_message_publish_mode.sql` | 由新模型替代 | 首次全量消息模式能力保留；消息启用和参数只在数据集级维护，不保留任务覆盖或 Redis Stream transport 分支。 |
 | 44 | `migration_sync_task_batch_size_global_fetch.sql` | 由新模型替代 | JDBC fetch size 进入任务版本；Reader 并发固定为 1，不再与可调并发混合。 |
 | 45 | `migration_sync_task_phase9_16.sql` | 由新模型替代 | 执行参数中仍有效的时间窗口、Doris 模型等进入任务版本；`CUSTOM_SQL`、`ID_RANGE`、任意过滤和分流字段废止。 |
 | 46 | `migration_sync_task_retry_fields.sql` | 废止 | 自动重试、退避和重试上限与“系统不自动重试”冲突；只保留人工重试/重采/补采关系。 |

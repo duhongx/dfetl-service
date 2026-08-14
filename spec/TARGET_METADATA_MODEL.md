@@ -97,9 +97,9 @@ erDiagram
 | --- | --- |
 | `dataset_sync_policy` | 数据集级调度、fetch size、时间上界延迟、回看窗口等默认值；含 `revision` 和乐观锁。Reader 并发不提供可编辑字段，执行合同固定为 1。 |
 | `dataset_validation_policy` | 数据集级 `ROW_COUNT`/`ROW_COUNT_CHECKSUM`、容差、是否同步后阻断校验等覆盖；默认 `ROW_COUNT`、容差 0、`lookback_hours=0`、自动复检关闭。 |
-| `dataset_message_policy` | 数据集级消息启用、来源系统、租户、routing key、topic、messageKey 模板、首次全量模式、限速和分页大小。默认关闭。 |
+| `dataset_message_policy` | 数据集级 RabbitMQ 消息启用、来源系统、租户、routing key、topic、messageKey 模板、首次全量模式、限速和分页大小。默认关闭；不保存 transport，不提供任务级覆盖。 |
 
-策略表是可变治理配置而不是执行历史。每次生成任务版本时保存版本级有效策略；每次执行还保存最终有效策略快照，防止运行中配置漂移。
+策略表是可变治理配置而不是执行历史。同步和校验按各自层级生成有效策略。消息只读取 `dataset_message_policy`，每次执行把数据集消息策略版本和值固化到执行及 Outbox 指令快照，防止运行中配置漂移，不复制为任务级消息配置。
 
 ### 5.3 Doris 实际表与固定命名
 
@@ -159,7 +159,7 @@ WHERE deleted_at IS NULL
 | --- | --- | --- |
 | `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `deleted_at`, audit columns | 只保存长期身份和用户控制的调度开关；不保存生命周期状态、最近执行结果、失败阻断、待追赶、Cron、字段映射、窗口或正式水位。 |
 | `sync_task_version` | `id`, `task_id`, `version_no`, `route_version_id`, `dataset_version_id`, `task_kind`, `write_mode`, `doris_key_model`, institution code snapshot, incremental/upper/lookback/fetch/schedule config, field contract hash, `contract_hash`, `created_by`, `created_at` | 只插入且不保存 `status`；`(task_id, version_no)`、`(task_id, contract_hash)` 唯一。新版本插入和 `current_version_id` 切换在同一事务完成。 |
-| `task_governance_override` | `task_id`, nullable validation/message/scheduling overrides, `revision`, audit columns | 表达任务级覆盖；生成任务版本时计算全局→数据集→任务最终值。 |
+| `task_governance_override` | `task_id`, nullable validation/scheduling overrides, `revision`, audit columns | 表达任务级校验和调度覆盖；消息不进入本表，也不参与任务级覆盖。 |
 
 未删除任务的数据库最终唯一性：
 
@@ -296,7 +296,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 `message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置与可重试 `PENDING` 重复的 `FAILED`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占 `available_at <= 当前时间` 的 `PENDING` 事件，原子改为 `PUBLISHING` 并更新 `last_attempt_at`。首次发送写入首次可投递时间；临时失败增加 `attempt_count`、记录 `last_error`，回到 `PENDING` 并把 `available_at` 覆盖为下次重试时间；达到最大次数进入 `DEAD_LETTER`。恢复扫描把 `last_attempt_at` 超过全局超时时间的 `PUBLISHING` 视为异常中断，增加 `attempt_count` 后改回 `PENDING`，耗尽次数则进入 `DEAD_LETTER`。不增加租约表、工作节点字段或额外恢复状态。发送失败或异常恢复只改变 outbox，不改变 `sync_execution=SUCCEEDED`、正式水位或任务调度。人工重发从 `DEAD_LETTER` 改回 `PENDING`，把 `available_at` 覆盖为当前时间，沿用同一 `event_id`，由下游幂等消费。不设置语义重复的 `next_attempt_at`。
 
-不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间和最后错误，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。Outbox 不保存 `provider_message_id`：一条发布指令会产生多条 RabbitMQ 或 Redis Stream 消息，单个提供方标识不能代表整段发布，逐条标识只写应用日志。
+不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间和最后错误，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。Outbox 不保存 `provider_message_id`：一条发布指令会产生多条 RabbitMQ 消息，单个确认标识不能代表整段发布，逐条标识只写应用日志。
 
 发布器按 `publish_command` 中的执行批次或水位范围从 Doris 分页读取并逐条发送。只有整段发布完成才把 outbox 更新为 `PUBLISHED`；中途失败时不保存分页进度，下一次从本次数据范围开头重新发布。每条业务消息使用由 `event_id + 业务主键/messageKey` 生成的确定性消息 ID，同一 outbox 重试或人工重发时保持不变，由下游幂等消费。不建立分页进度、分页明细或逐条消息持久化表。
 
@@ -332,7 +332,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
-| 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + 单一 outbox。 | 完成事务插入事件，独立发布器消费；投递次数和最后错误回写 outbox，旧 recovery/log 扫描退出。 |
+| 消息 | `DfetlMessagePolicy` 已按数据集保存策略；任务创建时 `DatasetTaskSnapshotAssembler` 再复制为 `MessagePublishConfig`，执行器读取这份任务副本；同时存在 Redis Stream/RabbitMQ 两套发布器、publish log 和 send record。 | 仅 RabbitMQ；只保留数据集消息策略、执行/Outbox 指令快照和单一 outbox，不保留任务级消息配置或覆盖。 | 数据集参数对该数据集所有任务一致；机构、Doris 目标、批次和窗口从任务/执行上下文取得。完成事务插入指令，独立 RabbitMQ 发布器消费，旧 config/log/send-record/recovery 路径退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
 
 ### 13.2 状态差异
