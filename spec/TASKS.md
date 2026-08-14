@@ -41,7 +41,7 @@ spec/reference/legacy/TASKS_before_phase1_consistency_20260814.md
 - 不建立租户表，不在业务表重复保存 `community_id`。
 - 老系统继续使用原 `df_ygt/df_etl` 数据库运行。
 - 新系统使用完全独立的新 PostgreSQL 数据库。
-- 老库结构和历史 SQL仅作为证据，不允许 Flyway baseline 老库。
+- 老库结构和历史 SQL 只作为证据，不允许 Flyway baseline 老库。
 
 ### 1.2 机构、业务系统实例和数据源
 
@@ -115,7 +115,7 @@ collection_route.current_version_id
 - 多机构共享 ODS 时，无主键任务只清理当前机构范围，禁止整表清空。
 - 普通同步任务不支持 `CUSTOM_SQL`、`ID_RANGE` 或 `CUSTOM_WINDOW`。
 
-### 1.8 调度、执行、失败、取消和水位
+### 1.8 调度、执行、首次全量、失败、取消和水位
 
 - 第一阶段 Reader 固定单并发；Fetch Size 可配置。
 - 同一任务禁止并发执行。
@@ -129,6 +129,19 @@ collection_route.current_version_id
 - 水位只在全部载入成功、同步门禁校验通过后推进。
 - Doris 返回不明确时查询确定性 Label，探测结果直接保存到 `load_batch`。
 - 不建立 `execution_checkpoint`、`execution_reconciliation` 或跨执行恢复字段。
+- `FULL_THEN_INCREMENTAL` 表示同一长期任务跨多次执行的运行方式，不表示一条复合执行。
+- 没有正式水位时，第一次运行创建一条独立 `INITIAL_FULL sync_execution`，只包含全量批次。
+- 首次全量成功并通过门禁校验后，将首次全量开始时间 `T0` 写为初始正式水位。
+- 首次全量完成后不立即执行补充增量；等待下一次正常 Cron/间隔触发，再创建新的 `INCREMENTAL sync_execution`。
+- 首次全量运行期间到达的计划触发直接跳过，完成后不补跑。
+- 首次全量和后续增量分别拥有独立执行、批次、校验、日志和 Outbox。
+- 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
+
+专项 Review：
+
+```text
+spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+```
 
 ### 1.9 运行请求和技术前检
 
@@ -182,16 +195,22 @@ collection_route.current_version_id
 
 - 不提供关闭正式同步校验的配置、接口或页面开关。
 - `global_validation_policy`、`dataset_validation_policy`、`task_validation_policy` 均不保存 `enabled`。
-- 全局默认是严格相等的 `ROW_COUNT`、`lookback_hours=0`。
-- 数据集和任务只能覆盖校验方法及当前仍允许配置的回看范围。
-- 三张校验策略表均不保存 `row_tolerance`、绝对容差或百分比容差。
+- 三张策略表只允许继承或覆盖 `validation_method`。
+- 三张策略表均不保存 `row_tolerance`、绝对容差、百分比容差或 `lookback_hours`。
 - `ROW_COUNT` 固定要求 `source_row_count = target_row_count`，差异 1 行也失败。
+- 正式门禁只校验本次执行的精确机构和数据范围，不向历史范围回看。
 - 无真实业务主键的数据集固定使用 `ROW_COUNT`。
 - 有真实业务主键的数据集可配置 `ROW_COUNT_CHECKSUM`。
 - `ROW_COUNT_CHECKSUM` 必须同时满足行数严格相等和业务字段 Checksum 一致，不允许静默降级。
 - 默认不自动复检；人工重新校验生成独立 `validation_run`。
 - 校验不一致和技术失败都阻止执行成功和水位推进。
 - 校验内部可以分批计算，但 PostgreSQL 只保存整次最终结果和小型 `difference_summary JSONB`。
+
+权威字典：
+
+```text
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+```
 
 ### 1.12 删除识别
 
@@ -254,6 +273,7 @@ collection_route.current_version_id
 ```text
 spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
 已覆盖：
@@ -269,6 +289,8 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
 - [x] 删除预检策略层级
 - [x] 任务可通过新版本更换链路
 - [x] 当前覆盖机构唯一事实
+- [x] 正式同步校验不可关闭
+- [x] 删除行数容差和校验回看窗口
 - [x] 字段、外键、唯一约束和查询索引第一轮设计
 
 待一致性检查：
@@ -286,6 +308,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
 
 ```text
 spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
+spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 ```
 
 已覆盖：
@@ -297,12 +320,13 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 - [x] `validation_run`
 - [x] `message_outbox`
 - [x] 已接受运行请求的技术前检失败保留执行历史
+- [x] 首次全量和后续增量使用两条独立执行
 - [x] 成功收尾短事务
 - [x] 日志全文不进入 PostgreSQL
 
 待一致性检查：
 
-- [ ] 核对首次全量和补充增量在执行模型中的表达。
+- [ ] 判断 `load_batch.phase` 在执行范围已明确后是否仍需保留。
 - [ ] 核对 `load_batch` 游标、时间范围和 Label 状态组合。
 - [ ] 核对唯一 `SYNC_GATE validation_run` 与强制校验规则。
 - [ ] 核对 Outbox、执行、任务版本、数据集和机构身份一致性。
@@ -329,8 +353,10 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 - [ ] 统一任务、执行、批次、预检、校验、Outbox、告警、外部 API 和删除快照枚举。
 - [x] 修正“正式同步校验可关闭”冲突：正式同步至少执行 `ROW_COUNT`。
 - [x] 修正“正式同步允许行数容差”冲突：源目标行数必须严格相等。
+- [x] 修正“正式同步校验回看窗口”冲突：删除 `lookback_hours`。
 - [x] 修正“预检三级策略”冲突：只保存和展示预检事实。
 - [x] 修正“任务固定 route_id”冲突：当前链路由任务当前版本推导。
+- [x] 修正“首次全量立即补充增量”冲突：首次全量与后续增量为独立执行。
 - [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
 - [ ] 清理 `TARGET_METADATA_MODEL.md` 和其他文档中的旧表名、旧状态及旧语义。
 - [ ] 补回并核对使用文档导航、路由和实施任务。
@@ -486,8 +512,8 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 选择实例、链路、机构和数据集。
 - [ ] 只读展示三种标准任务组合。
-- [ ] 展示字段解析、预检事实、校验配置和消息策略。
-- [ ] 校验方法和当前允许的回看范围允许继承/覆盖，但校验不能关闭，也不能配置行数容差。
+- [ ] 展示字段解析、预检事实、校验方法和消息策略。
+- [ ] 校验方法允许继承或覆盖，但校验不能关闭，也不能配置行数容差或校验回看窗口。
 - [ ] 创建任务和第一个版本使用一个事务。
 - [ ] 并发冲突返回已有任务。
 
@@ -521,9 +547,11 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 载入批次保存真实游标、固定窗口、Label 和最终状态。
 - [ ] Doris 响应不明确时探测原 Label。
 - [ ] 不建立检查点和执行对账表。
+- [ ] 首次全量和后续增量分别创建独立 `sync_execution`；同一执行不得混合全量和增量批次。
+- [ ] 首次全量成功后以开始时间 `T0` 建立初始水位；等待下一次正常调度再执行增量。
 - [ ] 成功收尾短事务锁定执行和水位。
 - [ ] 必须确认全部批次提交、唯一同步门禁校验通过、拒绝行数为 0。
-- [ ] 更新执行成功、推进水位并按需插入唯一 Outbox。
+- [ ] 更新执行成功、推进或创建水位并按需插入唯一 Outbox。
 - [ ] 事务内不调用 Doris 或 MQ。
 
 ### [P0][VALID-001] 按最终配置执行校验
@@ -537,9 +565,9 @@ spec/PHASE1_FINAL_REVIEW.md
 
 ### [P0][VALID-002] 校验配置继承和覆盖
 
-- [ ] 全局、数据集、任务三级只处理校验方法及当前允许的回看范围。
-- [ ] 三张策略表均不保存 `enabled` 和 `row_tolerance`。
-- [ ] 前端和 API 不展示关闭开关或容差配置。
+- [ ] 全局、数据集、任务三级只处理 `validation_method`。
+- [ ] 三张策略表均不保存 `enabled`、`row_tolerance` 或 `lookback_hours`。
+- [ ] 前端和 API 不展示关闭开关、容差配置或校验回看窗口。
 - [ ] 运行中执行使用启动时快照。
 
 ### [P0][VALID-003] 全量、修改和删除校验工作流
@@ -552,7 +580,7 @@ spec/PHASE1_FINAL_REVIEW.md
 ### [P1][VALID-004] 人工重新校验
 
 - [ ] 不自动延迟复检。
-- [ ] 人工重新校验复用原执行快照和范围。
+- [ ] 人工重新校验复用原执行快照和范围，或显式指定治理校验范围。
 - [ ] 新建独立运行，不覆盖历史失败记录。
 
 ### [P1][VALID-005] 定期联合主键快照删除识别
@@ -570,6 +598,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 启动和周期对账重建投影。
 - [ ] misfire 固定跳过。
 - [ ] JobDataMap 只保存 taskId。
+- [ ] 首次全量运行期间错过的计划不补跑；等待下一次正常计划产生增量执行。
 - [ ] 真实并发由 `sync_execution` 部分唯一索引保证。
 
 ## M4：外部 API 和前端真实集成
@@ -626,6 +655,7 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 仅实现 RabbitMQ。
 - [ ] 每执行最多一条 Outbox。
+- [ ] 首次全量执行发布全量范围；后续增量执行发布各自增量范围。
 - [ ] 支持扫描、抢占、重试、死信、异常恢复和人工重发。
 - [ ] 不保存业务 payload、分页进度和逐条投递明细。
 - [ ] 严格保持旧消息协议。
@@ -641,6 +671,7 @@ spec/PHASE1_FINAL_REVIEW.md
 ### [P1][OPS-001] 监控、日志和告警
 
 - [ ] 任务监控展示真实执行、批次、校验和消息状态。
+- [ ] 首次全量与后续增量作为两次独立执行展示。
 - [ ] 日志中心按 task/execution/engine job 查询和下载，不把全文写入 PostgreSQL。
 - [ ] 告警渠道和规则继续保留。
 - [ ] 命中规则生成 `alert_event`，每渠道生成 `alert_delivery`。
@@ -667,7 +698,10 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 机构 + 数据集并发创建唯一。
 - [ ] 任务通过新版本更换链路。
 - [ ] 无效请求不创建执行；已接受请求前检失败保留 FAILED 执行。
-- [ ] 全量、首次全量补充增量、日常增量和水位推进。
+- [ ] 第一次运行只创建独立首次全量执行，并在成功后以开始时间建立初始水位。
+- [ ] 首次全量完成后不立即补充增量；下一次正常调度创建独立增量执行。
+- [ ] 首次全量运行期间错过的计划触发不补跑。
+- [ ] 首次全量和增量的执行、批次、校验、日志和 Outbox 相互独立。
 - [ ] 中间批次失败后重新采集从第 1 批开始。
 - [ ] Doris Label 不明确状态探测。
 - [ ] 补采不修改水位。
@@ -678,9 +712,10 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 每次正式同步至少执行 `ROW_COUNT`，任何层级均不能关闭。
 - [ ] 源目标行数差异 1 行也必须失败，不存在绝对或百分比容差。
+- [ ] 正式校验不存在 `lookback_hours` 配置，只校验本次执行精确范围。
 - [ ] 行数相同、内容不同的 Checksum 必须失败。
 - [ ] 无业务主键数据集固定 ROW_COUNT。
-- [ ] 校验配置继承和覆盖只影响后续新执行。
+- [ ] 校验方法继承和覆盖只影响后续新执行。
 - [ ] 校验不一致或失败时水位不推进。
 - [ ] 成功收尾重复调用不重复推进水位或创建 Outbox。
 - [ ] ODS/RAW 固定合同。
@@ -697,7 +732,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-003 | 预检只保存和展示事实，不建立策略层级 |
 | D-004 | 第一阶段 Reader 固定单并发 |
 | D-005 | Checksum 范围与校验失败不推进水位 |
-| D-006 | 校验配置下一次执行生效；执行合同生成任务新版本 |
+| D-006 | 校验方法下一次执行生效；执行合同生成任务新版本 |
 | D-007 | 删除识别使用 Doris 主键快照和差异技术表 |
 | D-008 | 共享业务系统的多机构数据范围 |
 | D-009 | 源视图机构代码直接等于机构主数据编码 |
@@ -721,6 +756,8 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-027 | 已接受运行请求技术前检失败保留 FAILED 执行 |
 | D-028 | 正式同步校验不可关闭，唯一同步门禁校验必须通过 |
 | D-029 | 正式同步行数严格相等，删除所有行数容差配置 |
+| D-030 | 删除正式同步校验 `lookback_hours`，门禁只使用本次精确范围 |
+| D-031 | 首次全量和后续定时增量为两次独立执行，不立即补充增量 |
 
 详细结论分散在以下权威文档：
 
@@ -732,6 +769,7 @@ spec/QUARTZ_JOBSTORE_REVIEW.md
 spec/DELETE_SNAPSHOT_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY*.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
