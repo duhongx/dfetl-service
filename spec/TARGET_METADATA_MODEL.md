@@ -292,10 +292,11 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, payload/headers JSON, routing/topic/message key snapshot, `status`, `available_at`, `attempt_count`, `next_attempt_at`, `published_at`, last error, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入。 |
-| `message_delivery_attempt` | `id`, `outbox_id`, `attempt_no`, provider/message id, request/result snapshot, `status`, started/finished, error | `(outbox_id, attempt_no)` 唯一；用于投递审计和人工重发。 |
+| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, payload/headers JSON, routing/topic/message key snapshot, `status`, `available_at`, `attempt_count`, `next_attempt_at`, `last_attempt_at`, `provider_message_id`, `published_at`, `last_error`, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入；同一行承担重试、死信和人工重发状态。 |
 
 `message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/FAILED/DEAD_LETTER`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占 `(status, available_at)` 索引中的待发事件。发送失败只改变 outbox，不改变 `sync_execution=SUCCEEDED` 或正式水位。人工重发沿用同一 `event_id`，由下游幂等消费。
+
+不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间、最后错误和提供方消息 ID，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。
 
 ## 12. P0 支撑对象
 
@@ -329,7 +330,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
-| 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + outbox/attempt。 | 完成事务插入事件，独立发布器消费；旧 recovery/log 扫描退出。 |
+| 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + 单一 outbox。 | 完成事务插入事件，独立发布器消费；投递次数和最后错误回写 outbox，旧 recovery/log 扫描退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
 
 ### 13.2 状态差异
@@ -382,7 +383,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；不保留跨执行恢复检查点，失败后从头重新采集。 |
 | `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
 | `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 `validation_run`；内部计算分批和小型差异汇总不拆成独立表。 |
-| message policy/config/log/send record | 合并为策略、执行快照、outbox 和 attempt。 |
+| message policy/config/log/send record | 合并为策略、执行快照和单一 outbox；逐次投递详情只写应用日志。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |
 
 ## 15. Review 门槛与后续步骤
