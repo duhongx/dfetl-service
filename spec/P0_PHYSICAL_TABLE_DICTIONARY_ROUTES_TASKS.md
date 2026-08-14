@@ -103,11 +103,52 @@ INDEX idx_sync_task_route_institution_active
     WHERE deleted_at IS NULL
 ```
 
-## 4. 当前待讨论问题：任务是否可以切换到另一条采集链路
+## 4. 已确认：任务固定归属于创建时的采集链路
 
-当前目标模型同时计划在 `sync_task` 保存 `route_id`，并在 `sync_task_version` 保存 `route_version_id`。这需要明确任务与采集链路的长期关系：
+一个同步任务创建后固定归属于一条 `collection_route`，不支持通过任务新版本切换到另一条采集链路。
 
-- 方案一：任务创建后固定归属于一条 `collection_route`；任务新版本只能引用该链路的不同版本。改用另一条链路时，必须逻辑删除旧任务并重新创建。
-- 方案二：任务身份只固定“机构 + 数据集”；任务新版本可以切换到另一条链路的版本，`sync_task.route_id` 将成为重复事实，应删除并由当前任务版本推导当前链路。
+固定规则：
 
-该选择会直接影响 `sync_task` 字段、复合外键、任务版本约束、水位是否可跨源沿用，以及 HIS/数据源切换时是“升级原任务”还是“重建任务”。
+1. `sync_task.route_id` 是任务长期身份字段，创建后不可修改。
+2. `sync_task_version.route_version_id` 只能引用 `sync_task.route_id` 下面的某个不可变链路版本。
+3. 任务可以在同一条链路内显式采用该链路的新版本，但不能从链路 `R1` 切换到另一条链路 `R2`。
+4. 极少数确需更换链路的情况，按“暂停旧任务 → 等待活动执行结束或受控取消 → 逻辑删除旧任务 → 基于新链路创建新任务”的简单流程处理。
+5. 新任务具有新的任务 ID、任务版本和 `task_watermark`，不得继承旧任务正式水位；首次运行按新任务合同重新开始。
+6. 旧任务的任务版本、执行、批次、水位、预检/校验关联、消息和审计历史继续保留。
+7. 外部 API 再次确保同一“机构 + 数据集”任务存在时，只要旧任务尚未逻辑删除就返回 `EXISTS`；旧任务逻辑删除后，才允许基于新链路创建任务。
+8. 不建设任务跨链路迁移、双水位、切换回退或源系统迁移状态机。
+
+目标约束：
+
+```text
+sync_task
+  UNIQUE (id, route_id)
+
+collection_route_version
+  UNIQUE (route_id, id)
+
+sync_task_version
+  FOREIGN KEY (task_id, route_id)
+      REFERENCES sync_task(id, route_id)
+      ON DELETE RESTRICT
+
+  FOREIGN KEY (route_id, route_version_id)
+      REFERENCES collection_route_version(route_id, id)
+      ON DELETE RESTRICT
+```
+
+任务版本仍需通过 `(route_version_id, institution_id)` 复合外键保证任务机构属于该链路版本覆盖范围。`route_id` 在任务版本中可作为约束辅助列保存，不能由接口自由修改；执行和展示仍以任务身份及其当前版本为准。
+
+## 5. 当前待讨论问题：同一链路升级版本时正式水位如何处理
+
+任务不能跨链路切换后，仍存在同一条链路从版本 1 升级为版本 2 的正常场景。例如覆盖机构增加、源对象结构重新核对、目标 Doris 配置变化、字段解析快照变化或数据集版本变化。
+
+当前需要明确：任务显式创建新任务版本并采用同一链路的新版本时，现有 `task_watermark` 是继续沿用，还是根据变更类型强制重新建立。
+
+该选择会影响：
+
+- 是否可能把旧源对象或旧字段合同的水位直接用于新合同；
+- 是否必须重新执行首次全量；
+- 删除快照有效基线是否继续有效；
+- 哪些纯调度或 Fetch Size 变化可以安全沿用水位；
+- 任务版本切换事务和前端确认提示。
