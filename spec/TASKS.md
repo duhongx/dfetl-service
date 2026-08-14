@@ -673,6 +673,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] `message_outbox` 只保留 `available_at` 作为下一次允许投递时间；首次发送、失败重试和人工重发统一更新该字段，不设置 `next_attempt_at`，发布扫描使用 `(status, available_at)` 索引。
 - [ ] 每次同步执行只创建一条 Outbox 发布指令；指令只快照执行范围、Doris 目标对象和消息路由，不保存业务数据。发布器从 Doris 分页发送，中途失败后整段重发，以 `event_id + 业务主键/messageKey` 生成稳定消息 ID，不建立分页进度、分页明细或逐条消息表。
 - [ ] `message_outbox` 不保存只能代表单条 RabbitMQ/Redis 消息的 `provider_message_id`；逐条提供方标识写应用日志。
+- [ ] 发布器抢占时原子执行 `PENDING → PUBLISHING` 并更新 `last_attempt_at`；恢复扫描把超时的 `PUBLISHING` 增加尝试次数后恢复为 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约表或工作节点字段，也不联动同步结果和任务调度。
 - [ ] 前端关闭消息后仍能重新进入配置并启用。
 
 ### [P1][SEC-001] 权限、确认和审计
@@ -797,6 +798,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认删除 `message_outbox.next_attempt_at`：`available_at` 统一表示首次发送或重试的下一次允许投递时间，人工重发将其更新为当前时间。
 - [x] 2026-08-14 已确认 Outbox 只保存每次执行的一条小型发布指令，不保存业务数据：发布器从 Doris 分页读取，失败后整段重发，逐条消息使用确定性 ID，不增加分页或消息明细持久化。
 - [x] 2026-08-14 已确认删除 `message_outbox.provider_message_id`：一条发布指令会产生多条消息，单个提供方标识不能代表整段发布，逐条标识进入应用日志。
+- [x] 2026-08-14 已确认使用 `last_attempt_at` 恢复超时的 `PUBLISHING`：增加尝试次数并回到 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约结构且不影响同步任务调度。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1134,6 +1136,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `message_outbox.next_attempt_at`；首次发送、失败重试和人工重发统一更新 `available_at`，发布扫描使用 `(status, available_at)` 索引。
 - `message_outbox` 每次执行只保存一条小型发布指令，不保存业务数据；发布器从 Doris 分页读取，失败后整段重发，逐条消息使用由事件和业务键生成的确定性 ID，不建立分页进度、分页明细或逐条消息表。
 - 删除 `message_outbox.provider_message_id`；整段发布只保存汇总状态、次数、时间和最后错误，逐条提供方消息标识写应用日志。
+- `PUBLISHING` 异常恢复复用 `last_attempt_at` 和全局超时参数；不建立发布租约表或工作节点归属字段，恢复仅改变 Outbox 状态。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。
