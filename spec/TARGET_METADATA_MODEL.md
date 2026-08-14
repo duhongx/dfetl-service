@@ -1,7 +1,7 @@
 # P0 目标元数据模型
 
-> 状态：阶段 1 设计完成，待 Review；尚未固化为 Flyway `V1`  
-> 日期：2026-08-13  
+> 状态：阶段 1 目标模型 Review 进行中；本轮确认项已合并；尚未固化为 Flyway `V1`  
+> 日期：2026-08-14  
 > 适用范围：新系统独立 PostgreSQL 元数据库  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -9,15 +9,16 @@
 
 新系统不在当前 55 张老表上继续加字段，而是按“身份、不可变定义版本、可变运行态、不可变执行快照”四层重建 P0 模型。核心边界如下：
 
-1. 业务系统实例与机构、源数据源分别多对多；采集链路属于实例和数据源，并维护覆盖机构集合。
-2. 标准数据集只能同步导入。一次导入生成不可变数据集版本和字段定义；历史任务继续引用原版本。
-3. 采集链路定义与链路版本分离。源对象、目标对象、数据集版本、字段解析结果及覆盖机构快照属于链路版本。
-4. 同步任务身份与任务版本分离。任务唯一键是医共体、机构和数据集的未删除组合；调度、抽取、写入、校验和消息的执行配置固化在任务版本。
-5. 正式水位属于长期任务运行态；恢复检查点属于某次执行。两者不再复用一个字段。
-6. 载入批次保存确定性 Doris Label 和真实可用游标；没有业务主键时游标为空，不生成假检查点。
-7. 预检运行只持久化运行记录和字段级/组合规则级汇总，不保存问题行、业务键明细、样例、严重级别或修复状态。
-8. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
-9. 本文冻结逻辑模型、状态、约束和索引意图。列类型和名称可在 Review 中做无业务语义的规范化；Review 通过前不创建 `V1__baseline.sql`。
+1. 一个部署及其独立 PostgreSQL 元数据库只服务一个医共体；医共体名称和编码属于系统设置，不建立租户表，也不在业务表重复保存 `community_id`。
+2. 业务系统实例与机构、源数据源分别多对多；机构在 P0 中为扁平集合，不建立父子层级。
+3. 标准数据集只允许人工同步。只有规范化定义内容及 `definition_hash` 变化时才追加不可变版本；未变化只更新同步时间和结果。
+4. 采集链路身份与不可变版本分离。链路版本只在源对象、目标 Doris、数据集版本、覆盖机构或字段解析快照等定义内容变化时生成；重复核对不生成版本。
+5. 同步任务身份与任务版本分离。未删除任务按机构和数据集唯一；任务没有重复的生命周期状态，当前版本由 `current_version_id` 唯一确定。
+6. 正式水位属于长期任务运行态。恢复检查点直接采用最后一个确认提交且具有真实游标的载入批次，不另建重复的检查点表；没有业务主键时不生成假检查点。
+7. 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW。PostgreSQL 不登记 Doris 物理表或结构版本，直接读取 Doris 实际元数据并与数据集版本生成的期望合同核对。
+8. 预检每次扫描整条采集链路，只持久化运行记录和字段级/组合规则级汇总，不保存问题行、业务键明细、样例、严重级别或修复状态。
+9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
+10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户、机构层级、Doris 表登记或大文件异步导出预建扩展。Review 通过前不创建 `V1__baseline.sql`。
 
 ## 2. 全局数据库约定
 
@@ -29,7 +30,7 @@
 | 状态 | 使用受控 `varchar` 加 `CHECK`，便于后续 Flyway 扩展；不接受自由文本状态。 |
 | JSON | 只用于不可变快照、方言相关游标、外部配置和可扩展统计；身份、关系、状态和高频过滤条件必须结构化。 |
 | 删除 | 任务和采集链路使用 `deleted_at` 逻辑删除；运行历史、版本、水位、校验和审计不级联删除。 |
-| 版本 | 版本表只插入不更新；`version_no` 在父对象内唯一，`contract_hash`/`definition_hash` 用于校验内容身份。 |
+| 版本 | 版本表只插入不更新；只有规范化定义内容变化才追加版本。`version_no` 在父对象内唯一，`contract_hash`/`definition_hash` 用于校验内容身份。 |
 | 并发 | 业务唯一性和单任务/单链路活动运行由 PostgreSQL 唯一或部分唯一索引最终保证，应用事务只提供友好错误。 |
 | 外键 | 配置和运行对象使用真实外键；密码、密钥只保存密文或外部 secret 引用，不写入 SQL 基础数据。 |
 
@@ -37,8 +38,6 @@
 
 ```mermaid
 erDiagram
-    MEDICAL_COMMUNITY ||--o{ INSTITUTION : contains
-    MEDICAL_COMMUNITY ||--o{ BUSINESS_SYSTEM_INSTANCE : owns
     BUSINESS_SYSTEM_INSTANCE }o--o{ INSTITUTION : covers
     BUSINESS_SYSTEM_INSTANCE }o--o{ SOURCE_DATASOURCE : uses
     BUSINESS_SYSTEM_INSTANCE ||--o{ COLLECTION_ROUTE : defines
@@ -52,7 +51,6 @@ erDiagram
     SYNC_TASK ||--|| TASK_WATERMARK : advances
     SYNC_TASK ||--o{ SYNC_EXECUTION : runs
     SYNC_EXECUTION ||--o{ LOAD_BATCH : loads
-    SYNC_EXECUTION ||--|| EXECUTION_CHECKPOINT : resumes
     SYNC_EXECUTION ||--o{ VALIDATION_RUN : validates
     SYNC_EXECUTION ||--o| MESSAGE_OUTBOX : emits
     COLLECTION_ROUTE ||--o{ PRECHECK_RUN : prechecks
@@ -61,23 +59,23 @@ erDiagram
 
 图中省略策略、审计、告警、外部 API 和 Quartz 支撑表；它们不改变核心所有权关系。
 
-## 4. 租户、机构、实例和数据源
+## 4. 系统设置、机构、实例和数据源
 
 ### 4.1 主表和关系表
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `medical_community` | `id`, `code`, `name`, `status`, audit columns | 当前业务租户边界；`lower(code)` 唯一。虽然现有部署可能只有一个医共体，也必须显式建模，因为任务唯一键包含 `community_id`。 |
-| `institution` | `id`, `community_id`, `code`, `name`, `type`, `parent_id`, `status`, audit columns | `code` 全局大小写不敏感唯一；`(id, community_id)` 额外唯一，供跨表复合外键保证同一医共体。 |
-| `business_system_instance` | `id`, `community_id`, `code`, `name`, `system_type`, `vendor`, `product_version`, `status`, `description`, audit columns | `(community_id, lower(code))` 唯一；不以厂商或单机构作为唯一边界。 |
-| `source_datasource` | `id`, `code`, `name`, `db_type`, host/database/schema/credential fields, JDBC/pool/timeouts, `status`, audit columns | 不再有 `institution_id`、`group_id` 或可调 Reader 并发；连接秘密保存密文/secret 引用。`lower(code)` 唯一。 |
-| `target_datasource` | `id`, `code`, `name`, Doris FE/HTTP/Stream Load/database/credential/pool/batch fields, `ssl_enabled`, `status`, audit columns | 明确承载产品要求的 Doris 参数；`lower(code)` 唯一。 |
-| `business_system_instance_institution` | `community_id`, `instance_id`, `institution_id`, audit columns | 主键 `(instance_id, institution_id)`；复合外键保证实例和机构属于同一医共体。 |
-| `business_system_instance_datasource` | `instance_id`, `source_datasource_id`, `purpose`, `priority`, audit columns | 主键 `(instance_id, source_datasource_id)`；同一数据源可以服务多个真实实例。 |
+| `system_setting` | `setting_key`, typed value, description, `revision`, audit columns | 保存当前医共体名称、编码和其他系统级配置；一个部署只服务一个医共体，不建立 `medical_community` 表。 |
+| `institution` | `id`, `code`, `name`, `type`, `status`, audit columns | `lower(code)` 全局唯一；P0 机构为扁平集合，不保存 `parent_id`。 |
+| `business_system_instance` | `id`, `code`, `name`, `system_type`, `vendor`, `product_version`, `status`, `description`, audit columns | `lower(code)` 唯一；不以厂商或单机构作为唯一边界。 |
+| `source_datasource` | `id`, `code`, `name`, `db_type`, `connection_mode`, host/port/database/schema or JDBC URL, credential/secret fields, pool/timeouts, `status`, audit columns | `connection_mode` 仅 `HOST_PORT/JDBC_URL`；凭据不得嵌入 JDBC URL。每行表示第三方提供的一个逻辑连接，不管理其主备节点或自动故障切换。`lower(code)` 唯一。 |
+| `target_datasource` | `id`, `code`, `name`, `deployment_mode`, Doris FE/HTTP/Stream Load endpoint config, database/credential/pool/batch fields, `ssl_enabled`, `status`, audit columns | `deployment_mode` 支持 `STANDALONE/CLUSTER`；一行表示一个逻辑 Doris 部署，可配置一个或多个 FE 端点，不管理 BE 节点。`lower(code)` 唯一。 |
+| `business_system_instance_institution` | `instance_id`, `institution_id`, audit columns | 主键 `(instance_id, institution_id)`；同一机构可以关联多个系统实例。 |
+| `business_system_instance_datasource` | `instance_id`, `source_datasource_id`, audit columns | 纯关联表，主键 `(instance_id, source_datasource_id)`；不保存用途、优先级，也不自动选择或切换数据源。 |
 
 ### 4.2 索引
 
-- `institution(community_id, status, id)` 支撑租户内机构列表；`institution(parent_id)` 支撑层级查询。
+- `institution(status, id)` 支撑机构列表；不建立层级查询索引。
 - 两张实例关联表均建立反向索引：`(institution_id, instance_id)` 和 `(source_datasource_id, instance_id)`。
 - 数据源列表以 `(status, id)` 和大小写不敏感 code 唯一索引为主，不再以单个 `institution_id` 查询。
 
@@ -87,8 +85,8 @@ erDiagram
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `standard_dataset` | `id`, `external_dataset_id`, `dataset_code`, `name`, `status`, `current_version_id`, `first_imported_at`, `last_synced_at`, audit columns | 数据集身份可更新展示信息但不可手工创建；`lower(dataset_code)` 和 `external_dataset_id` 分别唯一。 |
-| `standard_dataset_version` | `id`, `dataset_id`, `version_no`, `source_definition_version`, `definition_hash`, `conversion_contract_version`, `institution_code_field_code`, `incremental_field_code`, `field_count`, `imported_at`, `imported_by` | 只插入；`(dataset_id, version_no)`、`(dataset_id, definition_hash)` 唯一。当前版本指针只能指向本数据集版本。 |
+| `standard_dataset` | `id`, `external_dataset_id`, `dataset_code`, `name`, `status`, `current_version_id`, `first_imported_at`, `last_synced_at`, `last_sync_result`, audit columns | 数据集身份不可手工创建；只允许管理员人工同步。`lower(dataset_code)` 和 `external_dataset_id` 分别唯一。 |
+| `standard_dataset_version` | `id`, `dataset_id`, `version_no`, `source_definition_version`, `definition_hash`, `conversion_contract_version`, `institution_code_field_code`, `incremental_field_code`, `field_count`, `imported_at`, `imported_by` | 只插入；只有规范化定义内容及 Hash 变化才新增版本，未变化只更新数据集同步时间和结果。`(dataset_id, version_no)`、`(dataset_id, definition_hash)` 唯一。 |
 | `standard_dataset_field` | `id`, `dataset_version_id`, `external_field_id`, `field_code`, `field_name`, `ordinal_no`, standard type/format/length/precision/scale, `nullable`, `business_key_ordinal`, value-domain/format contract, `doris_type`, `doris_nullable` | `(dataset_version_id, lower(field_code))` 和 `(dataset_version_id, ordinal_no)` 唯一；联合业务主键顺序由非空 `business_key_ordinal` 表达，不使用技术字段替代。 |
 | `field_conversion_contract` | `contract_version`, medical type/format selector, Doris type template, normalization/checksum protocol, `status`, audit columns | 显式、版本化的医疗字段转换合同；与通用 JDBC→Doris 类型映射分开。已被数据集版本引用的合同不可原地修改。 |
 | `generic_jdbc_type_mapping` | db type/JDBC selector, Doris suggestion, `priority`, `enabled`, audit columns | 只用于非标准或诊断场景，不得覆盖标准医疗字段合同。 |
@@ -103,14 +101,16 @@ erDiagram
 
 策略表是可变治理配置而不是执行历史。每次生成任务版本时保存版本级有效策略；每次执行还保存最终有效策略快照，防止运行中配置漂移。
 
-### 5.3 Doris 表用途注册
+### 5.3 Doris 实际表与固定命名
 
-`doris_table_contract` 记录 `dataset_version_id`、`purpose`（`ODS`/`RAW`）、目标数据源/数据库/表名、DDL 合同版本、结构哈希、创建/核对时间和状态。
+不建立 `doris_table_contract`、Doris 表登记表或 Doris 结构版本表。
 
-- `(dataset_version_id, purpose, target_datasource_id)` 唯一。
-- `purpose` 创建后不可切换；ODS 和 RAW 不能相互转换。
-- ODS 业务列严格按数据集版本；RAW 业务列全部字符串且允许 `NULL`，并包含预检运行和链路隔离列。
-- PostgreSQL 只保存用途和结构合同，不保存 Doris 原始预检行。
+- 每个标准数据集在一个逻辑 Doris 部署中固定对应一张 `ods_` 正式表和一张 `raw_` 预检表，多家机构共享，通过标准机构编码隔离数据。
+- 数据库名来自目标数据源配置，表名由数据集编码和固定 `ods_`/`raw_` 命名规则确定；采集链路和任务不能自由填写目标表名。
+- 期望结构由不可变 `standard_dataset_version`、字段定义和字段转换合同生成。
+- 平台直接查询 Doris `information_schema.columns`，必要时读取 `SHOW CREATE TABLE`，展示并核对实际结构。
+- 普通执行只校验实际表，不自动建表、加字段或修改表结构。创建或重建 Doris 表只能由用户显式发起，并使用同一套 DDL 生成器。
+- RAW 业务列全部为字符串且允许 `NULL`，并包含预检运行和链路隔离列；PostgreSQL 不保存 Doris 原始预检行。
 
 ## 6. 采集链路和字段解析快照
 
@@ -118,9 +118,9 @@ erDiagram
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `collection_route` | `id`, `community_id`, `dataset_id`, `business_system_instance_id`, `source_datasource_id`, `source_schema`, `source_object`, `source_object_type`, `target_datasource_id`, `target_table`, `status`, `current_version_id`, `deleted_at`, audit columns | 链路本身不保存运行状态或最近同步。源对象类型仅 `TABLE/VIEW/MATERIALIZED_VIEW`；无 `CUSTOM_SQL`。 |
+| `collection_route` | `id`, `dataset_id`, `business_system_instance_id`, `source_datasource_id`, `source_schema`, `source_object`, `source_object_type`, `target_datasource_id`, `current_version_id`, `deleted_at`, audit columns | 链路不保存状态或最近同步，也不允许自由配置目标表名。源对象类型仅 `TABLE/VIEW/MATERIALIZED_VIEW`；无 `CUSTOM_SQL`。`deleted_at` 是逻辑删除时间。 |
 | `collection_route_institution` | `route_id`, `business_system_instance_id`, `institution_id`, audit columns | 当前覆盖集合；主键 `(route_id, institution_id)`。复合外键同时保证该机构属于链路的系统实例覆盖范围。 |
-| `collection_route_version` | `id`, `route_id`, `version_no`, `dataset_version_id`, instance/source/target/object snapshot, `source_structure_hash`, `resolution_status`, `resolution_error`, `contract_hash`, `created_by`, `created_at` | 只插入；`(route_id, version_no)` 和 `(route_id, contract_hash)` 唯一。链路变更、数据集版本变更或重新解析都会产生新版本。 |
+| `collection_route_version` | `id`, `route_id`, `version_no`, `dataset_version_id`, instance/source/target/object snapshot, Doris fixed-name snapshot, `source_structure_hash`, `contract_hash`, `created_by`, `created_at` | 只插入；`(route_id, version_no)` 和 `(route_id, contract_hash)` 唯一。只有规范化定义内容变化才生成版本；重复核对且内容未变时仅写操作审计。 |
 | `collection_route_version_institution` | `route_version_id`, `institution_id`, `institution_code` | 固化该版本覆盖机构和当时机构编码；主键 `(route_version_id, institution_id)`。 |
 
 未删除链路按以下业务键唯一：
@@ -149,7 +149,7 @@ WHERE deleted_at IS NULL
 - 额外源字段用同一快照中的诊断行或结构诊断 JSON 表达，但不能被 Reader 静默忽略。
 - Reader、机构过滤、时间窗口、预检和 Checksum 只能引用任务版本关联的这份快照。
 
-`resolution_status` 可显示风险但不是创建/运行的数据库门禁；正式执行前解析不完整时明确失败。
+字段匹配问题直接由本版本的 `route_field_resolution.match_status` 汇总展示，不在链路身份上重复保存状态。它不是创建任务的数据库门禁；正式执行前解析不完整时明确失败。
 
 ## 7. 同步任务身份、版本和治理覆盖
 
@@ -157,31 +157,26 @@ WHERE deleted_at IS NULL
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_task` | `id`, `community_id`, `institution_id`, `dataset_id`, `route_id`, `name`, `lifecycle_status`, `current_version_id`, `schedule_blocked`, `block_reason`, `catch_up_pending`, `deleted_at`, audit columns | 只保存长期身份和小量运行控制状态；不放 Cron、字段映射、窗口或正式水位。 |
-| `sync_task_version` | `id`, `task_id`, `version_no`, `route_version_id`, `dataset_version_id`, `task_kind`, `write_mode`, `doris_key_model`, institution code snapshot, incremental/upper/lookback/fetch/schedule config, validation/message effective config, field contract hash, `status`, `created_by`, `created_at` | 只插入；`(task_id, version_no)`、`(task_id, contract_hash)` 唯一。任务执行必须引用明确版本。 |
+| `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `schedule_blocked`, `block_reason`, `catch_up_pending`, `deleted_at`, audit columns | 只保存长期身份和少量调度控制；不保存生命周期状态、最近执行结果、Cron、字段映射、窗口或正式水位。 |
+| `sync_task_version` | `id`, `task_id`, `version_no`, `route_version_id`, `dataset_version_id`, `task_kind`, `write_mode`, `doris_key_model`, institution code snapshot, incremental/upper/lookback/fetch/schedule config, field contract hash, `contract_hash`, `created_by`, `created_at` | 只插入且不保存 `status`；`(task_id, version_no)`、`(task_id, contract_hash)` 唯一。新版本插入和 `current_version_id` 切换在同一事务完成。 |
 | `task_governance_override` | `task_id`, nullable validation/message/scheduling overrides, `revision`, audit columns | 表达任务级覆盖；生成任务版本时计算全局→数据集→任务最终值。 |
 
 未删除任务的数据库最终唯一性：
 
 ```sql
 CREATE UNIQUE INDEX ...
-ON sync_task (community_id, institution_id, dataset_id)
+ON sync_task (institution_id, dataset_id)
 WHERE deleted_at IS NULL;
 ```
 
-草稿、启用、暂停、失败和停用均占用该唯一键。任务对 `(route_id, institution_id)` 建复合外键，保证所选机构在链路覆盖集合内；同时以复合约束保证任务 `dataset_id` 与链路一致。运行中的任务由服务层拒绝逻辑删除，历史版本和运行对象使用 `RESTRICT` 外键。
+所有未删除任务均占用该唯一键。任务对 `(route_id, institution_id)` 建复合外键，保证所选机构在链路覆盖集合内；同时以复合约束保证任务 `dataset_id` 与链路一致。运行中的任务由服务层拒绝逻辑删除，历史版本和运行对象使用 `RESTRICT` 外键。
 
-### 7.2 受控状态与任务种类
+### 7.2 调度控制与任务种类
 
-`sync_task.lifecycle_status`：
-
-- `DRAFT`：已创建但未启用调度；
-- `ENABLED`：允许人工和调度触发；
-- `PAUSED`：人工暂停；
-- `FAILED`：最近执行失败且调度被阻断；
-- `DISABLED`：停用但仍占唯一关系。
-
-`sync_task_version.status` 仅 `DRAFT/PUBLISHED/SUPERSEDED`。发布新版本以事务切换 `current_version_id`，不能更新历史版本。
+- 任务创建向导最终提交时一次性创建任务和第一个不可变版本，不长期保存任务或版本草稿。
+- `schedule_enabled=false` 只停止自动调度，不阻止用户人工运行。
+- 最近执行结果从 `sync_execution` 查询；失败后以 `schedule_blocked=true` 和 `block_reason` 阻断后续调度，不把 `FAILED` 重复写成任务生命周期状态。
+- `current_version_id` 指向当前版本，其他版本自然是历史版本，不需要 `PUBLISHED/SUPERSEDED` 状态。
 
 `task_kind`/`write_mode` 只允许业务基线的三种组合：
 
@@ -193,18 +188,19 @@ WHERE deleted_at IS NULL;
 
 以下字段不进入目标任务版本：`CUSTOM_SQL`、任意 static/per-table filter、`ID_RANGE`、`split_pk` 作为业务键、自动重试参数、可调 Reader 并发、脏数据分流、STRICT/PERMISSIVE 切换。
 
-## 8. 执行、载入批次、恢复检查点和正式水位
+## 8. 执行、载入批次、恢复位置和正式水位
 
 ### 8.1 执行模型
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `retry_of_execution_id`, `recollect_of_execution_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。补采为独立运行，窗口显式记录且不改正式水位。 |
-| `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。 |
-| `execution_checkpoint` | `execution_id`, `last_committed_batch_id`, `cursor_json`, `checkpoint_kind`, `committed_at`, `revision` | 每个执行最多一行，仅在 Doris 已确认提交后推进；无业务主键全量的 `checkpoint_kind=NONE`，游标为空。 |
+| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `retry_of_execution_id`, `recollect_of_execution_id`, `resume_from_batch_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。重试以 `resume_from_batch_id` 明确引用历史成功批次；补采为独立运行，窗口显式记录且不改正式水位。 |
+| `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, `committed_at`, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。最后一个确认提交且有真实游标的批次就是恢复位置。 |
 | `task_watermark` | `task_id`, `watermark_value`, `last_success_execution_id`, `revision`, `updated_at` | 每个未删除任务一行；只在完整执行和阻断校验通过后推进。 |
 | `task_watermark_history` | `id`, `task_id`, `execution_id`, `before_value`, `after_value`, `reason`, `operator`, `created_at` | `execution_id` 唯一；重置水位需要权限、确认和审计。补采不插入推进记录。 |
 | `execution_reconciliation` | `id`, `execution_id`, `load_batch_id`, probe result, final decision, operator/note/timestamps | Doris 返回不明确时记录 Label/事务探测和人工处置；未明确前禁止盲目重发。 |
+
+不建立 `execution_checkpoint` 表。单 Reader、单个在途批次下，`load_batch` 已完整记录提交顺序、游标和 Doris 最终状态；重复保存指针和游标反而可能不一致。有真实联合业务主键的任务从最后成功批次继续；无业务主键任务没有稳定游标，失败后清理当前机构范围并重新全量执行。
 
 ### 8.2 状态和并发约束
 
@@ -220,7 +216,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 - 失败、取消和待核对均不推进正式水位并阻断调度。
 - 不存在 `SUCCESS_WITH_DIRTY_ROWS`，因为正式 ODS 不接受跳过问题行。
-- 人工重试新建执行并指向 `retry_of_execution_id`，复用原执行最后已确认检查点；不在原行上增加 `retry_count` 自动循环。
+- 人工重试新建执行并指向 `retry_of_execution_id`；有真实游标时引用原执行最后确认提交的 `load_batch`，不在原行上增加 `retry_count` 自动循环。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
 - 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING','RECONCILE_REQUIRED')`。
 - 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次，失败后保留阻断而不自动启动。
@@ -243,9 +239,8 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `precheck_run` | `id`, `run_uuid`, `route_id`, `route_version_id`, optional `institution_id`, `execution_status`, `result_status`, structure/resolution snapshot hashes, phase/progress, extracted/checked/issue row counts, raw retention deadline/cleaned time, error, trigger/operator/timestamps | 人工发起；重新预检新建行。`result_status` 只在完成时为 `PASS/ISSUES`。 |
+| `precheck_run` | `id`, `run_uuid`, `route_id`, `route_version_id`, `execution_status`, `result_status`, structure/resolution snapshot hashes, phase/progress, extracted/checked/issue row counts, raw retention deadline/cleaned time, error, trigger/operator/timestamps | 人工发起并固定扫描整条链路；重新预检新建行。不提供单机构运行范围。`result_status` 只在完成时为 `PASS/ISSUES`。 |
 | `precheck_issue_summary` | `id`, `run_id`, optional `institution_id`, `rule_scope`, optional `standard_field_code`, `rule_code`, `rule_definition_version`, `affected_rows`, `observed_metrics` JSON, `summary`, timestamps | 只保存字段级和组合规则级聚合；不含业务键、原始行、样例、severity、处理/修复状态。 |
-| `precheck_export_job` | `id`, `run_id`, export format/status, storage reference, expiry, requester/timestamps, error | 导出同样只包含汇总；文件到期清理。 |
 
 `execution_status` 固定：`PENDING/EXTRACTING/VALIDATING/COMPLETED/FAILED/CANCELLED`；`result_status` 固定：`PASS/ISSUES`。完整扫描发现不合格数据是 `COMPLETED + ISSUES`，不是技术失败。
 
@@ -253,10 +248,12 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 - `route_id WHERE execution_status IN ('PENDING','EXTRACTING','VALIDATING')` 部分唯一，保证同链路只有一个活动预检。
 - 全局并发上限由系统设置和加锁队列控制；不同链路可以并发。
-- 索引 `precheck_run(route_id, created_at DESC)`、`precheck_run(institution_id, created_at DESC)`、`precheck_issue_summary(run_id, institution_id, standard_field_code)`。
+- 索引 `precheck_run(route_id, created_at DESC)`、`precheck_issue_summary(run_id, institution_id, standard_field_code)`。
 - RAW 数据由 Doris 的 `precheck_run_id + route_id` 隔离，终态后保留 1 天；PostgreSQL 只记录清理截止时间和结果。
 
 预检运行不被任何任务创建/运行外键作为准入条件。界面可查询最新结果并展示风险，但不存在 `validation_status=PASSED` 才允许启用链路的约束。
+
+问题汇总支持按机构和筛选条件直接生成 XLSX/CSV；不导出行级详情或样例，不建立异步导出任务表，不长期保存导出文件，导出操作写入通用审计日志。
 
 ## 10. 校验策略和校验运行
 
@@ -281,12 +278,13 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | --- | --- | --- |
 | `validation_run` | `id`, `run_uuid`, optional `execution_id`, `task_id`, `task_version_id`, `validation_type`, `trigger_type`, `status`, `result`, policy/range/protocol snapshot, source/target counts and checksum, `recheck_of_run_id`, error, timestamps | 同步门禁、人工复检、全量治理和删除对账均新建独立运行。`(execution_id, validation_type)` 对非空执行唯一。 |
 | `validation_run_segment` | `id`, `validation_run_id`, `segment_no`, business-key/time range JSON, source/target count/checksum, `status`, error, timestamps | `(validation_run_id, segment_no)` 唯一；用于大表分段和可审计汇总。 |
-| `validation_difference_summary` | `id`, `validation_run_id`, `difference_type`, optional field code, affected rows, metrics JSON | 为详情和导出提供聚合，不把预检的禁行级规则错误套到校验模型。若未来保存逐行业务差异，必须单独评审容量、保留期和权限。 |
-| `validation_export_job` | run, format/status, storage reference/expiry/requester/timestamps | 导出异步生成并审计。 |
+| `validation_difference_summary` | `id`, `validation_run_id`, `difference_type`, optional field code, affected rows, metrics JSON | 只为页面和汇总导出提供聚合，不保存或导出逐行业务差异。 |
 
 `validation_run.status`：`PENDING/RUNNING/COMPLETED/FAILED/CANCELLED`；`result`：`PASS/MISMATCH`。校验异常是 `FAILED`，数据不一致是 `COMPLETED + MISMATCH`，两者都阻止同步执行成功。
 
 索引：`validation_run(task_id, created_at DESC)`、`validation_run(execution_id)`、`validation_run(status, created_at)`、`validation_run_segment(validation_run_id, status, segment_no)`。
+
+校验结果只直接导出汇总 XLSX/CSV；不建立异步导出任务表或临时文件生命周期。
 
 ## 11. 消息事务发件箱
 
@@ -315,17 +313,19 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 范围 | 当前代码/老库 | 目标差异 | 实施影响 |
 | --- | --- | --- | --- |
-| 医共体 | 没有显式 `medical_community`；任务唯一性只在应用按机构/数据集扫描。 | 新增租户根和任务部分唯一索引。 | API 上下文、机构和任务创建都必须携带/解析 `community_id`。 |
-| 源数据源 | `SourceDataSource.institutionId` 单归属；`findByInstitutionId`/`countByInstitutionId` 广泛使用。 | 数据源与实例多对多，机构通过实例覆盖关系得到。 | 替换 `SourceDataSourceRepository`、机构统计和创建时继承机构的查询路径。 |
+| 医共体 | 当前没有稳定的租户根模型。 | 一个部署固定服务一个医共体，名称和编码进入 `system_setting`；不新增 `medical_community/community_id`。 | API 不传递租户 ID，部署和数据库本身就是隔离边界。 |
+| 机构 | 旧表存在层级或单归属痕迹。 | P0 机构扁平化，编码全局唯一，不保存 `parent_id`。 | 删除层级查询和继承逻辑。 |
+| 源数据源 | `SourceDataSource.institutionId` 单归属；`findByInstitutionId`/`countByInstitutionId` 广泛使用。 | 数据源与实例多对多；支持 `HOST_PORT/JDBC_URL` 两种逻辑连接方式。 | 替换单机构查询；凭据与 URL 分离，不管理第三方节点切换。 |
+| 目标 Doris | 表名来源分散，执行前建表逻辑会自动创建或补列。 | 逻辑部署支持单机/集群；表名按数据集固定；直接读取 Doris 实际元数据，不建 PostgreSQL 表登记。 | 收敛 DDL 生成器；普通执行只校验，建表/重建必须人工显式发起。 |
 | 系统实例 | 当前无实体、Repository 和外键。 | 新增实例及两张多对多表。 | 新建管理 API/服务；链路创建先验证实例覆盖和数据源关系。 |
 | 链路 | `InstitutionDatasetRoute` 直接含单个 `institutionId`，并保存 `enabled`、结构 `validationStatus` 和当前 revision。 | 链路多机构；身份/版本/覆盖快照分离；链路无运行态，预检不作准入。 | 重写 route repository/resolver/validation service；删除 `enabled` 依赖结构通过的门禁。 |
 | 字段映射 | `TaskViewConfig.fieldMappings` JSON 可编辑；任务控制器直接返回它。 | 只读 `route_field_resolution`，只允许大小写解析。 | 删除字段重命名写入口；所有 SQL 生成统一使用解析快照。 |
-| 数据集 | `DfetlDataset`/`DfetlField` 只代表当前行，历史脚本一度删除 definition version。 | 数据集身份、不可变版本、字段版本和合同版本。 | 导入改为 append version + 原子切 current；任务引用明确版本。 |
-| 任务 | `SyncTask` 是大型扁平实体，混放定义、调度、运行状态、水位、JSON 映射、过滤、重试和已废止模式。 | `sync_task` 身份 + `sync_task_version` + governance override + runtime state。 | 所有创建/修改改为发布新版本；移除 `CUSTOM_SQL/ID_RANGE/自动重试/问题分流`。 |
+| 数据集 | `DfetlDataset`/`DfetlField` 只代表当前行，历史脚本一度删除 definition version。 | 数据集身份、不可变版本、字段版本和合同版本；仅定义 Hash 变化才生成版本。 | 同步改为人工操作；未变化只记录同步时间和结果，任务继续引用明确版本。 |
+| 任务 | `SyncTask` 是大型扁平实体，混放定义、调度、运行状态、水位、JSON 映射、过滤、重试和已废止模式。 | `sync_task` 身份 + `sync_task_version` + governance override + runtime state；不保存生命周期状态或版本状态。 | 新版本插入与当前指针切换原子完成；移除 `CUSTOM_SQL/ID_RANGE/自动重试/问题分流`。 |
 | 执行 | `TaskExecution` 不引用任务版本，快照仅覆盖少数字段，并含 `SUCCESS_WITH_DIRTY_ROWS`。 | 执行引用不可变任务版本并保存最终有效配置；移除分流成功状态。 | 执行组装器和监控 DTO 按版本/执行快照读取。 |
-| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | `task_watermark`/history 与 `execution_checkpoint` 分离。 | `WatermarkService` 改为带行锁和版本的独立事务边界；监控不再读任务配置字段。 |
-| 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；无业务键时 checkpoint 明确为空。 |
-| 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 运行状态与结果分开，仅保存字段/组合规则汇总。 | 删除 dirty/issue 行查询与修复 API；工作台改查 summary。 |
+| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 正式水位进入 `task_watermark`/history；恢复位置由最后成功 `load_batch` 表达。 | `WatermarkService` 改为独立事务边界；不建立重复的 `execution_checkpoint` 表。 |
+| 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；无业务键时不生成恢复游标，失败后重新全量。 |
+| 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 run/segment；执行 ID 为正式关系。 | 合并策略解析器和运行查询；去除 legacy identity。 |
 | 消息 | `DfetlMessagePolicy`、`MessagePublishConfig`、publish log、send record 分散；成功后补写，非事务 outbox。 | 数据集默认/任务覆盖 + 执行快照 + outbox/attempt。 | 完成事务插入事件，独立发布器消费；旧 recovery/log 扫描退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
@@ -339,13 +339,14 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | precheck 一个 `status` | 无法区分技术失败与检查出问题。 | `execution_status` 与 `result_status` 分开。 |
 | validation 默认 lookback 24/自动复检 | 扩大本批范围且会自动重复执行。 | 默认 lookback 0，自动复检关闭，人工复检新建运行。 |
 | task auto retry/retry count | 与人工处理基线冲突。 | 执行失败阻断；人工重试新建关联执行。 |
+| task lifecycle/version status | 与执行结果、调度开关和当前版本指针重复。 | 删除；分别由执行记录、调度控制字段和 `current_version_id` 表达。 |
 | `ID_RANGE`/`CUSTOM_WINDOW` 混入普通任务 | 与标准医疗时间增量和补采边界混淆。 | 标准增量只用 `XIUGAISJ`；历史范围使用独立 `BACKFILL` 执行。 |
 
 ### 13.3 约束差异
 
 | 必须新增/替换的数据库约束 | 当前缺口 |
 | --- | --- |
-| 未删除任务 `(community_id, institution_id, dataset_id)` 部分唯一 | 当前由 `SyncTaskApplicationService` 先查询后判断，存在并发竞态，且缺 `community_id/deleted_at`。 |
+| 未删除任务 `(institution_id, dataset_id)` 部分唯一 | 当前由 `SyncTaskApplicationService` 先查询后判断，存在并发竞态且缺 `deleted_at`。 |
 | 未删除链路的实例/数据源/数据集/源对象表达式唯一 | 当前核心唯一关系偏向 `(institution_id,dataset_id)`，无法共享链路。 |
 | 任务机构必须属于链路覆盖集合 | 当前依赖 resolver/service 手工比对单机构和数据源归属。 |
 | 版本父对象内 `version_no`/hash 唯一且不可更新 | 当前 `SyncTask.version`、route revision 和字段当前行可原地覆盖。 |
@@ -364,7 +365,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `InstitutionDatasetRouteResolver` 检查 route.institution 与 datasource.institution | 通过复合外键保证覆盖关系，resolver 读取明确 route version 和 resolution snapshot。 |
 | `SyncTaskApplicationService.findExistingTaskId` 扫机构任务再比 dataset | 直接按部分唯一键查询；创建依赖唯一冲突处理，不先扫列表。 |
 | `SyncTaskRepository` 含修复空机构和数据源归属的 JPQL | 新库无历史脏数据修复查询；配置迁移由 `DB-002` 工具显式完成。 |
-| `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；执行详情按 `sync_execution` 和 `execution_checkpoint` 查询。 |
+| `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；恢复位置按 `sync_execution` 和最后确认提交的 `load_batch` 查询。 |
 | 预检 issue/dirty 行分页 | 按 run/institution/field/rule 查询 summary；不再提供行级索引。 |
 | publish log/recovery 定时扫描 | outbox 使用 `(status, available_at)` 索引和 `SKIP LOCKED`。 |
 
@@ -376,8 +377,8 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | `dfetl_dataset`, `dfetl_field` | 由 `standard_dataset*` 版本模型替代。 |
 | `institution_dataset_route` | 由 `collection_route*` 和覆盖/解析快照替代。 |
 | `sync_task`, `task_view_config` | 由任务身份/版本/治理覆盖替代；字段映射不再可编辑。 |
-| `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/checkpoint/watermark 体系替代。 |
-| `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary/export；行级和修复模型废止。 |
+| `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；恢复检查点是成功载入批次，不另建表。 |
+| `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
 | `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 validation run/segment/summary。 |
 | message policy/config/log/send record | 合并为策略、执行快照、outbox 和 attempt。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |

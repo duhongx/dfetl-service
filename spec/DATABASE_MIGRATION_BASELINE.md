@@ -1,7 +1,8 @@
 # DFETL 数据库迁移基线与 SQL 维护规范
 
 > 状态：已确认  
-> 日期：2026-08-13  
+> 首次确认：2026-08-13  
+> 最近更新：2026-08-14  
 > 适用范围：`dfetl-service` PostgreSQL 元数据库  
 > 业务优先级：与本文冲突时，以 `PRODUCT_AND_BUSINESS_DECISIONS.md` 为准。
 
@@ -49,7 +50,7 @@
 
 因此，新 V1 必须从最终业务合同和代码模型重新构建，而不是把历史 SQL 排序后执行。
 
-62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；阶段 1 冻结的 P0 关系模型、状态、约束、索引和现有代码差异见 `spec/TARGET_METADATA_MODEL.md`。目标模型 Review 完成前不得创建或固化 `V1__baseline.sql`。
+62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；阶段 1 的 P0 关系模型、状态、约束、索引和现有代码差异见 `spec/TARGET_METADATA_MODEL.md`。目标模型正在逐项 Review，2026-08-14 第一批确认项已经合并；全部 Review 完成前不得创建或固化 `V1__baseline.sql`。
 
 ## 4. Flyway 目录和命名
 
@@ -84,6 +85,9 @@ V1 不得包含：
 
 - 老库中的运行数据、执行历史、Quartz 状态、预检行级明细或消息发送历史；
 - 已废止的 `validation_task`、`dfetl_task`、`task_group`、行级问题和问题分流模型；
+- 单医共体部署下不需要的 `medical_community`、`community_id` 和机构层级 `parent_id`；
+- PostgreSQL Doris 物理表登记/结构版本表、重复的 `execution_checkpoint` 表，以及预检/校验异步导出任务表；
+- 与执行结果或当前版本指针重复的任务生命周期状态和任务版本状态；
 - 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；
 - 为兼容老库而存在、但新系统不再使用的临时迁移字段。
