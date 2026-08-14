@@ -1,10 +1,11 @@
 # P0 首次全量与后续增量执行边界 Review
 
 > 状态：阶段 1 工作包 3 一致性 Review 已确认  
-> 日期：2026-08-14  
+> 日期：2026-08-15  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 执行字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`  
 > 水位字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
+> 批次模型：`spec/P0_LOAD_BATCH_MODEL_REVIEW.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
 
 ## 1. 术语边界
@@ -59,7 +60,7 @@ sync_execution.execution_scope = INITIAL_FULL
 该执行只负责当前机构的首次全量：
 
 - 只读取当前机构全量数据；
-- 只产生全量载入批次；
+- 只产生首次全量执行的载入批次；
 - 执行自己的同步门禁校验；
 - 校验通过后独立进入 `SUCCEEDED`；
 - 消息策略启用时，为该全量执行创建一条全量 `message_outbox`；
@@ -161,15 +162,26 @@ INITIAL_FULL_AND_INCREMENTAL 组合范围
 
 ```text
 INITIAL_FULL execution
-→ 只能有全量批次
+→ 全部批次都属于首次全量
 
 INCREMENTAL execution
-→ 只能有增量批次
+→ 全部批次都属于增量
 ```
 
-不允许同一执行同时出现全量批次和增量批次。
+已经确认删除：
 
-`load_batch.phase` 是否仍有必要，作为下一项一致性 Review 单独确认；本文件先固定“不混合阶段”这一业务事实。
+```text
+load_batch.phase
+```
+
+批次类型统一通过父执行推导：
+
+```text
+load_batch.execution_id
+→ sync_execution.execution_scope
+```
+
+不允许同一执行混合全量和增量批次，也不在子表复制父级执行范围。详细结论见 `spec/P0_LOAD_BATCH_MODEL_REVIEW.md`。
 
 ### 6.3 `task_watermark`
 
@@ -186,6 +198,7 @@ INCREMENTAL execution
 首次全量完成后立即执行一次补充增量
 补充增量属于首次全量同一执行流程
 一条 INITIAL_FULL 执行同时包含 FULL 和 INCREMENTAL load_batch
+load_batch 通过 phase 重复保存父执行范围
 ```
 
 阶段 1 最终一致性清理时，必须从以下文档机械删除或改写这些旧描述：
@@ -198,4 +211,4 @@ spec/TARGET_METADATA_MODEL.md
 spec/TASKS.md
 ```
 
-本文件在上述清理完成前作为该问题的权威 Review 结论。
+本文件和 `spec/P0_LOAD_BATCH_MODEL_REVIEW.md` 在上述清理完成前作为该问题的权威 Review 结论。
