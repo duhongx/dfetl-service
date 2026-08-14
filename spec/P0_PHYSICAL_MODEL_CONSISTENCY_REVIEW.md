@@ -1,7 +1,7 @@
 # P0 物理模型一致性 Review
 
 > 状态：阶段 1 工作包 3 进行中  
-> 日期：2026-08-14  
+> 日期：2026-08-15  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`  
 > 限制：本文只记录目标模型一致性结论；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
@@ -209,19 +209,58 @@ spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 - `sync_execution.execution_scope` 保留 `INITIAL_FULL` 和 `INCREMENTAL`，但二者永远属于不同执行行。
 - 同一执行内的全部 `load_batch` 必须与执行范围一致，不能同时混入全量和增量批次。
 - 原“首次全量后立即补充增量”的描述不得进入 Flyway V1、Java 状态机、前端详情或测试用例。
-- `load_batch.phase` 在执行不混合阶段后是否仍有必要，作为下一项一致性 Review 单独确认。
 
-## 6. 已修正和待机械清理的文档
+## 6. 已确认：删除 `load_batch.phase`
+
+### 6.1 冲突
+
+父表已经保存：
+
+```text
+sync_execution.execution_scope
+```
+
+子表又计划保存：
+
+```text
+load_batch.phase = FULL/INCREMENTAL/BACKFILL
+```
+
+在同一执行不混合运行范围的前提下，两者表达同一个事实，并允许保存不可能组合：
+
+```text
+execution_scope = INCREMENTAL
+phase = FULL
+```
+
+### 6.2 最终规则
+
+1. 删除 `load_batch.phase`。
+2. 删除 `CHECK (phase IN ('FULL','INCREMENTAL','BACKFILL'))`。
+3. 批次类型只通过 `load_batch.execution_id → sync_execution.execution_scope` 推导。
+4. 不增加 `batch_type`、`stage` 或其他同义替代字段。
+5. 页面、API、日志和导出需要展示类型时，使用父执行范围。
+6. 老系统 `task_chunk` 和旧实体中的相似字段不迁移。
+7. 新系统 Flyway V1、Java 实体、DTO、OpenAPI 和 Vue 类型均不得创建 `phase`。
+
+权威 Review：
+
+```text
+spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+```
+
+## 7. 已修正和待机械清理的文档
 
 当前已修正：
 
 ```text
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
-阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours` 及“首次全量立即补充增量”描述：
+阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours`、`load_batch.phase` 及“首次全量立即补充增量”描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
@@ -234,6 +273,6 @@ spec/TARGET_METADATA_MODEL.md
 
 清理属于已确认结论的机械同步，不再重新讨论。
 
-## 7. 后续检查顺序
+## 8. 后续检查顺序
 
-下一项继续从执行和批次模型中选择影响范围最大的真实冲突，只讨论一个问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
+下一项继续核对 `load_batch` 的游标、时间范围和 Doris Label 状态组合，只讨论一个真实问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
