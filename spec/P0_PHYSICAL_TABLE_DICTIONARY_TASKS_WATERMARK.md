@@ -21,7 +21,7 @@ task_watermark
 - 任务身份固定为“一个医疗机构 + 一个标准数据集”；
 - 采集链路属于任务版本，可以由用户显式更换；
 - 预检只保存和展示事实，不存在全局、数据集或任务级预检策略；
-- 校验允许“全局默认 → 数据集覆盖 → 任务覆盖”；
+- 校验允许“全局默认 → 数据集覆盖 → 任务覆盖”，但正式同步校验不能关闭，最低为 `ROW_COUNT`；
 - 调度和读取参数属于不可变任务版本；
 - 消息策略只存在于数据集级；
 - 正式水位只有当前值，不建立水位历史表。
@@ -45,7 +45,7 @@ sync_task_version
   └─ 固定调度合同
 
 task_validation_policy
-  └─ 可在后续新执行生效的任务级校验覆盖
+  └─ 可在后续新执行生效的任务级校验方式、容差和回看覆盖
 
 task_watermark
   └─ 当前正式时间水位
@@ -79,6 +79,7 @@ reader_parallelism
 retry/backoff/resume 字段
 消息配置
 预检策略
+校验关闭开关
 ```
 
 ## 3. `sync_task`
@@ -108,7 +109,7 @@ retry/backoff/resume 字段
 - 最近运行结果和失败原因：`sync_execution`；
 - 当前载入进度：`load_batch`；
 - 当前正式水位：`task_watermark`；
-- 当前校验策略：三级策略解析；
+- 当前校验策略：三级策略解析，最低为 `ROW_COUNT`；
 - 当前消息策略：`dataset_message_policy`；
 - 当前采集链路：当前 `sync_task_version.route_version_id`。
 
@@ -369,7 +370,7 @@ schedule_source + schedule_source_revision
 
 ## 5. `task_validation_policy`
 
-职责：保存任务级校验继承或明确覆盖。它替代含义过宽的 `task_governance_override`；P0 不建立预检策略、消息覆盖或调度覆盖字段。
+职责：保存任务级校验继承或明确覆盖。它替代含义过宽的 `task_governance_override`；P0 不建立预检策略、消息覆盖、调度覆盖或校验关闭字段。
 
 ### 5.1 字段
 
@@ -377,7 +378,6 @@ schedule_source + schedule_source_revision
 | --- | --- | --- | --- |
 | `task_id` | `bigint` | PK/FK | FK `sync_task(id)`，`ON DELETE RESTRICT` |
 | `override_mode` | `varchar(16)` | NOT NULL DEFAULT `'INHERIT'` | `INHERIT/OVERRIDE` |
-| `enabled` | `boolean` | NULL | 覆盖时必填；允许显式关闭 |
 | `validation_method` | `varchar(32)` | NULL | 覆盖时必填，`ROW_COUNT/ROW_COUNT_CHECKSUM` |
 | `row_tolerance` | `numeric(8,4)` | NULL | 覆盖时必填 |
 | `lookback_hours` | `integer` | NULL | 覆盖时必填 |
@@ -401,13 +401,11 @@ CHECK (revision >= 0)
 
 CHECK (
   (override_mode = 'INHERIT'
-    AND enabled IS NULL
     AND validation_method IS NULL
     AND row_tolerance IS NULL
     AND lookback_hours IS NULL)
   OR
   (override_mode = 'OVERRIDE'
-    AND enabled IS NOT NULL
     AND validation_method IS NOT NULL
     AND row_tolerance IS NOT NULL
     AND lookback_hours IS NOT NULL)
@@ -421,9 +419,10 @@ CHECK (
 - 任务处于 `INHERIT` 时，上级校验策略变化从下一次新执行生效。
 - 任务为 `OVERRIDE` 时继续使用任务值，直至用户修改或重置为继承。
 - 运行中执行始终使用启动时保存的有效配置快照。
+- 正式同步校验不能关闭，任务策略不保存 `enabled`；最低方式始终是 `ROW_COUNT`。
 - 无业务主键数据集不能保存 `ROW_COUNT_CHECKSUM`；保存服务必须根据任务当前数据集版本拒绝该组合。
 - 本表不保存 Checksum 算法、采样率、自动修复、失败重试、自动复检、失败动作、分段大小或目标表列表。
-- 成功、失败、重置为继承和显式关闭均写操作审计。
+- 成功、失败、重置为继承和修改覆盖均写操作审计。
 
 ## 6. 已确认：预检只保存事实，不建立策略表
 
@@ -612,7 +611,7 @@ LEFT JOIN task_watermark
 | `parallelism/shard_count/shard_strategy/split_pk` | P0 删除；Reader 固定单并发 |
 | `static_filter/filter_condition_map/custom_sql` | 标准业务路径删除 |
 | `target_table_map` | 删除；ODS/RAW 名称固定 |
-| `TaskValidationConfig` 大量模板/修复/重试字段 | 收敛为 `task_validation_policy` |
+| `TaskValidationConfig` 大量模板/修复/重试/关闭字段 | 收敛为始终至少执行 `ROW_COUNT` 的 `task_validation_policy` |
 | `task_governance_override` | 不采用含糊名称；拆为明确的 `task_validation_policy` |
 | 预检三级策略 | 删除，只保存事实 |
 | 任务级消息配置 | 删除，消息只在数据集级 |
