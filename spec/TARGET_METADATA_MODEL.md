@@ -157,7 +157,7 @@ WHERE deleted_at IS NULL
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `catch_up_pending`, `deleted_at`, audit columns | 只保存长期身份和用户控制的调度开关；不保存生命周期状态、最近执行结果、失败阻断、Cron、字段映射、窗口或正式水位。 |
+| `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `deleted_at`, audit columns | 只保存长期身份和用户控制的调度开关；不保存生命周期状态、最近执行结果、失败阻断、待追赶、Cron、字段映射、窗口或正式水位。 |
 | `sync_task_version` | `id`, `task_id`, `version_no`, `route_version_id`, `dataset_version_id`, `task_kind`, `write_mode`, `doris_key_model`, institution code snapshot, incremental/upper/lookback/fetch/schedule config, field contract hash, `contract_hash`, `created_by`, `created_at` | 只插入且不保存 `status`；`(task_id, version_no)`、`(task_id, contract_hash)` 唯一。新版本插入和 `current_version_id` 切换在同一事务完成。 |
 | `task_governance_override` | `task_id`, nullable validation/message/scheduling overrides, `revision`, audit columns | 表达任务级覆盖；生成任务版本时计算全局→数据集→任务最终值。 |
 
@@ -184,7 +184,7 @@ WHERE deleted_at IS NULL;
 | 数据集合同 | `task_kind` | `write_mode` | 关键约束 |
 | --- | --- | --- | --- |
 | 无业务主键 | `FULL_ONLY` | `REPLACE_INSTITUTION_SCOPE` | 单 Reader 流式全量；清理当前机构范围；无假游标。 |
-| 有业务主键和 `XIUGAISJ` | `FULL_THEN_INCREMENTAL` | `UPSERT` | 首次全量开始时间为初始水位，成功后立即追赶；增量 `[watermark, upper)`。 |
+| 有业务主键和 `XIUGAISJ` | `FULL_THEN_INCREMENTAL` | `UPSERT` | 首次全量开始时间为初始水位，成功后立即执行一次补充增量；日常增量使用 `[watermark, upper)`。 |
 | 有业务主键、无有效增量字段 | `FULL_ONLY` | `UPSERT` | 每次当前机构全量 UPSERT。 |
 
 以下字段不进入目标任务版本：`CUSTOM_SQL`、任意 static/per-table filter、`ID_RANGE`、`split_pk` 作为业务键、自动重试参数、可调 Reader 并发、脏数据分流、STRICT/PERMISSIVE 切换。
@@ -218,13 +218,14 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 - Doris 响应不明确时自动探测原 Label，结果直接回写 `load_batch` 并记录审计；新执行启动前再次核对旧 Label，避免旧批次仍可能提交时盲目重放。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
 - 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')`。
-- 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次。失败或取消时清除本次待追赶标记，不立即启动另一执行，等待下一次计划调度。
+- 计划调度触发遇到活动执行时直接跳过并记录日志，不持久化 `catch_up_pending`，也不在当前执行结束后补跑；等待下一次计划调度。
+- 如果任务执行时长接近或超过调度周期，由维护人员调整为 12 小时或更长，不为极端长任务增加追赶状态机。
 - “取消执行”与“暂停任务”是独立命令：前者只把当前 `sync_execution` 置为 `CANCELLED`，后者只修改 `sync_task.schedule_enabled`。
 - `load_batch(execution_id, status, batch_no)`、`sync_execution(task_id, created_at DESC)` 和所有父外键列建立查询索引。
 
 ### 8.3 原子完成边界
 
-一次普通、追赶或人工重新采集执行完成时使用一个短 PostgreSQL 事务：
+一次普通、首次全量补充增量或人工重新采集执行完成时使用一个短 PostgreSQL 事务：
 
 1. 锁定 `sync_execution` 和 `task_watermark`；
 2. 确认全部载入批次已提交且最终阻断 `validation_run` 通过；
