@@ -527,7 +527,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 
 - [ ] 删除默认 30 秒延迟自动复检及相关默认策略，正式校验首次不通过即形成失败结果。
 - [ ] 保留人工“重新校验”入口，并基于原执行快照恢复相同机构、相同字段合同和相同数据范围。
-- [ ] 人工重新校验生成独立运行记录，关联原同步执行和原校验结果，不覆盖历史失败记录。
+- [ ] 人工重新校验生成独立运行记录，以 `trigger_type=MANUAL_RECHECK` 标识并关联原同步执行，但不保存 `recheck_of_run_id` 或覆盖历史失败记录。
 - [ ] 重新校验结果、操作者、触发时间和最终处理结果进入审计记录。
 
 ### [P1][VALID-005] 无删除标识数据源的定期主键快照校验
@@ -785,6 +785,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认不建立 `task_watermark_history`：当前值保存在 `task_watermark`，正常推进从成功执行窗口追溯，人工重置写入通用审计日志。
 - [x] 2026-08-14 已确认删除 `sync_execution.recollect_of_execution_id`：重新采集只由操作类型标识，操作来源和原因进入通用审计日志。
 - [x] 2026-08-14 已确认删除 `validation_run_segment`：校验可在内部按批计算，但只持久化整次运行结果，失败后整次重新校验。
+- [x] 2026-08-14 已确认删除 `validation_run.recheck_of_run_id`：人工重新校验使用触发类型标识，可关联原同步执行但不关联历史校验运行。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1115,6 +1116,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `task_watermark_history`；只保留当前正式水位，推进和人工重置分别由执行记录与 `audit_log` 追溯。
 - 删除 `sync_execution.recollect_of_execution_id`；执行表不建立重新采集自关联。
 - 删除 `validation_run_segment`；校验内部可分批计算，但不持久化分段状态或提供分段恢复。
+- 删除 `validation_run.recheck_of_run_id`；人工重新校验是独立运行，同一同步执行允许产生多次人工重新校验记录。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。

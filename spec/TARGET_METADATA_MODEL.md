@@ -276,12 +276,14 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `validation_run` | `id`, `run_uuid`, optional `execution_id`, `task_id`, `task_version_id`, `validation_type`, `trigger_type`, `status`, `result`, policy/range/protocol snapshot, source/target counts and checksum, `recheck_of_run_id`, error, timestamps | 同步门禁、人工复检、全量治理和删除对账均新建独立运行。`(execution_id, validation_type)` 对非空执行唯一。 |
+| `validation_run` | `id`, `run_uuid`, optional `execution_id`, `task_id`, `task_version_id`, `validation_type`, `trigger_type`, `status`, `result`, policy/range/protocol snapshot, source/target counts and checksum, error, timestamps | 同步门禁、人工复检、全量治理和删除对账均新建独立运行。只对 `trigger_type=SYNC_GATE` 建立 `(execution_id, validation_type)` 部分唯一约束；同一执行允许多次人工重新校验。 |
 | `validation_difference_summary` | `id`, `validation_run_id`, `difference_type`, optional field code, affected rows, metrics JSON | 只为页面和汇总导出提供聚合，不保存或导出逐行业务差异。 |
 
 `validation_run.status`：`PENDING/RUNNING/COMPLETED/FAILED/CANCELLED`；`result`：`PASS/MISMATCH`。校验异常是 `FAILED`，数据不一致是 `COMPLETED + MISMATCH`，两者都阻止同步执行成功。
 
 校验实现内部可以分批读取和计算，但只把整次源/目标行数、Checksum、最终状态和差异汇总写入 PostgreSQL；不建立 `validation_run_segment`，失败后整次重新校验，不做分段恢复。
+
+人工重新校验使用 `trigger_type=MANUAL_RECHECK`，可继续关联原 `sync_execution` 以复用相同快照和数据范围，但不保存 `recheck_of_run_id` 或其他 `validation_run` 自关联；发起入口和操作者写入 `audit_log`。
 
 索引：`validation_run(task_id, created_at DESC)`、`validation_run(execution_id)`、`validation_run(status, created_at)`、`validation_difference_summary(validation_run_id, difference_type)`。
 
