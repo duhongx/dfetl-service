@@ -291,21 +291,21 @@ spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
+spec/TASKS.md
 ```
 
-阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours`、`load_batch.phase`、`load_batch.time_lower/time_upper` 及“首次全量立即补充增量”描述：
+阶段 1 最终一致性清理仍需从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours` 及“首次全量立即补充增量”等旧描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
-spec/TASKS.md
 spec/TARGET_METADATA_MODEL.md
 ```
 
-清理属于已确认结论的机械同步，不再重新讨论。
+`load_batch.phase/time_lower/time_upper` 已从执行物理字典和当前任务清单清理完成。
 
 ## 9. 后续检查顺序
 
