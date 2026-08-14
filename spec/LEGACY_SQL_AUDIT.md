@@ -79,13 +79,13 @@
 | 34 | `migration_id_range_validation_window.sql` | 废止 | 标准增量合同使用 `XIUGAISJ` 时间窗口；不再提供 `ID_RANGE` 作为标准增量模式。 |
 | 35 | `migration_institution.sql` | 保留 | 机构主数据保留；历史回填和从任务反推机构的数据迁移不进入空库 `V1`。 |
 | 36 | `migration_institution_indexes.sql` | 由新模型替代 | 按机构查询仍需要，但数据源和链路关系已变为多对多，索引必须按新外键和覆盖关系重建。 |
-| 37 | `migration_message_publish.sql` | 由新模型替代 | 数据集级发布策略、首次全量模式和审计语义保留；P0 只使用固定契约的 RabbitMQ，消息发送改为事务 outbox，不保留任务级配置或以执行后补写日志为可靠性边界。 |
+| 37 | `migration_message_publish.sql` | 由新模型替代 | 数据集级 RabbitMQ 参数和审计语义保留；消息发送改为事务 outbox，不保留任务级配置、Redis Stream、首次全量模式或完成/TRUNCATE 信号，也不以执行后补写日志为可靠性边界。 |
 | 38 | `migration_message_publish_log_sample.sql` | 废止 | 示例运行数据不属于基础数据，且新库不得导入老执行或消息历史。 |
 | 39 | `migration_message_send_record.sql` | 废止 | 不保留逐条发送记录或 outbox 子记录；整段发布次数、时间、状态和最后错误进入 `message_outbox`，逐条 RabbitMQ 确认详情只写应用日志。 |
 | 40 | `migration_source_datasource_realign.sql` | 仅作历史参考 | 这是对老库数据源归属的停机校正，新系统以实例/数据源/机构多对多关系直接初始化。 |
 | 41 | `migration_spec048_window_checksum.sql` | 由新模型替代 | 固定校验窗口和 checksum 协议版本进入校验运行快照；不再依赖旧 `validation_task`。 |
 | 42 | `migration_spec053_cron_builder.sql` | 由新模型替代 | 可视化调度配置、Cron 和时区进入不可变任务版本；调度运行态与版本定义分离。 |
-| 43 | `migration_spec075_message_publish_mode.sql` | 由新模型替代 | 首次全量消息模式能力保留；消息启用和参数只在数据集级维护，不保留任务覆盖或 Redis Stream transport 分支。 |
+| 43 | `migration_spec075_message_publish_mode.sql` | 废止 | 新模型没有首次全量消息模式；全量和增量都发布本次同步范围内的全部业务数据，不支持 `SKIP/NOTIFY_ONLY`。 |
 | 44 | `migration_sync_task_batch_size_global_fetch.sql` | 由新模型替代 | JDBC fetch size 进入任务版本；Reader 并发固定为 1，不再与可调并发混合。 |
 | 45 | `migration_sync_task_phase9_16.sql` | 由新模型替代 | 执行参数中仍有效的时间窗口、Doris 模型等进入任务版本；`CUSTOM_SQL`、`ID_RANGE`、任意过滤和分流字段废止。 |
 | 46 | `migration_sync_task_retry_fields.sql` | 废止 | 自动重试、退避和重试上限与“系统不自动重试”冲突；只保留人工重试/重采/补采关系。 |

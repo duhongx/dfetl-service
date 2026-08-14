@@ -433,6 +433,7 @@ DFETL 是面向医共体的数据采集与传输平台，负责把 PostgreSQL、
 - RabbitMQ 地址、端口、账号、密码和连接参数属于部署级全局配置，不进入数据集策略或数据库业务表。P0 沿用旧代码的外部契约：使用持久化 Topic Exchange `YL`，三个数据集分别使用完整 Routing Key `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX`，`topic` 默认与完整 Routing Key 相同并写入消息体；消息持久化并启用 Publisher Confirm 和 Return。Exchange 由平台幂等声明。
 - 消息配置只允许在数据集级维护，不设置任务级启用、禁用或参数覆盖。旧代码虽然把数据集策略复制到每个任务的 `message_publish_config`，但任务间的消息业务参数没有必要不同，新模型不保留这份重复配置。
 - 不同任务只提供机构编码、Doris 目标对象、执行批次或水位范围等运行上下文；这些值来自任务版本和执行记录并进入 Outbox 发布指令快照，不属于消息策略。
+- 消息发布范围固定等于本次成功同步的实际数据范围：全量执行发送本次全量的全部业务数据，增量执行发送本次增量的全部业务数据。不提供 `ALL/SKIP/NOTIFY_ONLY` 模式选择，不发送 `FULL_SYNC_COMPLETE` 或 TRUNCATE 信号。
 - 关闭的消息配置不在列表中制造噪音，但数据集详情必须保留重新开启入口。
 - 业务消息只在整次同步和校验成功、正式水位推进完成后发布。
 - 消息发送与同步事务解耦。
@@ -442,10 +443,10 @@ DFETL 是面向医共体的数据采集与传输平台，负责把 PostgreSQL、
 - Outbox 状态只使用 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置 `FAILED`：临时失败回到 `PENDING` 并设置下次重试时间，达到最大次数进入 `DEAD_LETTER`，人工重发再回到 `PENDING`。
 - Outbox 只使用 `available_at` 表示下一次允许投递的时间，不再设置语义重复的 `next_attempt_at`：首次发送写入首次可投递时间，临时失败覆盖为下次重试时间，人工重发覆盖为当前时间。
 - 每次同步执行只创建一条 Outbox 发布指令，保存执行、数据范围、Doris 目标对象和消息路由等小型快照，不保存本次业务数据明细。发布器按执行批次或水位范围从 Doris 分页读取并逐条发送；中途失败后重新发布整段数据，不建立分页进度表、分页明细表或逐条消息表。
-- Outbox 不保存固定且无区分价值的 `event_type`，直接以 `execution_id` 唯一保证一次同步执行最多创建一条发布指令；全量发布行为由指令中的数据范围和首次全量模式表达。
+- Outbox 不保存固定且无区分价值的 `event_type`，直接以 `execution_id` 唯一保证一次同步执行最多创建一条发布指令；全量或增量发布范围由指令中的执行数据范围表达。
 - Outbox 不保存 `provider_message_id`：一条发布指令对应多条 RabbitMQ 业务消息，确认标识均为逐条产生，单个字段不能代表整段发布；逐条标识只进入应用日志。
 - 发布器抢占事件时将 `PENDING` 改为 `PUBLISHING` 并更新 `last_attempt_at`。进程异常退出后，由恢复扫描把超过全局超时时间的 `PUBLISHING` 增加尝试次数并改回 `PENDING`，达到最大次数则进入 `DEAD_LETTER`；不增加租约表、工作节点字段或其他恢复状态。该恢复只处理消息发布，不修改同步结果和任务调度。
-- 配置字段沿用原代码中的来源系统、租户 ID、Routing Key、Topic、messageKey 模板、首次全量模式、限速和分页大小。
+- 配置字段保留来源系统、租户 ID、Routing Key、Topic、messageKey 模板、限速和分页大小；删除旧 `full_sync_mode`、`send_truncate_signal` 及相关信号配置。
 
 ## 14. 数据预检
 

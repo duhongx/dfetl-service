@@ -97,7 +97,7 @@ erDiagram
 | --- | --- |
 | `dataset_sync_policy` | 数据集级调度、fetch size、时间上界延迟、回看窗口等默认值；含 `revision` 和乐观锁。Reader 并发不提供可编辑字段，执行合同固定为 1。 |
 | `dataset_validation_policy` | 数据集级 `ROW_COUNT`/`ROW_COUNT_CHECKSUM`、容差、是否同步后阻断校验等覆盖；默认 `ROW_COUNT`、容差 0、`lookback_hours=0`、自动复检关闭。 |
-| `dataset_message_policy` | 数据集级 RabbitMQ 消息启用、来源系统、租户、routing key、topic、messageKey 模板、首次全量模式、限速和分页大小。默认关闭；不保存 transport、Exchange 或连接参数，不提供任务级覆盖。三个允许启用的数据集固定使用 `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX`，topic 默认与 routing key 相同。 |
+| `dataset_message_policy` | 数据集级 RabbitMQ 消息启用、来源系统、租户、routing key、topic、messageKey 模板、限速和分页大小。默认关闭；不保存 transport、Exchange、连接参数、`full_sync_mode` 或 `send_truncate_signal`，不提供任务级覆盖。三个允许启用的数据集固定使用 `YL_HUANZHEJBXX`、`YL_KESHIXX`、`YL_ZHIGONGXX`，topic 默认与 routing key 相同。 |
 
 策略表是可变治理配置而不是执行历史。同步和校验按各自层级生成有效策略。消息只读取 `dataset_message_policy`，每次执行把数据集消息策略版本和值固化到执行及 Outbox 指令快照，防止运行中配置漂移，不复制为任务级消息配置。
 
@@ -301,6 +301,8 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间和最后错误，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。Outbox 不保存 `provider_message_id`：一条发布指令会产生多条 RabbitMQ 消息，单个确认标识不能代表整段发布，逐条标识只写应用日志。
 
 发布器按 `publish_command` 中的执行批次或水位范围从 Doris 分页读取并逐条发送。只有整段发布完成才把 outbox 更新为 `PUBLISHED`；中途失败时不保存分页进度，下一次从本次数据范围开头重新发布。每条业务消息使用由 `event_id + 业务主键/messageKey` 生成的确定性消息 ID，同一 outbox 重试或人工重发时保持不变，由下游幂等消费。不建立分页进度、分页明细或逐条消息持久化表。
+
+发布范围没有模式分支：全量执行发送该次全量的全部业务行，增量执行发送该次增量的全部业务行。新模型不实现 `ALL/SKIP/NOTIFY_ONLY`、`FULL_SYNC_COMPLETE`、`TRUNCATE_BEGIN/TRUNCATE_END` 或其他完成/清理信号。
 
 ## 12. P0 支撑对象
 
