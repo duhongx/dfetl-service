@@ -672,7 +672,8 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] 不建立 `message_delivery_attempt`；`message_outbox` 保存整段发布的投递次数、最后尝试时间、最后错误和最终状态，每次尝试详情写应用日志。
 - [ ] `message_outbox.status` 只允许 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`；临时失败回到 `PENDING`，达到最大次数进入死信，人工重发从死信回到 `PENDING`。
 - [ ] `message_outbox` 只保留 `available_at` 作为下一次允许投递时间；首次发送、失败重试和人工重发统一更新该字段，不设置 `next_attempt_at`，发布扫描使用 `(status, available_at)` 索引。
-- [ ] 每次同步执行只创建一条 Outbox 发布指令；指令只快照执行范围、Doris 目标对象和消息路由，不保存业务数据。发布器从 Doris 分页发送，中途失败后整段重发，以 `event_id + 业务主键/messageKey` 生成稳定消息 ID，不建立分页进度、分页明细或逐条消息表。
+- [ ] 每次同步执行只创建一条 Outbox 发布指令；指令只快照执行范围、Doris 目标对象和消息路由，不保存业务数据。发布器从 Doris 分页发送，中途失败后整段重发，不建立分页进度、分页明细或逐条消息表。
+- [ ] 沿用旧 `messageKey`/`messageId` 协议：数据集级模板按既有规则解析，字段不存在或值为 `NULL` 时替换为空字符串并继续发送；`messageId` 使用 27 位时间戳、机器标识和序号组合，每次发送重新生成，不改成由 Outbox 事件和业务键推导的稳定 ID。
 - [ ] `message_outbox` 不保存 `event_type`，直接对 `execution_id` 建唯一约束；一次执行的全量/增量行为由发布指令快照表达。
 - [ ] `message_outbox` 不保存只能代表单条 RabbitMQ 消息的 `provider_message_id`；逐条确认标识写应用日志。
 - [ ] 发布器抢占时原子执行 `PENDING → PUBLISHING` 并更新 `last_attempt_at`；恢复扫描把超时的 `PUBLISHING` 增加尝试次数后恢复为 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约表或工作节点字段，也不联动同步结果和任务调度。
@@ -776,7 +777,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 | 4. Doris 合同、预检与任务创建 | `DORIS-001`、`PRECHECK-001`、`PRECHECK-002`、`TASK-002`、`TASK-003`、`TASK-005` | 固定 ODS/RAW DDL、预检状态机与问题汇总、三种标准任务创建、执行前快照 | `ods_`/`raw_` 合同不可切换；预检只展示问题且不阻断；无主键及有主键任务组合严格符合已确认规则 |
 | 5. 同步执行与校验闭环 | `TASK-004`、`VALID-001`～`VALID-005`、`EXEC-001` | 全量/增量执行、机构范围清理、载入批次与 Label、重新采集/补采、校验和人工复检、事务发件箱 | 校验通过后才确认成功并推进水位；失败告警但不自动暂停任务；重新采集从第 1 批读取；无主键任务不会清空其他机构数据；异常恢复保持幂等 |
 | 6. API 与前端真实集成 | `WEB-001`～`WEB-006`、`CFG-001` 完整运行文档 | 真实 API 层和 URL 路由、数据源/链路/数据集/任务/预检/校验页面、环境配置说明 | 前端不再依赖 Mock 完成业务；所有可见按钮有真实行为；分页、筛选、上下文、失败反馈和危险确认有效 |
-| 7. 运维、安全与测试 | `MSG-001`、`SEC-001`、`OPS-001`、`ARCH-001`、M6 | 指标告警、权限审计、消息可靠性、前端结构整改、接口和集成测试 | 主流程全部场景通过；消息幂等；敏感配置无危险默认值；空库及上一正式版本升级路径均验证通过 |
+| 7. 运维、安全与测试 | `MSG-001`、`SEC-001`、`OPS-001`、`ARCH-001`、M6 | 指标告警、权限审计、消息可靠性、前端结构整改、接口和集成测试 | 主流程全部场景通过；消息重试、死信和重复投递处理符合既有消费协议；敏感配置无危险默认值；空库及上一正式版本升级路径均验证通过 |
 | 8. 最终替换 | `DB-002` | 配置迁移工具、脱敏克隆演练、暂停任务/冻结/迁移/核对/切流/回退手册 | 新系统完整验收；新旧调度、消息和水位不会并行推进；完成正式切换前仍不修改老系统 |
 
 ### 4.3 当前下一工作包
@@ -798,7 +799,8 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认删除 `message_delivery_attempt`：整段发布的投递次数和最后错误直接维护在 `message_outbox`，逐次详情写应用日志。
 - [x] 2026-08-14 已确认删除 `message_outbox.status=FAILED`：临时失败回到 `PENDING` 并等待下次重试，耗尽次数后进入 `DEAD_LETTER`。
 - [x] 2026-08-14 已确认删除 `message_outbox.next_attempt_at`：`available_at` 统一表示首次发送或重试的下一次允许投递时间，人工重发将其更新为当前时间。
-- [x] 2026-08-14 已确认 Outbox 只保存每次执行的一条小型发布指令，不保存业务数据：发布器从 Doris 分页读取，失败后整段重发，逐条消息使用确定性 ID，不增加分页或消息明细持久化。
+- [x] 2026-08-14 已确认 Outbox 只保存每次执行的一条小型发布指令，不保存业务数据：发布器从 Doris 分页读取，失败后整段重发，不增加分页或消息明细持久化。
+- [x] 2026-08-14 已确认消息键和值为空的处理严格沿用旧协议：使用数据集级 `messageKey` 模板，缺失或 `NULL` 占位字段替换为空字符串并继续发送；`messageId` 沿用 27 位时间戳、机器标识和序号组合，不改为确定性 ID。
 - [x] 2026-08-14 已确认删除 `message_outbox.provider_message_id`：一条发布指令会产生多条消息，单个提供方标识不能代表整段发布，逐条标识进入应用日志。
 - [x] 2026-08-14 已确认使用 `last_attempt_at` 恢复超时的 `PUBLISHING`：增加尝试次数并回到 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约结构且不影响同步任务调度。
 - [x] 2026-08-14 核实现有消息代码：`DfetlMessagePolicy` 已按数据集唯一，`DatasetTaskSnapshotAssembler` 将其复制为每任务 `MessagePublishConfig`；任务差异实际是机构、Doris 目标、批次和窗口等执行上下文，不是消息业务参数。
@@ -1144,7 +1146,8 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `message_delivery_attempt`；消息重试、死信和人工重发状态全部收敛到 `message_outbox`。
 - 删除 `message_outbox` 的 `FAILED` 状态；可重试失败复用 `PENDING`，并以 `available_at` 表示下一次允许投递时间。
 - 删除 `message_outbox.next_attempt_at`；首次发送、失败重试和人工重发统一更新 `available_at`，发布扫描使用 `(status, available_at)` 索引。
-- `message_outbox` 每次执行只保存一条小型发布指令，不保存业务数据；发布器从 Doris 分页读取，失败后整段重发，逐条消息使用由事件和业务键生成的确定性 ID，不建立分页进度、分页明细或逐条消息表。
+- `message_outbox` 每次执行只保存一条小型发布指令，不保存业务数据；发布器从 Doris 分页读取，失败后整段重发，不建立分页进度、分页明细或逐条消息表。
+- `messageKey` 模板和空值处理沿用旧协议：缺失或 `NULL` 占位字段替换为空字符串并继续发送；`messageId` 继续使用 27 位时间戳、机器标识和序号组合，每次发送重新生成，不改为确定性 ID。
 - 删除 `message_outbox.provider_message_id`；整段发布只保存汇总状态、次数、时间和最后错误，逐条提供方消息标识写应用日志。
 - `PUBLISHING` 异常恢复复用 `last_attempt_at` 和全局超时参数；不建立发布租约表或工作节点归属字段，恢复仅改变 Outbox 状态。
 - 删除 Redis Stream 传输路径和消息 transport 字段，只保留 RabbitMQ。
