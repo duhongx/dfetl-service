@@ -65,22 +65,79 @@ task_validation_policy
 固定边界：
 
 1. `global_validation_policy` 不保存 `enabled`。
-2. `dataset_validation_policy` 不保存 `enabled`，只能继承或覆盖校验方法、容差和回看范围。
-3. `task_validation_policy` 不保存 `enabled`，只能继承或覆盖校验方法、容差和回看范围。
+2. `dataset_validation_policy` 不保存 `enabled`，只能继承或覆盖允许配置的校验参数。
+3. `task_validation_policy` 不保存 `enabled`，只能继承或覆盖允许配置的校验参数。
 4. 前端不展示关闭开关，接口也不接受关闭字段。
 5. 无真实业务主键的数据集固定使用 `ROW_COUNT`。
 6. 有真实业务主键的数据集可以按已确认规则选择 `ROW_COUNT_CHECKSUM`。
 7. 校验不一致或技术失败都阻止执行成功和水位推进。
 8. 不创建 `SKIPPED` 校验记录，也不通过空策略绕过校验。
-9. 默认仍是零容差 `ROW_COUNT`、`lookback_hours=0`、不自动复检。
+9. 默认不自动复检；人工重新校验新建独立运行。
 
-### 2.3 已修正文档
+## 3. 已确认：正式同步行数校验严格相等
 
-- `spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md`
-- `spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`
+### 3.1 冲突
 
-`spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md` 原有成功收尾事务已经要求唯一 `SYNC_GATE validation_run` 为 `COMPLETED + PASS`，该要求继续保留。
+早期物理字典和旧代码保留了多种行数容差：
 
-## 3. 后续检查顺序
+```text
+row_tolerance
+tolerance_rows
+tolerance_percent
+```
+
+旧实现还会在绝对容差、全局百分比容差和任务百分比容差之间取最大值。这意味着源端和目标端少量行数不一致时，仍可能把正式同步判定为成功并推进水位。
+
+该行为与当前正式同步合同冲突：
+
+- 源端行数来自本次实际同步范围；
+- 目标端行数来自本次已确认提交的数据；
+- 正式 ODS 写入不允许静默过滤异常行；
+- 因此门禁行数必须严格相等。
+
+### 3.2 最终规则
+
+```text
+ROW_COUNT:
+source_row_count = target_row_count
+AND difference_count = 0
+
+ROW_COUNT_CHECKSUM:
+source_row_count = target_row_count
+AND difference_count = 0
+AND source_checksum = target_checksum
+```
+
+固定边界：
+
+1. 删除全局、数据集、任务校验策略中的 `row_tolerance`。
+2. 不支持绝对行数容差、百分比容差或按数据量动态放宽。
+3. 行数差异为 1 行也必须判定为 `FAIL`。
+4. 前端不展示容差输入框，API 不接受旧容差字段。
+5. 校验失败或技术异常均阻止执行成功、水位推进和 Outbox 创建。
+6. 老库及旧实体中的容差配置不迁移到新系统。
+7. 独立人工治理校验需要特定范围时，应使用明确运行范围，不复用正式同步门禁容差。
+
+### 3.3 权威物理字典
+
+新增：
+
+```text
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+```
+
+该文件是以下对象的当前权威字段定义：
+
+```text
+global_validation_policy
+dataset_validation_policy
+task_validation_policy
+sync_execution 校验快照
+SYNC_GATE validation_run
+```
+
+`spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md` 和 `spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md` 中残留的 `enabled`、`row_tolerance` 及相关约束已经失效，必须在阶段 1 最终一致性清理时删除，不能进入 Flyway V1。
+
+## 4. 后续检查顺序
 
 下一项继续从全表关系和现有业务基线中选择影响范围最大的真实冲突，只讨论一个问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。

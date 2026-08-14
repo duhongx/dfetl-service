@@ -164,7 +164,7 @@ collection_route.current_version_id
 - 不建立全局、数据集或任务级预检策略。
 - 未预检、存在问题或结果过期均不阻止任务创建和运行。
 
-### 1.11 数据校验：正式同步不可关闭
+### 1.11 数据校验：正式同步不可关闭且行数严格相等
 
 每次正式同步都必须执行同步后校验：
 
@@ -182,11 +182,13 @@ collection_route.current_version_id
 
 - 不提供关闭正式同步校验的配置、接口或页面开关。
 - `global_validation_policy`、`dataset_validation_policy`、`task_validation_policy` 均不保存 `enabled`。
-- 全局默认是零容差 `ROW_COUNT`、`lookback_hours=0`。
-- 数据集和任务只能覆盖校验方法、容差和回看范围。
+- 全局默认是严格相等的 `ROW_COUNT`、`lookback_hours=0`。
+- 数据集和任务只能覆盖校验方法及当前仍允许配置的回看范围。
+- 三张校验策略表均不保存 `row_tolerance`、绝对容差或百分比容差。
+- `ROW_COUNT` 固定要求 `source_row_count = target_row_count`，差异 1 行也失败。
 - 无真实业务主键的数据集固定使用 `ROW_COUNT`。
 - 有真实业务主键的数据集可配置 `ROW_COUNT_CHECKSUM`。
-- `ROW_COUNT_CHECKSUM` 不允许因性能、数据量或缺少条件静默改为 `ROW_COUNT`。
+- `ROW_COUNT_CHECKSUM` 必须同时满足行数严格相等和业务字段 Checksum 一致，不允许静默降级。
 - 默认不自动复检；人工重新校验生成独立 `validation_run`。
 - 校验不一致和技术失败都阻止执行成功和水位推进。
 - 校验内部可以分批计算，但 PostgreSQL 只保存整次最终结果和小型 `difference_summary JSONB`。
@@ -326,6 +328,7 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 - [ ] 检查同任务活动执行、同链路活动预检、同任务活动删除快照等并发约束。
 - [ ] 统一任务、执行、批次、预检、校验、Outbox、告警、外部 API 和删除快照枚举。
 - [x] 修正“正式同步校验可关闭”冲突：正式同步至少执行 `ROW_COUNT`。
+- [x] 修正“正式同步允许行数容差”冲突：源目标行数必须严格相等。
 - [x] 修正“预检三级策略”冲突：只保存和展示预检事实。
 - [x] 修正“任务固定 route_id”冲突：当前链路由任务当前版本推导。
 - [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
@@ -484,7 +487,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 选择实例、链路、机构和数据集。
 - [ ] 只读展示三种标准任务组合。
 - [ ] 展示字段解析、预检事实、校验配置和消息策略。
-- [ ] 校验方式、容差和回看允许继承/覆盖，但不能关闭。
+- [ ] 校验方法和当前允许的回看范围允许继承/覆盖，但校验不能关闭，也不能配置行数容差。
 - [ ] 创建任务和第一个版本使用一个事务。
 - [ ] 并发冲突返回已有任务。
 
@@ -526,16 +529,17 @@ spec/PHASE1_FINAL_REVIEW.md
 ### [P0][VALID-001] 按最终配置执行校验
 
 - [ ] 每次正式同步创建唯一 `SYNC_GATE validation_run`。
-- [ ] 最低方法为零容差 `ROW_COUNT`，不能关闭。
-- [ ] `ROW_COUNT_CHECKSUM` 同时验证行数和全部业务字段 Checksum。
+- [ ] 最低方法为严格相等的 `ROW_COUNT`，不能关闭。
+- [ ] `ROW_COUNT` 差异 1 行也必须失败。
+- [ ] `ROW_COUNT_CHECKSUM` 同时验证行数严格相等和全部业务字段 Checksum。
 - [ ] 不静默降级。
 - [ ] 校验失败或不一致时执行失败且水位不推进。
 
 ### [P0][VALID-002] 校验配置继承和覆盖
 
-- [ ] 全局、数据集、任务三级只处理方法、容差和回看范围。
-- [ ] 三张策略表均不保存 `enabled`。
-- [ ] 前端和 API 不展示关闭开关。
+- [ ] 全局、数据集、任务三级只处理校验方法及当前允许的回看范围。
+- [ ] 三张策略表均不保存 `enabled` 和 `row_tolerance`。
+- [ ] 前端和 API 不展示关闭开关或容差配置。
 - [ ] 运行中执行使用启动时快照。
 
 ### [P0][VALID-003] 全量、修改和删除校验工作流
@@ -673,6 +677,7 @@ spec/PHASE1_FINAL_REVIEW.md
 ### [P1][TEST-003] 校验和一致性测试
 
 - [ ] 每次正式同步至少执行 `ROW_COUNT`，任何层级均不能关闭。
+- [ ] 源目标行数差异 1 行也必须失败，不存在绝对或百分比容差。
 - [ ] 行数相同、内容不同的 Checksum 必须失败。
 - [ ] 无业务主键数据集固定 ROW_COUNT。
 - [ ] 校验配置继承和覆盖只影响后续新执行。
@@ -715,6 +720,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-026 | 链路覆盖机构版本化，任务当前版本引用保护 |
 | D-027 | 已接受运行请求技术前检失败保留 FAILED 执行 |
 | D-028 | 正式同步校验不可关闭，唯一同步门禁校验必须通过 |
+| D-029 | 正式同步行数严格相等，删除所有行数容差配置 |
 
 详细结论分散在以下权威文档：
 
@@ -725,6 +731,7 @@ spec/EXTERNAL_API_REVIEW.md
 spec/QUARTZ_JOBSTORE_REVIEW.md
 spec/DELETE_SNAPSHOT_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY*.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
