@@ -157,7 +157,7 @@ WHERE deleted_at IS NULL
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `schedule_blocked`, `block_reason`, `catch_up_pending`, `deleted_at`, audit columns | 只保存长期身份和少量调度控制；不保存生命周期状态、最近执行结果、Cron、字段映射、窗口或正式水位。 |
+| `sync_task` | `id`, `institution_id`, `dataset_id`, `route_id`, `name`, `current_version_id`, `schedule_enabled`, `catch_up_pending`, `deleted_at`, audit columns | 只保存长期身份和用户控制的调度开关；不保存生命周期状态、最近执行结果、失败阻断、Cron、字段映射、窗口或正式水位。 |
 | `sync_task_version` | `id`, `task_id`, `version_no`, `route_version_id`, `dataset_version_id`, `task_kind`, `write_mode`, `doris_key_model`, institution code snapshot, incremental/upper/lookback/fetch/schedule config, field contract hash, `contract_hash`, `created_by`, `created_at` | 只插入且不保存 `status`；`(task_id, version_no)`、`(task_id, contract_hash)` 唯一。新版本插入和 `current_version_id` 切换在同一事务完成。 |
 | `task_governance_override` | `task_id`, nullable validation/message/scheduling overrides, `revision`, audit columns | 表达任务级覆盖；生成任务版本时计算全局→数据集→任务最终值。 |
 
@@ -175,7 +175,8 @@ WHERE deleted_at IS NULL;
 
 - 任务创建向导最终提交时一次性创建任务和第一个不可变版本，不长期保存任务或版本草稿。
 - `schedule_enabled=false` 只停止自动调度，不阻止用户人工运行。
-- 最近执行结果从 `sync_execution` 查询；失败后以 `schedule_blocked=true` 和 `block_reason` 阻断后续调度，不把 `FAILED` 重复写成任务生命周期状态。
+- 最近执行结果和失败原因从 `sync_execution` 查询；失败不写入 `sync_task`、不改变 `schedule_enabled`，下一次计划调度照常创建新执行。
+- 维护人员可根据告警人工把 `schedule_enabled` 改为 `false`，或直接发起重新采集；平台不代替维护人员自动停用调度。
 - `current_version_id` 指向当前版本，其他版本自然是历史版本，不需要 `PUBLISHED/SUPERSEDED` 状态。
 
 `task_kind`/`write_mode` 只允许业务基线的三种组合：
@@ -211,13 +212,13 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
                          +----------> CANCELLED
 ```
 
-- 失败和取消均不推进正式水位并阻断调度。
+- 失败和取消均不推进正式水位；失败只影响本次执行并产生告警，不改变后续自动调度。
 - 不存在 `SUCCESS_WITH_DIRTY_ROWS`，因为正式 ODS 不接受跳过问题行。
 - 人工重新采集新建 `RECOLLECT` 执行并可指向 `recollect_of_execution_id`；始终从任务数据范围起点和第 1 批读取，不在原行增加自动重试循环。
 - Doris 响应不明确时自动探测原 Label，结果直接回写 `load_batch` 并记录审计；新执行启动前再次核对旧 Label，避免旧批次仍可能提交时盲目重放。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
 - 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')`。
-- 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次，失败后保留阻断而不自动启动。
+- 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次。失败时清除本次待追赶标记，不立即启动另一执行，等待下一次计划调度。
 - `load_batch(execution_id, status, batch_no)`、`sync_execution(task_id, created_at DESC)` 和所有父外键列建立查询索引。
 
 ### 8.3 原子完成边界
