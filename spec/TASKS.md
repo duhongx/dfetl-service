@@ -428,6 +428,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] 为每个载入批次持久化运行 ID、批次号、数据范围、可用时的最后业务主键、固定上界、Doris Label、读取/写入行数、提交状态和提交时间。
 - [ ] Doris 返回不明确时自动查询原 Label 并把探测结果回写 `load_batch`；重新采集前再次核对旧 Label，旧批次仍可能提交时禁止盲目重放，但不建立 `execution_reconciliation` 表或独立人工对账状态。
 - [ ] 重新采集用于普通失败恢复并始终从任务范围起点、第 1 批读取；默认采用 UPSERT 覆盖，界面明确提示“保留目标现有数据并幂等覆盖”。
+- [ ] 重新采集执行只使用 `operation_type=RECOLLECT`，不保存 `recollect_of_execution_id`；发起入口、原因和操作者记录到 `audit_log`。
 - [ ] 重新采集选择“清空重建”时，明确展示目标范围和影响记录，执行二次确认、权限校验和审计；共享表按机构/链路范围清理，不得误清其他机构数据。
 - [ ] 数据补采必须填写已结束的历史时间窗口或主键起止范围，生成独立执行记录；不得替代普通失败后的重新采集，也不得修改正常任务正式水位。
 - [ ] 有业务主键的重新采集和数据补采保持 UPSERT 幂等；无业务主键任务沿用“当前机构范围清理后全量重载”，不得通过追加或假主键伪造幂等。重复提交同一命令不得创建多个并发执行。
@@ -781,6 +782,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认“取消执行”和“暂停任务”相互独立：取消只终止当前执行且不推进水位，下一次计划调度仍正常；停止后续调度必须由维护人员显式暂停任务。
 - [x] 2026-08-14 已确认不保留调度“待追赶”机制：活动执行期间的新调度直接跳过，任务完成后不补跑；长任务由维护人员延长调度周期。
 - [x] 2026-08-14 已确认不建立 `task_watermark_history`：当前值保存在 `task_watermark`，正常推进从成功执行窗口追溯，人工重置写入通用审计日志。
+- [x] 2026-08-14 已确认删除 `sync_execution.recollect_of_execution_id`：重新采集只由操作类型标识，操作来源和原因进入通用审计日志。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1109,6 +1111,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `sync_task.schedule_blocked` 和 `block_reason`；失败原因从执行记录查询，失败不自动修改用户控制的 `schedule_enabled`。
 - 删除 `sync_task.catch_up_pending`；重叠计划调度直接跳过，不建立补跑状态。
 - 删除 `task_watermark_history`；只保留当前正式水位，推进和人工重置分别由执行记录与 `audit_log` 追溯。
+- 删除 `sync_execution.recollect_of_execution_id`；执行表不建立重新采集自关联。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。

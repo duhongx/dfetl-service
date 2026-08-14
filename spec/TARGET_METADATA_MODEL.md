@@ -195,7 +195,7 @@ WHERE deleted_at IS NULL;
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `recollect_of_execution_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。普通失败后的人工恢复使用 `RECOLLECT` 新建执行，可关联原失败执行，但始终从任务数据范围起点读取；补采为独立运行，窗口显式记录且不改正式水位。 |
+| `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。普通失败后的人工恢复使用 `RECOLLECT` 新建执行并始终从任务数据范围起点读取；补采为独立运行，窗口显式记录且不改正式水位。 |
 | `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, `committed_at`, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。批次记录只描述当前执行的进度和 Doris 最终状态，不作为后续执行的恢复位置。 |
 | `task_watermark` | `task_id`, `watermark_value`, `last_success_execution_id`, `revision`, `updated_at` | 每个未删除任务一行，只保存当前正式水位；仅在完整执行和阻断校验通过后推进。正常推进从成功执行的固定窗口追溯，人工重置前后值写入通用 `audit_log`。 |
 不建立 `execution_checkpoint` 或 `execution_reconciliation` 表，也不在 `sync_execution` 保存 `retry_of_execution_id`、`resume_from_batch_id`。`load_batch` 已完整记录本次执行的提交顺序、游标、Label 探测和 Doris 最终状态；失败后只允许人工“重新采集”，新执行从第 1 批重新读取。有真实联合业务主键时使用 UPSERT 收敛；无业务主键时清理当前机构范围后重新全量执行。
@@ -213,7 +213,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 - 失败和取消均不推进正式水位，只影响本次执行，不改变 `schedule_enabled`；下一次计划调度照常运行。
 - 不存在 `SUCCESS_WITH_DIRTY_ROWS`，因为正式 ODS 不接受跳过问题行。
-- 人工重新采集新建 `RECOLLECT` 执行并可指向 `recollect_of_execution_id`；始终从任务数据范围起点和第 1 批读取，不在原行增加自动重试循环。
+- 人工重新采集新建 `RECOLLECT` 执行，始终从任务数据范围起点和第 1 批读取；`sync_execution` 不保存 `recollect_of_execution_id` 或其他自关联，发起入口、原因和操作者写入 `audit_log`。
 - Doris 响应不明确时自动探测原 Label，结果直接回写 `load_batch` 并记录审计；新执行启动前再次核对旧 Label，避免旧批次仍可能提交时盲目重放。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
 - 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')`。
