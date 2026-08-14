@@ -243,13 +243,47 @@ phase = FULL
 6. 老系统 `task_chunk` 和旧实体中的相似字段不迁移。
 7. 新系统 Flyway V1、Java 实体、DTO、OpenAPI 和 Vue 类型均不得创建 `phase`。
 
+## 7. 已确认：删除 `load_batch.time_lower/time_upper`
+
+### 7.1 冲突
+
+父执行已经保存整次固定业务范围：
+
+```text
+sync_execution.window_lower
+sync_execution.window_upper
+sync_execution.key_lower
+sync_execution.key_upper
+```
+
+子表又计划保存：
+
+```text
+load_batch.time_lower
+load_batch.time_upper
+```
+
+一次增量或按时间补采执行中的所有批次都属于父执行固定窗口。批次之间的差异是 Keyset 分页游标，不是各自拥有另一套业务时间窗口。
+
+### 7.2 最终规则
+
+1. 删除 `load_batch.time_lower`。
+2. 删除 `load_batch.time_upper`。
+3. 整次业务时间或主键范围只保存在 `sync_execution`。
+4. 批次只保存实际分页使用的 `cursor_lower/cursor_upper`。
+5. 增量和按时间补采游标保存“增量时间值 + 联合业务主键”的规范有序元组。
+6. 有业务主键的全量游标保存联合业务主键；无业务主键流式全量允许游标为空。
+7. 游标只用于诊断、日志、Label 定位和追溯，不作为跨执行恢复检查点。
+8. 页面和 API 需要展示整次时间范围时读取父执行，展示本批分页边界时读取批次游标。
+9. 新系统 Flyway V1、Java 实体、DTO、OpenAPI 和 Vue 类型均不得创建批次级时间上下界。
+
 权威 Review：
 
 ```text
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 ```
 
-## 7. 已修正和待机械清理的文档
+## 8. 已修正和待机械清理的文档
 
 当前已修正：
 
@@ -260,7 +294,7 @@ spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
-阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours`、`load_batch.phase` 及“首次全量立即补充增量”描述：
+阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours`、`load_batch.phase`、`load_batch.time_lower/time_upper` 及“首次全量立即补充增量”描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
@@ -273,6 +307,6 @@ spec/TARGET_METADATA_MODEL.md
 
 清理属于已确认结论的机械同步，不再重新讨论。
 
-## 8. 后续检查顺序
+## 9. 后续检查顺序
 
-下一项继续核对 `load_batch` 的游标、时间范围和 Doris Label 状态组合，只讨论一个真实问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
+下一项继续核对 `load_batch` 的 Doris Label 状态和探测结果组合，只讨论一个真实问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
