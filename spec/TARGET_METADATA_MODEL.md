@@ -314,13 +314,45 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 
 以下老系统能力仍是新服务启动或产品交付所需，但不改变核心领域边界；`V1` 设计时应按当前真实查询逐表核对：
 
-- `app_user`、角色/权限关联和 `audit_log`；禁止 SQL 写入固定管理员密码。
-- `system_setting`；需要为 key 建唯一/主键，并对已知设置值做类型和范围校验。
-- `alert_channel`、`alert_rule`、`alert_event`、`alert_delivery`；移除重复的 channel/webhook 表达。
+- `app_user` 和 `audit_log`；本地账号均为同权限管理员，不建立角色、权限及关联表，禁止 SQL 写入固定管理员密码。
+- `system_setting`；只保存应用注册的已知 key，使用 `revision` 防止覆盖，并对已知设置值做类型、范围和敏感校验。
+- `alert_channel`、`alert_rule`、`alert_event`、`alert_delivery`；保存最小告警触发和渠道投递历史，移除重复的 channel/webhook 表达。
 - 外部 API client、授权范围、请求日志、幂等请求和限流状态；任务 API 必须调用新领域服务，不能直接写表。
 - Quartz JDBC JobStore 表；使用独立新库和新 scheduler identity，不迁移老 Quartz 运行态。
 
 这些表与执行历史同样不从老库整体恢复；最终配置迁移范围由 `DB-002` 决定。
+
+### 12.1 本地账号和审计
+
+- `app_user` 支持一个或多个同权限管理员账号，只允许停用，不提供物理删除；停用或重置密码后撤销既有 Refresh Token。
+- 不建立 `role`、`permission`、`user_role`、`role_permission` 或数据范围权限表。
+- `audit_log` 对业务写操作同时记录成功和失败，保存操作者类型、来源、受控操作编码、目标快照、结果、请求关联标识、客户端 IP 和脱敏摘要。
+- 普通查询默认不写业务审计；认证失败进入安全日志。`audit_log` 只追加，不提供普通修改、删除、审批或处理状态。
+
+### 12.2 系统设置
+
+- `system_setting.setting_key` 是稳定主键，只允许应用注册的已知 key；未知 key 拒绝保存。
+- 值可使用文本持久化，但类型、默认值、是否敏感、是否允许为空、范围和格式由统一设置注册表定义。
+- 医共体名称、编码及规范库连接可保存；规范库密码只保存密文并掩码返回。
+- RabbitMQ、应用数据库密码、JWT 和加密主密钥等部署级 Secret 不进入通用设置表。
+- 全局校验策略等已有独立领域表的配置不重复保存为通用键值。
+
+### 12.3 告警最小历史（已确认）
+
+| 表 | 关键字段方向 | 约束和说明 |
+| --- | --- | --- |
+| `alert_channel` | `id`, name/type, webhook/secret encrypted fields, enabled, message format, test result, timestamps | 保存渠道配置；敏感值只保存密文并掩码展示。 |
+| `alert_rule` | `id`, name, enabled, metric, condition, threshold, severity, scope, silence window, timestamps | 保存规则配置和静默策略；规则与渠道使用结构化关联，不在文本中保存渠道 ID 数组。 |
+| `alert_event` | `id`, rule id and rule snapshot, source type/id, optional task/execution/precheck/validation references, severity, title, summary, triggered_at | 每次规则实际命中生成一条不可变事件；规则后续修改或删除不影响历史解释。 |
+| `alert_delivery` | `id`, event_id, channel id and channel snapshot, status, attempt_count, last_attempt_at, delivered_at, last_error, timestamps | 每个事件到每个目标渠道生成一条汇总投递记录；一个渠道失败不影响其他渠道。 |
+
+告警模型只保存规则命中事实和每个渠道的投递结果：
+
+- 不建立告警确认、认领、处理人、处理状态流转、工单或审批流程；
+- 不建立逐次发送重试明细表，不长期保存完整 Webhook 请求或响应载荷；
+- 敏感 URL、密钥和响应内容不得进入事件摘要或错误摘要；
+- 告警实现优先级在系统中最低，排在数据同步、预检、校验、消息、外部 API 和基础运维能力之后，但仍属于最终交付范围；
+- 具体状态枚举、保留期、删除行为和索引在物理表字典复核时确定，不预建复杂归档体系。
 
 ## 13. 当前实体、Repository、查询路径差异清单
 
@@ -343,6 +375,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
 | 消息 | `DfetlMessagePolicy` 已按数据集保存策略；任务创建时 `DatasetTaskSnapshotAssembler` 再复制为 `MessagePublishConfig`，执行器读取这份任务副本；同时存在 Redis Stream/RabbitMQ 两套发布器、publish log 和 send record。 | 仅 RabbitMQ；只保留数据集消息策略、执行/Outbox 指令快照和单一 outbox，不保留任务级消息配置或覆盖。 | 数据集参数对该数据集所有任务一致；机构、Doris 目标、批次和窗口从任务/执行上下文取得。完成事务插入指令，独立 RabbitMQ 发布器消费，旧 config/log/send-record/recovery 路径退出。 |
+| 告警 | 当前渠道和规则可配置，规则命中后直接发送 Webhook，只更新 `last_triggered_at`，发送结果主要写应用日志。 | 保留 channel/rule，并新增每次命中的 `alert_event` 和每个渠道的 `alert_delivery`；不增加处置流。 | 告警页面可查询触发和投递历史；发送失败可追溯，仍不影响同步任务状态。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
 
 ### 13.2 状态差异
@@ -369,6 +402,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 每执行/类型一个门禁校验 | 当前围绕 `task_id + legacy_exec_id` 的兼容唯一键。 |
 | `execution_id + batch_no` 和 Doris Label 唯一 | 当前 Label 幂等身份未成为统一数据库约束。 |
 | `execution_id`/event UUID 分别唯一 | 当前消息日志和发送记录不能保证成功事务只产生一条发布指令；新模型每次执行最多一条，不需要 `event_type`。 |
+| 每个告警事件和目标渠道一条投递汇总记录 | 当前没有事件/渠道发送历史，无法防止同一事件重复插入同一渠道汇总。 |
 | 枚举 CHECK、非负计数、窗口 `lower < upper`、合理策略组合 | 当前大量状态和模式为无约束 String，错误组合可直接持久化。 |
 
 ### 13.4 查询和索引差异
@@ -383,6 +417,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；只在完整执行和校验成功后推进，失败后的重新采集从任务范围起点开始。 |
 | 预检 issue/dirty 行分页 | 按 run/institution/field/rule 查询 summary；不再提供行级索引。 |
 | publish log/recovery 定时扫描 | outbox 使用 `(status, available_at)` 索引和 `SKIP LOCKED`。 |
+| 告警失败只写应用日志 | `alert_event` 按触发时间和来源对象查询，`alert_delivery` 按事件、渠道和状态查询。 |
 
 ## 14. 目标模型到现有对象的处置映射
 
@@ -396,6 +431,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
 | `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 `validation_run`；内部计算分批和小型差异汇总不拆成独立表。 |
 | message policy/config/log/send record | 合并为策略、执行快照和单一 outbox；逐次投递详情只写应用日志。 |
+| alert channel/rule/webhook/notify record | 收敛为 `alert_channel`、`alert_rule`、`alert_event`、`alert_delivery`；只保存最小触发和投递历史。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |
 
 ## 15. Review 门槛与后续步骤
