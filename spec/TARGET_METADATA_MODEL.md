@@ -294,7 +294,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | --- | --- | --- |
 | `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, payload/headers JSON, routing/topic/message key snapshot, `status`, `available_at`, `attempt_count`, `next_attempt_at`, `last_attempt_at`, `provider_message_id`, `published_at`, `last_error`, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入；同一行承担重试、死信和人工重发状态。 |
 
-`message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/FAILED/DEAD_LETTER`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占 `(status, available_at)` 索引中的待发事件。发送失败只改变 outbox，不改变 `sync_execution=SUCCEEDED` 或正式水位。人工重发沿用同一 `event_id`，由下游幂等消费。
+`message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置与可重试 `PENDING` 重复的 `FAILED`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占已到可投递时间的 `PENDING` 事件。临时失败增加 `attempt_count`、记录 `last_error`，回到 `PENDING` 并设置 `next_attempt_at`；达到最大次数进入 `DEAD_LETTER`。发送失败只改变 outbox，不改变 `sync_execution=SUCCEEDED` 或正式水位。人工重发从 `DEAD_LETTER` 改回 `PENDING`，沿用同一 `event_id`，由下游幂等消费。
 
 不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间、最后错误和提供方消息 ID，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。
 

@@ -435,6 +435,7 @@ DFETL 是面向医共体的数据采集与传输平台，负责把 PostgreSQL、
 - 消息发送失败不改变同步成功状态。
 - 每次执行使用唯一事件 ID，保证重发幂等。
 - 消息可靠性只维护一条 `message_outbox`：保存投递次数、最后尝试时间、最后错误、提供方消息 ID 和最终状态；不建立逐次投递明细表，每次尝试的详细过程写应用日志。
+- Outbox 状态只使用 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置 `FAILED`：临时失败回到 `PENDING` 并设置下次重试时间，达到最大次数进入 `DEAD_LETTER`，人工重发再回到 `PENDING`。
 - 配置字段沿用原代码中的来源系统、租户 ID、Routing Key、Topic、messageKey 模板、首次全量模式、限速和分页大小。
 
 ## 14. 数据预检
