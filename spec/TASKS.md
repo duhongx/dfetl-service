@@ -137,6 +137,7 @@ collection_route.current_version_id
 - 首次全量和后续增量分别拥有独立执行、批次、校验、日志和 Outbox。
 - 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
 - `load_batch` 不保存重复的 `phase`；批次类型统一从父 `sync_execution.execution_scope` 推导。
+- `load_batch` 不保存 `time_lower/time_upper`；整次业务时间或主键范围只保存在父 `sync_execution`，批次只保存实际分页使用的 `cursor_lower/cursor_upper`。
 
 专项 Review：
 
@@ -325,12 +326,14 @@ spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 - [x] 已接受运行请求的技术前检失败保留执行历史
 - [x] 首次全量和后续增量使用两条独立执行
 - [x] 删除 `load_batch.phase`，批次类型由父执行范围推导
+- [x] 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存
+- [x] 批次只保存实际 Keyset 复合游标，不作为跨执行恢复检查点
 - [x] 成功收尾短事务
 - [x] 日志全文不进入 PostgreSQL
 
 待一致性检查：
 
-- [ ] 核对 `load_batch` 游标、时间范围和 Label 状态组合。
+- [ ] 核对 `load_batch` Doris Label 状态和探测结果组合。
 - [ ] 核对唯一 `SYNC_GATE validation_run` 与强制校验规则。
 - [ ] 核对 Outbox、执行、任务版本、数据集和机构身份一致性。
 - [ ] 与删除快照控制对象完成双向外键闭环。
@@ -361,6 +364,7 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 - [x] 修正“任务固定 route_id”冲突：当前链路由任务当前版本推导。
 - [x] 修正“首次全量立即补充增量”冲突：首次全量与后续增量为独立执行。
 - [x] 修正“批次重复保存 phase”冲突：批次类型从父 `execution_scope` 推导。
+- [x] 修正“批次重复保存时间窗口”冲突：业务范围只保存在父执行，批次只保存复合游标。
 - [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
 - [ ] 清理 `TARGET_METADATA_MODEL.md` 和其他文档中的旧表名、旧状态及旧语义。
 - [ ] 补回并核对使用文档导航、路由和实施任务。
@@ -548,11 +552,13 @@ spec/PHASE1_FINAL_REVIEW.md
 
 ### [P1][EXEC-001] 执行成功收尾一致性
 
-- [ ] 载入批次保存真实游标、固定窗口、Label 和最终状态。
+- [ ] 父执行保存整次固定时间或主键范围；载入批次只保存实际复合游标、Doris Label 和最终状态。
 - [ ] Doris 响应不明确时探测原 Label。
 - [ ] 不建立检查点和执行对账表。
 - [ ] 首次全量和后续增量分别创建独立 `sync_execution`；同一执行不得混合全量和增量批次。
 - [ ] `load_batch` 不保存 `phase`，批次类型从父 `sync_execution.execution_scope` 推导。
+- [ ] `load_batch` 不保存 `time_lower/time_upper`；增量和按时间补采批次使用“增量时间值 + 联合业务主键”复合游标。
+- [ ] 批次游标只用于诊断和追溯，不作为下一次执行的恢复位置。
 - [ ] 首次全量成功后以开始时间 `T0` 建立初始水位；等待下一次正常调度再执行增量。
 - [ ] 成功收尾短事务锁定执行和水位。
 - [ ] 必须确认全部批次提交、唯一同步门禁校验通过、拒绝行数为 0。
@@ -708,7 +714,9 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 首次全量运行期间错过的计划触发不补跑。
 - [ ] 首次全量和增量的执行、批次、校验、日志和 Outbox 相互独立。
 - [ ] 批次类型由父执行范围推导，数据库和 API 中不存在 `load_batch.phase`。
-- [ ] 中间批次失败后重新采集从第 1 批开始。
+- [ ] 整次时间或主键范围只保存在父执行，数据库和 API 中不存在 `load_batch.time_lower/time_upper`。
+- [ ] 增量和按时间补采批次使用规范的“增量时间值 + 联合业务主键”复合游标。
+- [ ] 中间批次失败后重新采集从第 1 批开始，不使用旧批次游标恢复。
 - [ ] Doris Label 不明确状态探测。
 - [ ] 补采不修改水位。
 - [ ] 外部 API 批量、幂等和机构授权。
@@ -765,6 +773,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-030 | 删除正式同步校验 `lookback_hours`，门禁只使用本次精确范围 |
 | D-031 | 首次全量和后续定时增量为两次独立执行，不立即补充增量 |
 | D-032 | 删除 `load_batch.phase`，批次类型由父执行范围推导 |
+| D-033 | 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存，批次只保存复合游标 |
 
 详细结论分散在以下权威文档：
 
