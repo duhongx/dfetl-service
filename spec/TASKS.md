@@ -673,6 +673,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] `message_outbox.status` 只允许 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`；临时失败回到 `PENDING`，达到最大次数进入死信，人工重发从死信回到 `PENDING`。
 - [ ] `message_outbox` 只保留 `available_at` 作为下一次允许投递时间；首次发送、失败重试和人工重发统一更新该字段，不设置 `next_attempt_at`，发布扫描使用 `(status, available_at)` 索引。
 - [ ] 每次同步执行只创建一条 Outbox 发布指令；指令只快照执行范围、Doris 目标对象和消息路由，不保存业务数据。发布器从 Doris 分页发送，中途失败后整段重发，不建立分页进度、分页明细或逐条消息表。
+- [ ] 消息重发不保存历史业务数据快照：增量优先按原执行/载入批次标识、必要时按原窗口读取当前 Doris；全量读取当前任务和机构范围。允许后续 UPSERT 使重发内容与原执行不同或减少。
 - [ ] 沿用旧 `messageKey`/`messageId` 协议：数据集级模板按既有规则解析，字段不存在或值为 `NULL` 时替换为空字符串并继续发送；`messageId` 使用 27 位时间戳、机器标识和序号组合，每次发送重新生成，不改成由 Outbox 事件和业务键推导的稳定 ID。
 - [ ] `message_outbox` 不保存 `event_type`，直接对 `execution_id` 建唯一约束；一次执行的全量/增量行为由发布指令快照表达。
 - [ ] `message_outbox` 不保存只能代表单条 RabbitMQ 消息的 `provider_message_id`；逐条确认标识写应用日志。
@@ -801,6 +802,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认删除 `message_outbox.next_attempt_at`：`available_at` 统一表示首次发送或重试的下一次允许投递时间，人工重发将其更新为当前时间。
 - [x] 2026-08-14 已确认 Outbox 只保存每次执行的一条小型发布指令，不保存业务数据：发布器从 Doris 分页读取，失败后整段重发，不增加分页或消息明细持久化。
 - [x] 2026-08-14 已确认消息键和值为空的处理严格沿用旧协议：使用数据集级 `messageKey` 模板，缺失或 `NULL` 占位字段替换为空字符串并继续发送；`messageId` 沿用 27 位时间戳、机器标识和序号组合，不改为确定性 ID。
+- [x] 2026-08-14 已确认消息重发不保存历史业务数据快照：增量按原批次或窗口、全量按当前任务机构范围重新读取 Doris，接受后续 UPSERT 导致重发内容变化或减少。
 - [x] 2026-08-14 已确认删除 `message_outbox.provider_message_id`：一条发布指令会产生多条消息，单个提供方标识不能代表整段发布，逐条标识进入应用日志。
 - [x] 2026-08-14 已确认使用 `last_attempt_at` 恢复超时的 `PUBLISHING`：增加尝试次数并回到 `PENDING`，耗尽次数进入 `DEAD_LETTER`，不增加租约结构且不影响同步任务调度。
 - [x] 2026-08-14 核实现有消息代码：`DfetlMessagePolicy` 已按数据集唯一，`DatasetTaskSnapshotAssembler` 将其复制为每任务 `MessagePublishConfig`；任务差异实际是机构、Doris 目标、批次和窗口等执行上下文，不是消息业务参数。
@@ -1147,6 +1149,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `message_outbox` 的 `FAILED` 状态；可重试失败复用 `PENDING`，并以 `available_at` 表示下一次允许投递时间。
 - 删除 `message_outbox.next_attempt_at`；首次发送、失败重试和人工重发统一更新 `available_at`，发布扫描使用 `(status, available_at)` 索引。
 - `message_outbox` 每次执行只保存一条小型发布指令，不保存业务数据；发布器从 Doris 分页读取，失败后整段重发，不建立分页进度、分页明细或逐条消息表。
+- 消息重发不保存原执行业务数据的历史快照；增量按原批次或窗口、全量按当前任务机构范围读取当前 Doris，允许后续 UPSERT 使重发内容与原执行不同或减少。
 - `messageKey` 模板和空值处理沿用旧协议：缺失或 `NULL` 占位字段替换为空字符串并继续发送；`messageId` 继续使用 27 位时间戳、机器标识和序号组合，每次发送重新生成，不改为确定性 ID。
 - 删除 `message_outbox.provider_message_id`；整段发布只保存汇总状态、次数、时间和最后错误，逐条提供方消息标识写应用日志。
 - `PUBLISHING` 异常恢复复用 `last_attempt_at` 和全局超时参数；不建立发布租约表或工作节点归属字段，恢复仅改变 Outbox 状态。
