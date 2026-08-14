@@ -670,6 +670,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [ ] 消息投递失败支持重试、死信和日志定位。
 - [ ] 不建立 `message_delivery_attempt`；`message_outbox` 保存投递次数、最后尝试时间、最后错误、提供方消息 ID 和最终状态，每次尝试详情写应用日志。
 - [ ] `message_outbox.status` 只允许 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`；临时失败回到 `PENDING`，达到最大次数进入死信，人工重发从死信回到 `PENDING`。
+- [ ] `message_outbox` 只保留 `available_at` 作为下一次允许投递时间；首次发送、失败重试和人工重发统一更新该字段，不设置 `next_attempt_at`，发布扫描使用 `(status, available_at)` 索引。
 - [ ] 前端关闭消息后仍能重新进入配置并启用。
 
 ### [P1][SEC-001] 权限、确认和审计
@@ -791,6 +792,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认删除 `validation_difference_summary`：小型差异汇总数组直接进入 `validation_run.difference_summary JSONB`，页面展开并直接导出。
 - [x] 2026-08-14 已确认删除 `message_delivery_attempt`：投递次数、最后错误和提供方消息 ID 直接维护在 `message_outbox`，逐次详情写应用日志。
 - [x] 2026-08-14 已确认删除 `message_outbox.status=FAILED`：临时失败回到 `PENDING` 并等待下次重试，耗尽次数后进入 `DEAD_LETTER`。
+- [x] 2026-08-14 已确认删除 `message_outbox.next_attempt_at`：`available_at` 统一表示首次发送或重试的下一次允许投递时间，人工重发将其更新为当前时间。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1124,7 +1126,8 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `validation_run.recheck_of_run_id`；人工重新校验是独立运行，同一同步执行允许产生多次人工重新校验记录。
 - 删除 `validation_difference_summary`；小型差异汇总直接保存到 `validation_run.difference_summary JSONB`。
 - 删除 `message_delivery_attempt`；消息重试、死信和人工重发状态全部收敛到 `message_outbox`。
-- 删除 `message_outbox` 的 `FAILED` 状态；可重试失败复用 `PENDING + next_attempt_at`。
+- 删除 `message_outbox` 的 `FAILED` 状态；可重试失败复用 `PENDING`，并以 `available_at` 表示下一次允许投递时间。
+- 删除 `message_outbox.next_attempt_at`；首次发送、失败重试和人工重发统一更新 `available_at`，发布扫描使用 `(status, available_at)` 索引。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。
