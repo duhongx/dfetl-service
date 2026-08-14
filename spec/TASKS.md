@@ -579,6 +579,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 ### [P1][EXEC-001] 保证执行成功收尾的一致性
 
 - [ ] 不建立 `execution_checkpoint` 或 `execution_reconciliation` 表，不保存 `retry_of_execution_id`、`resume_from_batch_id`；`load_batch` 只记录单次执行进度和 Doris Label 最终状态。
+- [ ] `task_watermark` 只保存当前正式水位和最后成功执行，不建立 `task_watermark_history`；正常推进由成功执行窗口追溯，人工重置前后值写入 `audit_log`。
 - [ ] 普通失败只提供人工重新采集；有业务主键任务从第 1 批 UPSERT，无业务主键任务按当前机构范围清理并重新全量执行。
 - [ ] 梳理写入成功、校验、提交水位、Snapshot、自动校验和消息发布的顺序。
 - [ ] 为跨事务副作用引入 Outbox 或可恢复状态机。
@@ -779,6 +780,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 已确认正式同步失败只告警、不自动暂停任务；下一次计划调度照常执行，是否暂停任务或人工重新采集由维护人员决定。
 - [x] 2026-08-14 已确认“取消执行”和“暂停任务”相互独立：取消只终止当前执行且不推进水位，下一次计划调度仍正常；停止后续调度必须由维护人员显式暂停任务。
 - [x] 2026-08-14 已确认不保留调度“待追赶”机制：活动执行期间的新调度直接跳过，任务完成后不补跑；长任务由维护人员延长调度周期。
+- [x] 2026-08-14 已确认不建立 `task_watermark_history`：当前值保存在 `task_watermark`，正常推进从成功执行窗口追溯，人工重置写入通用审计日志。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。
@@ -1106,6 +1108,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - 删除 `sync_task.lifecycle_status` 和 `sync_task_version.status`；调度控制、执行结果和当前版本指针分别表达。
 - 删除 `sync_task.schedule_blocked` 和 `block_reason`；失败原因从执行记录查询，失败不自动修改用户控制的 `schedule_enabled`。
 - 删除 `sync_task.catch_up_pending`；重叠计划调度直接跳过，不建立补跑状态。
+- 删除 `task_watermark_history`；只保留当前正式水位，推进和人工重置分别由执行记录与 `audit_log` 追溯。
 - 取消执行不修改 `schedule_enabled`；暂停/恢复任务是独立操作，只控制后续自动调度。
 - 预检固定扫描整条链路；汇总可按机构筛选并直接导出 XLSX/CSV，不导出详情，不建立预检或校验异步导出任务表。
 - 删除 `execution_checkpoint` 和 `execution_reconciliation` 表；不保留独立重试、`retry_of_execution_id` 或 `resume_from_batch_id`。普通失败后只允许人工重新采集并从第 1 批读取。

@@ -197,8 +197,7 @@ WHERE deleted_at IS NULL;
 | --- | --- | --- |
 | `sync_execution` | `id`, `execution_uuid`, `task_id`, `task_version_id`, `operation_type`, `recollect_of_execution_id`, `status`, trigger/schedule snapshot, fixed window, effective config JSON, counts/metrics, engine job id, error, timestamps | `execution_uuid` 全局唯一。普通失败后的人工恢复使用 `RECOLLECT` 新建执行，可关联原失败执行，但始终从任务数据范围起点读取；补采为独立运行，窗口显式记录且不改正式水位。 |
 | `load_batch` | `id`, `execution_id`, `batch_no`, `status`, cursor lower/upper JSON, time lower/upper, institution code/range, row counts, payload checksum, `doris_label`, Doris txn/status/probe fields, `committed_at`, error, timestamps | `(execution_id, batch_no)` 和 `doris_label` 唯一；Label 可由执行 UUID 和批次号确定性推导。批次记录只描述当前执行的进度和 Doris 最终状态，不作为后续执行的恢复位置。 |
-| `task_watermark` | `task_id`, `watermark_value`, `last_success_execution_id`, `revision`, `updated_at` | 每个未删除任务一行；只在完整执行和阻断校验通过后推进。 |
-| `task_watermark_history` | `id`, `task_id`, `execution_id`, `before_value`, `after_value`, `reason`, `operator`, `created_at` | `execution_id` 唯一；重置水位需要权限、确认和审计。补采不插入推进记录。 |
+| `task_watermark` | `task_id`, `watermark_value`, `last_success_execution_id`, `revision`, `updated_at` | 每个未删除任务一行，只保存当前正式水位；仅在完整执行和阻断校验通过后推进。正常推进从成功执行的固定窗口追溯，人工重置前后值写入通用 `audit_log`。 |
 不建立 `execution_checkpoint` 或 `execution_reconciliation` 表，也不在 `sync_execution` 保存 `retry_of_execution_id`、`resume_from_batch_id`。`load_batch` 已完整记录本次执行的提交顺序、游标、Label 探测和 Doris 最终状态；失败后只允许人工“重新采集”，新执行从第 1 批重新读取。有真实联合业务主键时使用 UPSERT 收敛；无业务主键时清理当前机构范围后重新全量执行。
 
 ### 8.2 状态和并发约束
@@ -230,7 +229,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 1. 锁定 `sync_execution` 和 `task_watermark`；
 2. 确认全部载入批次已提交且最终阻断 `validation_run` 通过；
 3. 把执行改为 `SUCCEEDED`；
-4. 推进 `task_watermark` 并写入 history（空窗口也推进）；
+4. 推进 `task_watermark`（空窗口也推进）；成功执行自身保存本次固定窗口，不重复写水位历史；
 5. 如有效消息策略开启，插入唯一 `message_outbox`；
 6. 提交后由独立发布器发送消息。
 
@@ -324,7 +323,7 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 | 数据集 | `DfetlDataset`/`DfetlField` 只代表当前行，历史脚本一度删除 definition version。 | 数据集身份、不可变版本、字段版本和合同版本；仅定义 Hash 变化才生成版本。 | 同步改为人工操作；未变化只记录同步时间和结果，任务继续引用明确版本。 |
 | 任务 | `SyncTask` 是大型扁平实体，混放定义、调度、运行状态、水位、JSON 映射、过滤、重试和已废止模式。 | `sync_task` 身份 + `sync_task_version` + governance override + runtime state；不保存生命周期状态或版本状态。 | 新版本插入与当前指针切换原子完成；移除 `CUSTOM_SQL/ID_RANGE/自动重试/问题分流`。 |
 | 执行 | `TaskExecution` 不引用任务版本，快照仅覆盖少数字段，并含 `SUCCESS_WITH_DIRTY_ROWS`。 | 执行引用不可变任务版本并保存最终有效配置；移除分流成功状态。 | 执行组装器和监控 DTO 按版本/执行快照读取。 |
-| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 正式水位进入 `task_watermark`/history；`load_batch` 只记录单次执行进度，不承担跨执行恢复。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint`，失败后从头重新采集。 |
+| 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 当前正式水位进入 `task_watermark`；成功执行窗口和通用审计分别承担正常推进、人工重置追溯。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint` 或 `task_watermark_history`，失败后从头重新采集。 |
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
 | 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 run/segment；执行 ID 为正式关系。 | 合并策略解析器和运行查询；去除 legacy identity。 |
