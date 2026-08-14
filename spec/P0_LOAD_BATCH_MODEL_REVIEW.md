@@ -226,7 +226,7 @@ ORDER BY b.batch_no;
 - 老系统 `task_chunk` 没有稳定的目标 `phase` 或批次时间范围合同，旧字段不迁移。
 - 新系统 Flyway V1 不创建 `load_batch.phase/time_lower/time_upper`。
 - Java 实体、DTO、OpenAPI 和 Vue 类型不得增加或回填这些字段。
-- 旧物理字典 `spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md` 中残留的字段、枚举和说明，在阶段 1 最终机械清理时删除。
+- `spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md` 已同步删除这些字段、约束和旧处理说明。
 - 不为兼容旧页面保留只读重复列；需要展示时由服务端从父执行返回执行范围文案和固定范围。
 
 ## 8. 验收
