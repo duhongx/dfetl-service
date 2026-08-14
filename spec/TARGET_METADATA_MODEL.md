@@ -174,9 +174,9 @@ WHERE deleted_at IS NULL;
 ### 7.2 调度控制与任务种类
 
 - 任务创建向导最终提交时一次性创建任务和第一个不可变版本，不长期保存任务或版本草稿。
-- `schedule_enabled=false` 只停止自动调度，不阻止用户人工运行。
+- “暂停任务”只把 `schedule_enabled` 设为 `false`，“恢复任务”设回 `true`；暂停不阻止用户人工运行。
 - 最近执行结果和失败原因从 `sync_execution` 查询；失败不写入 `sync_task`、不改变 `schedule_enabled`，下一次计划调度照常创建新执行。
-- 维护人员可根据告警人工把 `schedule_enabled` 改为 `false`，或直接发起重新采集；平台不代替维护人员自动停用调度。
+- 维护人员可根据告警人工“暂停任务”，或直接发起重新采集；平台不代替维护人员自动修改调度开关。
 - `current_version_id` 指向当前版本，其他版本自然是历史版本，不需要 `PUBLISHED/SUPERSEDED` 状态。
 
 `task_kind`/`write_mode` 只允许业务基线的三种组合：
@@ -212,13 +212,14 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
                          +----------> CANCELLED
 ```
 
-- 失败和取消均不推进正式水位；失败只影响本次执行并产生告警，不改变后续自动调度。
+- 失败和取消均不推进正式水位，只影响本次执行，不改变 `schedule_enabled`；下一次计划调度照常运行。
 - 不存在 `SUCCESS_WITH_DIRTY_ROWS`，因为正式 ODS 不接受跳过问题行。
 - 人工重新采集新建 `RECOLLECT` 执行并可指向 `recollect_of_execution_id`；始终从任务数据范围起点和第 1 批读取，不在原行增加自动重试循环。
 - Doris 响应不明确时自动探测原 Label，结果直接回写 `load_batch` 并记录审计；新执行启动前再次核对旧 Label，避免旧批次仍可能提交时盲目重放。
 - 重新采集和补采分别使用 `RECOLLECT/BACKFILL` 操作类型；只有明确的清空重建命令可清理范围。
 - 任务的活动执行建立部分唯一索引：`task_id WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')`。
-- 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次。失败时清除本次待追赶标记，不立即启动另一执行，等待下一次计划调度。
+- 调度触发遇到活动执行时只以 `sync_task.catch_up_pending=true` 合并一次；成功后消费一次。失败或取消时清除本次待追赶标记，不立即启动另一执行，等待下一次计划调度。
+- “取消执行”与“暂停任务”是独立命令：前者只把当前 `sync_execution` 置为 `CANCELLED`，后者只修改 `sync_task.schedule_enabled`。
 - `load_batch(execution_id, status, batch_no)`、`sync_execution(task_id, created_at DESC)` 和所有父外键列建立查询索引。
 
 ### 8.3 原子完成边界
