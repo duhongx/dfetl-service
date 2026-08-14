@@ -292,11 +292,13 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, payload/headers JSON, routing/topic/message key snapshot, `status`, `available_at`, `attempt_count`, `last_attempt_at`, `provider_message_id`, `published_at`, `last_error`, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入；同一行承担重试、死信和人工重发状态。`available_at` 统一表示下一次允许投递的时间。 |
+| `message_outbox` | `id`, `event_id` UUID, `execution_id`, `event_type`, `publish_command` JSONB, routing/topic/message key template snapshot, `status`, `available_at`, `attempt_count`, `last_attempt_at`, `provider_message_id`, `published_at`, `last_error`, timestamps | `event_id` 和 `(execution_id, event_type)` 唯一。只在执行成功和水位推进事务中插入；每次执行一条发布指令，同一行承担整段发布的重试、死信和人工重发状态。`publish_command` 只保存数据范围、Doris 目标对象等小型指令快照，不保存业务数据明细；`available_at` 统一表示下一次允许投递的时间。 |
 
 `message_outbox.status`：`PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`，不设置与可重试 `PENDING` 重复的 `FAILED`。发布器通过 `FOR UPDATE SKIP LOCKED` 抢占 `available_at <= 当前时间` 的 `PENDING` 事件。首次发送写入首次可投递时间；临时失败增加 `attempt_count`、记录 `last_error`，回到 `PENDING` 并把 `available_at` 覆盖为下次重试时间；达到最大次数进入 `DEAD_LETTER`。发送失败只改变 outbox，不改变 `sync_execution=SUCCEEDED` 或正式水位。人工重发从 `DEAD_LETTER` 改回 `PENDING`，把 `available_at` 覆盖为当前时间，沿用同一 `event_id`，由下游幂等消费。不设置语义重复的 `next_attempt_at`。
 
 不建立 `message_delivery_attempt`。每次尝试只原子更新 outbox 的次数、时间、最后错误和提供方消息 ID，详细请求与响应写应用日志；避免产生持续增长且还需清理的投递明细表。
+
+发布器按 `publish_command` 中的执行批次或水位范围从 Doris 分页读取并逐条发送。只有整段发布完成才把 outbox 更新为 `PUBLISHED`；中途失败时不保存分页进度，下一次从本次数据范围开头重新发布。每条业务消息使用由 `event_id + 业务主键/messageKey` 生成的确定性消息 ID，同一 outbox 重试或人工重发时保持不变，由下游幂等消费。不建立分页进度、分页明细或逐条消息持久化表。
 
 ## 12. P0 支撑对象
 
