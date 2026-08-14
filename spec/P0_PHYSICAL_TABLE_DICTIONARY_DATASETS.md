@@ -38,9 +38,9 @@ dataset_message_policy
 6. 未知或无法解析的医疗字段类型可以被如实保存为 `UNSUPPORTED`，不得回退为 `VARCHAR(256)`；正式执行在写入前失败。
 7. 数据集同步策略不再保存可由合同确定的 `write_mode`、`sync_template`、业务主键或增量字段。
 8. Reader 并发固定为 1，不进入策略表。
-9. 正式同步校验默认启用、方法为 `ROW_COUNT`、容差和回看均为 0；自动复检和可配置 `fail_block` 字段删除。
+9. 正式同步校验始终启用，最低方式为 `ROW_COUNT`，默认容差和回看均为 0；不提供关闭开关，自动复检和可配置 `fail_block` 字段删除。
 10. 消息策略只保存在数据集级，默认关闭；不保存 transport、Exchange、全量模式、TRUNCATE 信号或任务级副本。
-11. 预检风险展示的全局/数据集/任务继承属于治理策略，物理字段将在后续“任务和治理覆盖”批次与 `task_governance_override` 一并闭环，不混入同步、校验或消息表。
+11. 预检只保存和展示事实，不建立全局、数据集或任务级预检策略，也不混入同步、校验或消息表。
 
 ## 2. 数据集同步事务
 
@@ -283,6 +283,7 @@ CHECK (
 UNIQUE (dataset_version_id, external_field_id)
 UNIQUE (dataset_version_id, field_code)
 UNIQUE (dataset_version_id, ordinal_no)
+UNIQUE (dataset_version_id, id)
 
 UNIQUE INDEX uk_dataset_field_business_key_order
     ON standard_dataset_field (dataset_version_id, business_key_ordinal)
@@ -516,14 +517,13 @@ reader_parallelism
 
 ## 10. `global_validation_policy`
 
-职责：正式同步校验的全局默认。P0 只有一行，不建设任意多套策略模板。
+职责：正式同步校验的全局默认。P0 只有一行，不建设任意多套策略模板。正式同步校验不能关闭，最轻量方式为 `ROW_COUNT`。
 
 ### 10.1 字段
 
 | 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `smallint` | PK，固定为 `1` | 单例行 |
-| `enabled` | `boolean` | NOT NULL DEFAULT `true` | 正式同步默认自动校验 |
 | `validation_method` | `varchar(32)` | NOT NULL DEFAULT `'ROW_COUNT'` | `ROW_COUNT/ROW_COUNT_CHECKSUM` |
 | `row_tolerance` | `numeric(8,4)` | NOT NULL DEFAULT `0` | 百分比容差，默认零 |
 | `lookback_hours` | `integer` | NOT NULL DEFAULT `0` | 默认不回看 |
@@ -546,6 +546,7 @@ CHECK (revision >= 0)
 不保存：
 
 ```text
+enabled
 trigger_mode
 fail_block
 revalidate_enabled
@@ -554,13 +555,14 @@ revalidate_delay
 
 固定语义：
 
-- 与同步执行绑定的最终校验始终在写入后执行；开启时不一致或技术失败均阻止执行成功和水位推进。
+- 与同步执行绑定的最终校验始终在写入后执行；不一致或技术失败均阻止执行成功、水位推进和消息 Outbox 创建。
+- 不提供关闭校验的接口、前端开关或持久化字段；最低方式始终是 `ROW_COUNT`。
 - 默认自动复检关闭；人工重新校验新建独立 `validation_run`。
-- 无业务主键数据集不能使用 `ROW_COUNT_CHECKSUM`。若全局方法配置为该值，无主键任务在策略解析时明确回退到其唯一支持的 `ROW_COUNT` 并把来源记录为合同强制值，而不是执行中静默降级。
+- 无业务主键数据集不能使用 `ROW_COUNT_CHECKSUM`。若全局方法配置为该值，无主键任务在策略解析时明确使用其唯一支持的 `ROW_COUNT` 并把来源记录为合同强制值，而不是执行中静默降级。
 
 ## 11. `dataset_validation_policy`
 
-职责：数据集级校验继承或明确覆盖。任务级覆盖在后续治理表中定义。
+职责：数据集级校验继承或明确覆盖。任务级覆盖在后续治理表中定义。数据集只能覆盖校验方式、容差和回看范围，不能关闭正式同步校验。
 
 ### 11.1 字段
 
@@ -568,7 +570,6 @@ revalidate_delay
 | --- | --- | --- | --- |
 | `dataset_id` | `bigint` | PK/FK | FK `standard_dataset(id)`，`ON DELETE CASCADE` |
 | `override_mode` | `varchar(16)` | NOT NULL DEFAULT `'INHERIT'` | `INHERIT/OVERRIDE` |
-| `enabled` | `boolean` | NULL | 覆盖时必填；允许显式关闭 |
 | `validation_method` | `varchar(32)` | NULL | 覆盖时必填 |
 | `row_tolerance` | `numeric(8,4)` | NULL | 覆盖时必填 |
 | `lookback_hours` | `integer` | NULL | 覆盖时必填 |
@@ -592,13 +593,11 @@ CHECK (revision >= 0)
 
 CHECK (
   (override_mode = 'INHERIT'
-    AND enabled IS NULL
     AND validation_method IS NULL
     AND row_tolerance IS NULL
     AND lookback_hours IS NULL)
   OR
   (override_mode = 'OVERRIDE'
-    AND enabled IS NOT NULL
     AND validation_method IS NOT NULL
     AND row_tolerance IS NOT NULL
     AND lookback_hours IS NOT NULL)
@@ -607,6 +606,7 @@ CHECK (
 
 ### 11.3 业务约束和生效
 
+- 不保存 `enabled`，不允许数据集显式关闭正式同步校验；最低方式为 `ROW_COUNT`。
 - `ROW_COUNT_CHECKSUM` 只有当前数据集版本存在真实业务主键时才允许保存；保存接口必须检查当前版本。
 - 无业务主键数据集固定解析为 `ROW_COUNT`，页面禁用内容 Checksum。
 - 数据集策略变化会在选择继承的数据集任务下一次执行开始前重新解析；运行中执行继续使用启动时快照。
@@ -704,7 +704,7 @@ dataset_message_policy
 默认值：
 
 - 同步：Fetch Size 5000、上界延迟 5 分钟、回看 0、调度继承全局每 4 小时。
-- 校验：继承全局 `ROW_COUNT + 容差 0 + lookback 0`。
+- 校验：继承全局 `ROW_COUNT + 容差 0 + lookback 0`，且始终启用。
 - 消息：三项协议数据集按固定 Routing Key 初始化启用，其余默认关闭；管理员仍可关闭或重新启用。
 
 如果数据集再次从 `VOID` 恢复，保留原策略及 revision，不重复创建或覆盖管理员配置。
@@ -713,6 +713,7 @@ dataset_message_policy
 
 - 所有策略更新使用 `revision` 乐观锁。
 - 保存成功后增加 revision、更新时间和更新人。
+- 校验策略只允许在 `ROW_COUNT/ROW_COUNT_CHECKSUM`、容差和回看范围之间调整，不接受关闭字段。
 - 未知字段、旧传输模式和旧自动复检参数明确拒绝，不静默忽略。
 - 同步执行类默认变化不自动改任务；治理类校验和数据集消息按已确认生效规则处理。
 - 成功和失败都写 `audit_log`，敏感值和 RabbitMQ 连接参数不进入摘要。
@@ -785,7 +786,7 @@ INDEX idx_dataset_version_history
 | 未知类型回退 `VARCHAR(256)` | 保存 `UNSUPPORTED` 并在正式执行前失败 |
 | `dfetl_sync_policy.write_mode/sync_template/incremental_field` | 删除；由当前数据集合同确定 |
 | `reader_parallelism` | 删除；第一阶段固定为 1 |
-| 校验 `trigger_mode/fail_block/revalidate_*` | 删除；同步门禁和人工复检语义固定 |
+| 校验 `enabled/trigger_mode/fail_block/revalidate_*` | 删除；正式同步至少执行 `ROW_COUNT`，同步门禁和人工复检语义固定 |
 | 校验默认 `lookback=2/自动复检=true` | 改为 lookback 0、自动复检关闭 |
 | 消息 `transport/full_sync_mode` | 删除；只保留 RabbitMQ 且发布范围固定 |
 | 消息策略复制到任务 | 删除；任务/执行只保存当次快照 |
@@ -800,21 +801,20 @@ INDEX idx_dataset_version_history
 - 未知类型使用兜底 Doris 类型；
 - 同步策略允许人工改写由业务主键和增量字段决定的任务类型；
 - Reader 并发策略与已确认的单并发冲突；
-- 校验默认自动复检和非零回看与新基线冲突；
+- 校验曾允许关闭、默认自动复检和非零回看，与当前“至少执行行数校验”的基线冲突；
 - 消息保留已废止的 transport 和全量模式。
 
-下一批物理字典继续复核：
+后续物理字典按以下对象继续闭环：
 
 ```text
 collection_route
-collection_route_institution
 collection_route_version
 collection_route_version_institution
 route_field_resolution
 sync_task
 sync_task_version
-task_governance_override
+task_validation_policy
 task_watermark
 ```
 
-下一批同时补齐已经确认但当前逻辑模型表达不足的“数据预检提示/风险展示策略”全局、数据集和任务覆盖字段，不重新讨论其业务语义。
+预检只保留事实展示，不再补建预检策略表或任务覆盖字段。
