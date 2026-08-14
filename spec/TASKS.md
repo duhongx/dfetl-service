@@ -3,7 +3,7 @@
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
 > 状态：阶段 1「目标模型冻结与物理表字典复核」进行中  
-> 最近更新：2026-08-14  
+> 最近更新：2026-08-15  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 详细逻辑模型：`spec/TARGET_METADATA_MODEL.md`
 
@@ -136,11 +136,13 @@ collection_route.current_version_id
 - 首次全量运行期间到达的计划触发直接跳过，完成后不补跑。
 - 首次全量和后续增量分别拥有独立执行、批次、校验、日志和 Outbox。
 - 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
+- `load_batch` 不保存重复的 `phase`；批次类型统一从父 `sync_execution.execution_scope` 推导。
 
 专项 Review：
 
 ```text
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 ```
 
 ### 1.9 运行请求和技术前检
@@ -309,6 +311,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```text
 spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 ```
 
 已覆盖：
@@ -321,12 +324,12 @@ spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 - [x] `message_outbox`
 - [x] 已接受运行请求的技术前检失败保留执行历史
 - [x] 首次全量和后续增量使用两条独立执行
+- [x] 删除 `load_batch.phase`，批次类型由父执行范围推导
 - [x] 成功收尾短事务
 - [x] 日志全文不进入 PostgreSQL
 
 待一致性检查：
 
-- [ ] 判断 `load_batch.phase` 在执行范围已明确后是否仍需保留。
 - [ ] 核对 `load_batch` 游标、时间范围和 Label 状态组合。
 - [ ] 核对唯一 `SYNC_GATE validation_run` 与强制校验规则。
 - [ ] 核对 Outbox、执行、任务版本、数据集和机构身份一致性。
@@ -357,6 +360,7 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 - [x] 修正“预检三级策略”冲突：只保存和展示预检事实。
 - [x] 修正“任务固定 route_id”冲突：当前链路由任务当前版本推导。
 - [x] 修正“首次全量立即补充增量”冲突：首次全量与后续增量为独立执行。
+- [x] 修正“批次重复保存 phase”冲突：批次类型从父 `execution_scope` 推导。
 - [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
 - [ ] 清理 `TARGET_METADATA_MODEL.md` 和其他文档中的旧表名、旧状态及旧语义。
 - [ ] 补回并核对使用文档导航、路由和实施任务。
@@ -548,6 +552,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] Doris 响应不明确时探测原 Label。
 - [ ] 不建立检查点和执行对账表。
 - [ ] 首次全量和后续增量分别创建独立 `sync_execution`；同一执行不得混合全量和增量批次。
+- [ ] `load_batch` 不保存 `phase`，批次类型从父 `sync_execution.execution_scope` 推导。
 - [ ] 首次全量成功后以开始时间 `T0` 建立初始水位；等待下一次正常调度再执行增量。
 - [ ] 成功收尾短事务锁定执行和水位。
 - [ ] 必须确认全部批次提交、唯一同步门禁校验通过、拒绝行数为 0。
@@ -702,6 +707,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 首次全量完成后不立即补充增量；下一次正常调度创建独立增量执行。
 - [ ] 首次全量运行期间错过的计划触发不补跑。
 - [ ] 首次全量和增量的执行、批次、校验、日志和 Outbox 相互独立。
+- [ ] 批次类型由父执行范围推导，数据库和 API 中不存在 `load_batch.phase`。
 - [ ] 中间批次失败后重新采集从第 1 批开始。
 - [ ] Doris Label 不明确状态探测。
 - [ ] 补采不修改水位。
@@ -758,6 +764,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-029 | 正式同步行数严格相等，删除所有行数容差配置 |
 | D-030 | 删除正式同步校验 `lookback_hours`，门禁只使用本次精确范围 |
 | D-031 | 首次全量和后续定时增量为两次独立执行，不立即补充增量 |
+| D-032 | 删除 `load_batch.phase`，批次类型由父执行范围推导 |
 
 详细结论分散在以下权威文档：
 
@@ -770,6 +777,7 @@ spec/DELETE_SNAPSHOT_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY*.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
