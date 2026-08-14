@@ -1,0 +1,13 @@
+interface:
+  display_name: Spring 后端开发
+  short_description: 按现有项目架构实施和验证 Spring Boot 与 Spring Cloud 后端变更
+  default_prompt: 使用 $spring-backend-development 按当前项目约定实施并验证这个 Spring 后端变更。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

@@ -1,0 +1,13 @@
+interface:
+  display_name: Vue 前端开发
+  short_description: 按现有项目结构实施和验证 Vue 页面、组件、状态及接口调用变更
+  default_prompt: 使用 $vue-frontend-development 按当前项目约定实施并验证这个 Vue 前端变更。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

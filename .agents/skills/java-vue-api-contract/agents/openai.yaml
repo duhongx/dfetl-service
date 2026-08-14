@@ -1,0 +1,13 @@
+interface:
+  display_name: Java/Vue 前后端契约
+  short_description: 核对并实施 Java 后端与 Vue 前端之间的接口契约和联动变更
+  default_prompt: 使用 $java-vue-api-contract 核对这次接口变更，并同步检查 Java 后端与 Vue 前端。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
