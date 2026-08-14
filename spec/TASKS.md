@@ -814,6 +814,7 @@ DFETL 不提供可配置的 `STRICT/PERMISSIVE` 正式建表模式。表用途�
 - [x] 2026-08-14 对照旧发布运行确认删除 `message_outbox.event_type`：旧代码也是一次执行/批次对应一次发布运行，新模型直接以 `execution_id` 唯一。
 - [x] 2026-08-14 已确认沿用旧 RabbitMQ 外部契约：全局连接配置、持久化 Topic Exchange `YL`、三个完整 Routing Key、topic 默认同 Routing Key、持久化消息及 Publisher Confirm/Return。
 - [x] 2026-08-14 已确认删除消息发布模式：全量执行发布本次全量全部数据，增量执行发布本次增量全部数据，不支持 `SKIP/NOTIFY_ONLY`，不发送完成或 TRUNCATE 信号。
+- [x] 2026-08-14 已将后续 Review 结论回写历史 SQL 审计：校验分段/行级差异相关 3 个脚本改为废止，执行结果不明确的探测结果改为直接进入 `load_batch`；最终分类为保留 6、废止 15、由新模型替代 28、仅作历史参考 13。
 - [x] 对照当前 Java 实体、Repository、服务查询路径和老库快照，完成字段、关系、状态、约束和索引差异清单。
 - [x] 确认本阶段不创建或固化 Flyway `V1__baseline.sql`，也不移动历史 SQL 或修改老数据库。
 - [x] 阶段验证：Temurin JDK 21.0.12、Maven 3.9.16 执行 `-DskipTests clean package` 成功，485 个生产源文件按 Java 21 编译；可执行 JAR 完整性、启动类和 class major 65 已核对。62 个 SQL 文件与审计清单逐文件比对一致，Flyway `V*__*.sql` 仍为 0 个。

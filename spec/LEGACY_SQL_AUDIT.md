@@ -12,8 +12,8 @@
 | 分类 | 文件数 | 含义 |
 | --- | ---: | --- |
 | 保留 | 6 | 业务决策或对象仍有效，在新 `V1` 中按最终模型重新定义；不重放原脚本。 |
-| 废止 | 12 | 与最终业务基线冲突，或其功能已明确移除；新系统不得继续建模。 |
-| 由新模型替代 | 31 | 业务能力仍需要，但旧字段、关系、状态或约束不能沿用；以目标模型重新实现。 |
+| 废止 | 15 | 与最终业务基线冲突，或其功能已明确移除；新系统不得继续建模。 |
+| 由新模型替代 | 28 | 业务能力仍需要，但旧字段、关系、状态或约束不能沿用；以目标模型重新实现。 |
 | 仅作历史参考 | 13 | 只记录老库演进、数据搬迁、临时检查或人工回滚过程；不进入新库迁移链。 |
 | **合计** | **62** | `1 + 54 + 7`。 |
 
@@ -70,9 +70,9 @@
 | 25 | `migration_doris_auto_create_table_policy.sql` | 由新模型替代 | 自动建表配置改为固定 ODS/RAW 用途和只读版本合同；结构重建不自动执行。 |
 | 26 | `migration_doris_type_mapping_rules.sql` | 由新模型替代 | 类型映射能力进入带版本的医疗数据转换合同，不保留可任意修改后影响历史执行的全局规则。 |
 | 27 | `migration_drop_validation_task.sql` | 保留 | 废止 `validation_task` 的决定有效；新 `V1` 直接不创建该表。 |
-| 28 | `migration_etl_verify_chunk_run_unique.sql` | 由新模型替代 | 校验分片唯一性保留，改为 `validation_run_segment(run_id, segment_no)` 的明确约束。 |
-| 29 | `migration_etl_verify_diff_repair_source.sql` | 由新模型替代 | 差异复核和修复来源可审计能力保留；与新的校验运行及人工复检关联，不复用旧行级状态机。 |
-| 30 | `migration_etl_verify_diff_run_id_index.sql` | 由新模型替代 | 按运行查询差异的索引诉求保留，索引落在新的校验结果/导出模型。 |
+| 28 | `migration_etl_verify_chunk_run_unique.sql` | 废止 | 已确认不持久化校验分段状态；内部可以分批计算，但失败后整次重新校验，不建立 `validation_run_segment` 或分段唯一约束。 |
+| 29 | `migration_etl_verify_diff_repair_source.sql` | 废止 | 新模型不保存行级差异、修复来源或校验运行自关联；人工重新校验新建运行，入口和操作者写通用审计。 |
+| 30 | `migration_etl_verify_diff_run_id_index.sql` | 废止 | 独立差异表和详情导出模型已删除；小型差异汇总内嵌 `validation_run.difference_summary JSONB`，不再需要差异明细索引。 |
 | 31 | `migration_external_api_production.sql` | 保留 | API 客户端、请求日志、幂等记录和限流状态仍属 P0 支撑对象；敏感值不得作为 SQL 基础数据写入。 |
 | 32 | `migration_external_sync_task_api.sql` | 由新模型替代 | 外部创建任务能力需解析新任务身份、链路和任务版本，不能再写扁平 `sync_task`。 |
 | 33 | `migration_external_sync_task_batch_api.sql` | 由新模型替代 | 批量请求幂等语义保留，但每项结果必须引用新任务身份/版本。 |
@@ -88,9 +88,9 @@
 | 43 | `migration_spec075_message_publish_mode.sql` | 废止 | 新模型没有首次全量消息模式；全量和增量都发布本次同步范围内的全部业务数据，不支持 `SKIP/NOTIFY_ONLY`。 |
 | 44 | `migration_sync_task_batch_size_global_fetch.sql` | 由新模型替代 | JDBC fetch size 进入任务版本；Reader 并发固定为 1，不再与可调并发混合。 |
 | 45 | `migration_sync_task_phase9_16.sql` | 由新模型替代 | 执行参数中仍有效的时间窗口、Doris 模型等进入任务版本；`CUSTOM_SQL`、`ID_RANGE`、任意过滤和分流字段废止。 |
-| 46 | `migration_sync_task_retry_fields.sql` | 废止 | 自动重试、退避和重试上限与“系统不自动重试”冲突；只保留人工重试/重采/补采关系。 |
+| 46 | `migration_sync_task_retry_fields.sql` | 废止 | 自动重试、退避、重试上限和独立重试关系均不保留；普通失败后只提供人工重新采集，数据补采是独立运维执行。 |
 | 47 | `migration_task_execution_engine_metrics.sql` | 保留 | 引擎作业 ID、读写计数、字节数和速率等观测字段进入新的执行/批次模型。 |
-| 48 | `migration_task_execution_reconcile_handling.sql` | 由新模型替代 | Doris 结果不明确和人工核对仍需要；采用执行状态、探测记录与人工处置审计分表。 |
+| 48 | `migration_task_execution_reconcile_handling.sql` | 由新模型替代 | Doris 返回不明确时仍需按确定性 Label 查询最终状态，但探测结果直接写入 `load_batch` 并记录通用审计；不建立 `execution_reconciliation`、独立人工对账状态或自动调度阻断。 |
 | 49 | `migration_task_execution_triggered_by_length.sql` | 仅作历史参考 | 仅修正老字段长度；新模型直接定义受控触发类型。 |
 | 50 | `migration_task_group_realign.sql` | 废止 | 任务分组及历史重排逻辑已移出最终产品范围。 |
 | 51 | `migration_task_validation_config_lookback.sql` | 由新模型替代 | 时间窗口回看参数保留，默认值必须是 `0` 且执行时写入有效策略快照。 |
