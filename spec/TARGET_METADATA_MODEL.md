@@ -317,7 +317,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 - `app_user` 和 `audit_log`；本地账号均为同权限管理员，不建立角色、权限及关联表，禁止 SQL 写入固定管理员密码。
 - `system_setting`；只保存应用注册的已知 key，使用 `revision` 防止覆盖，并对已知设置值做类型、范围和敏感校验。
 - `alert_channel`、`alert_rule`、`alert_event`、`alert_delivery`；保存最小告警触发和渠道投递历史，移除重复的 channel/webhook 表达。
-- 外部 API client、授权范围、请求日志、幂等请求和限流状态；任务 API 必须调用新领域服务，不能直接写表。
+- 外部 API client、机构授权范围、nonce 防重放和幂等请求记录；任务 API 必须调用新领域服务，不能直接写表。P0 不实现应用层 client 限流，也不建立限流状态、配额或计数器表。
 - Quartz JDBC JobStore 表；使用独立新库和新 scheduler identity，不迁移老 Quartz 运行态。
 
 这些表与执行历史同样不从老库整体恢复；最终配置迁移范围由 `DB-002` 决定。
@@ -354,6 +354,16 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 - 告警实现优先级在系统中最低，排在数据同步、预检、校验、消息、外部 API 和基础运维能力之后，但仍属于最终交付范围；
 - 具体状态枚举、保留期、删除行为和索引在物理表字典复核时确定，不预建复杂归档体系。
 
+### 12.4 外部任务 API 用途和限流边界（已确认）
+
+- 外部任务 API 属于 P0，用于业务端创建或发布数据集后，按医疗机构编码和数据集编码直接调用 DFETL 完成任务规划与创建。
+- 核心业务输入只包含医疗机构编码和数据集标识；请求号、是否立即运行和批量失败策略只属于幂等与调用控制。
+- 外部 API 不是业务数据上传或高频采集通道，真实数据读取和写入由后台同步任务完成。
+- 保留 HMAC、时间戳、nonce 防重放、client 启停、请求幂等、任务业务唯一性和同任务活动执行唯一性。
+- P0 不实现应用层 client 限流，不建立限流窗口、配额、计数器或状态表，也不为此引入 Redis 或 PostgreSQL 计数器。
+- 部署环境需要通用流量防护时，可由 Nginx、Ingress 或网关提供；该能力不属于 DFETL 元数据模型。
+- client 机构授权、生命周期、nonce 清理和幂等记录的最终字段与关系继续逐项 Review。
+
 ## 13. 当前实体、Repository、查询路径差异清单
 
 ### 13.1 字段与关系差异
@@ -376,6 +386,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
 | 消息 | `DfetlMessagePolicy` 已按数据集保存策略；任务创建时 `DatasetTaskSnapshotAssembler` 再复制为 `MessagePublishConfig`，执行器读取这份任务副本；同时存在 Redis Stream/RabbitMQ 两套发布器、publish log 和 send record。 | 仅 RabbitMQ；只保留数据集消息策略、执行/Outbox 指令快照和单一 outbox，不保留任务级消息配置或覆盖。 | 数据集参数对该数据集所有任务一致；机构、Doris 目标、批次和窗口从任务/执行上下文取得。完成事务插入指令，独立 RabbitMQ 发布器消费，旧 config/log/send-record/recovery 路径退出。 |
 | 告警 | 当前渠道和规则可配置，规则命中后直接发送 Webhook，只更新 `last_triggered_at`，发送结果主要写应用日志。 | 保留 channel/rule，并新增每次命中的 `alert_event` 和每个渠道的 `alert_delivery`；不增加处置流。 | 告警页面可查询触发和投递历史；发送失败可追溯，仍不影响同步任务状态。 |
+| 外部 API | 当前 HMAC client 支持启停、时间戳、nonce、幂等和任务管理调用，但没有应用层限流实现；主要用于业务端按机构和数据集创建任务。 | 保留真实认证和幂等能力，删除“限流状态”目标对象；核心任务操作必须调用新领域服务。 | 不增加 Redis/数据库限流计数器或配额页面；继续核对 client 授权、nonce 清理和幂等持久化。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
 
 ### 13.2 状态差异
