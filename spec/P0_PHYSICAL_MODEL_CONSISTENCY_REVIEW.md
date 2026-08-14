@@ -162,27 +162,78 @@ lookback_seconds
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
-## 5. 已修正和待机械清理的文档
+## 5. 已确认：首次全量和后续增量是两次独立执行
+
+### 5.1 冲突
+
+早期业务文档把 `FULL_THEN_INCREMENTAL` 错误解释为一个复合执行：
+
+```text
+首次全量完成
+→ 在同一执行内立即执行补充增量
+→ 两个阶段全部完成后整条执行成功
+```
+
+这会把长期任务的运行方式与单次执行状态混在一起，并导致一个执行详情同时承载全量批次和增量批次。
+
+### 5.2 最终规则
+
+`FULL_THEN_INCREMENTAL` 描述的是同一长期任务在不同运行之间的方式：
+
+```text
+第一次运行：一条 INITIAL_FULL sync_execution
+后续正常调度：新的 INCREMENTAL sync_execution
+```
+
+固定边界：
+
+1. 首次全量只创建一条独立 `sync_execution`，只包含全量批次。
+2. 首次全量完成后不立即追加增量，不创建补充增量子阶段。
+3. 首次全量成功并通过门禁校验后，将首次全量开始时间 `T0` 写为初始正式水位。
+4. 等待下一次正常 Cron/间隔触发，再创建新的增量执行。
+5. 后续增量使用 `[watermark, upper)`，成功后推进到 `upper`。
+6. 首次全量运行期间到达的计划触发按既有并发规则跳过，完成后不补跑。
+7. 首次全量和增量分别拥有执行、批次、校验、日志和 Outbox。
+8. 页面运行历史显示两次独立执行，不在同一详情中展示“全量阶段 + 补充增量阶段”。
+9. 不建立父子执行、自关联、补充增量状态或双水位。
+10. 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
+
+专项 Review：
+
+```text
+spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+```
+
+### 5.3 物理模型影响
+
+- `sync_execution.execution_scope` 保留 `INITIAL_FULL` 和 `INCREMENTAL`，但二者永远属于不同执行行。
+- 同一执行内的全部 `load_batch` 必须与执行范围一致，不能同时混入全量和增量批次。
+- 原“首次全量后立即补充增量”的描述不得进入 Flyway V1、Java 状态机、前端详情或测试用例。
+- `load_batch.phase` 在执行不混合阶段后是否仍有必要，作为下一项一致性 Review 单独确认。
+
+## 6. 已修正和待机械清理的文档
 
 当前已修正：
 
 ```text
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
-阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance` 和 `lookback_hours` 描述：
+阶段 1 最终一致性清理必须从以下文档删除已经失效的 `enabled`、`row_tolerance`、`lookback_hours` 及“首次全量立即补充增量”描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/TASKS.md
 spec/TARGET_METADATA_MODEL.md
 ```
 
 清理属于已确认结论的机械同步，不再重新讨论。
 
-## 6. 后续检查顺序
+## 7. 后续检查顺序
 
 下一项继续从执行和批次模型中选择影响范围最大的真实冲突，只讨论一个问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
