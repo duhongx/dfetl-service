@@ -5,15 +5,16 @@
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 任务模型：`spec/P0_MUTABLE_TASK_MODEL_REVIEW.md`  
 > 数据集覆盖：`spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md`  
+> 全局默认：`spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md`  
 > 一致性 Review：`spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
 
 ## 1. 文档定位
 
-本文是正式同步校验策略的当前权威物理字典，覆盖：
+本文是正式同步校验配置和门禁的当前权威物理字典，覆盖：
 
 ```text
-global_validation_policy
+system_setting[validation.default_method]
 standard_dataset.validation_method_override
 sync_task.validation_method_override
 sync_execution 校验快照
@@ -23,6 +24,7 @@ SYNC_GATE validation_run
 明确不建立：
 
 ```text
+global_validation_policy
 dataset_validation_policy
 task_validation_policy
 校验开关表
@@ -31,7 +33,7 @@ task_validation_policy
 自动复检策略表
 ```
 
-以下旧字段不能进入 Flyway V1：
+以下旧字段和对象不能进入 Flyway V1：
 
 ```text
 enabled
@@ -39,6 +41,7 @@ row_tolerance
 tolerance_rows
 tolerance_percent
 lookback_hours
+global_validation_policy
 dataset/task validation override_mode
 ```
 
@@ -87,29 +90,37 @@ sync_execution 执行快照
 
 `lookback_seconds` 会改变本次实际读取范围；校验严格使用执行最终固定的真实范围，不再额外向历史范围扩展。
 
-## 4. `global_validation_policy`
+## 4. 全局默认：`system_setting[validation.default_method]`
 
-职责：保存正式同步校验的全局默认方法。当前 P0 设计为单例一行；是否继续独立成表在下一项一致性 Review 中确认。
+全局默认校验方式使用已经确认的 `system_setting`，不建立独立单例表。
 
-### 4.1 字段
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
-| --- | --- | --- | --- |
-| `id` | `smallint` | PK，固定为 `1` | 单例行 |
-| `validation_method` | `varchar(32)` | NOT NULL DEFAULT `'ROW_COUNT'` | `ROW_COUNT/ROW_COUNT_CHECKSUM` |
-| `revision` | `bigint` | NOT NULL DEFAULT `0` | 乐观锁版本 |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 创建时间 |
-| `created_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
-| `updated_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 更新时间 |
-| `updated_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
-
-约束：
+注册项：
 
 ```text
-CHECK (id = 1)
-CHECK (validation_method IN ('ROW_COUNT','ROW_COUNT_CHECKSUM'))
-CHECK (revision >= 0)
+setting_key = validation.default_method
 ```
+
+允许值：
+
+```text
+ROW_COUNT
+ROW_COUNT_CHECKSUM
+```
+
+注册默认值：
+
+```text
+ROW_COUNT
+```
+
+固定规则：
+
+- 设置注册表定义类型、默认值、允许枚举、是否敏感和中文说明；
+- 该设置为非敏感枚举；
+- 数据库中没有对应设置行时，应用使用注册默认值 `ROW_COUNT`；
+- 第一次由管理员保存时插入设置行；后续使用 `system_setting.revision` 乐观锁更新；
+- 未注册 key 和非法枚举值必须拒绝；
+- Flyway V1 不要求预插入固定单例策略行。
 
 不保存：
 
@@ -196,7 +207,8 @@ CHECK (validation_method_override IS NULL OR
 ```text
 sync_task.validation_method_override 非空
 → standard_dataset.validation_method_override 非空
-→ global_validation_policy
+→ system_setting[validation.default_method]
+→ 注册默认值 ROW_COUNT
 → 数据集合同能力强制
 ```
 
@@ -212,7 +224,8 @@ contract_forced
 其中：
 
 - `source_level`：`GLOBAL/DATASET/TASK/CONTRACT`；
-- 来源为 `GLOBAL`：`source_revision=global_validation_policy.revision`；
+- 来源为 `GLOBAL` 且存在设置行：`source_revision=system_setting.revision`；
+- 来源为注册默认值且设置行不存在：`source_revision=NULL`；
 - 来源为 `DATASET`：`source_revision=standard_dataset.revision`；
 - 来源为 `TASK`：`source_revision=sync_task.revision`；
 - 来源为 `CONTRACT`：revision 为空且 `contract_forced=true`。
@@ -227,7 +240,7 @@ contract_forced
 | --- | --- | --- | --- |
 | `validation_method` | `varchar(32)` | NOT NULL | `ROW_COUNT/ROW_COUNT_CHECKSUM` |
 | `validation_source` | `varchar(16)` | NOT NULL | `GLOBAL/DATASET/TASK/CONTRACT` |
-| `validation_source_revision` | `bigint` | NULL | 来源 revision；合同强制时为空 |
+| `validation_source_revision` | `bigint` | NULL | 来源 revision；注册默认值或合同强制时可为空 |
 | `validation_contract_forced` | `boolean` | NOT NULL DEFAULT `false` | 是否由数据集合同强制收敛 |
 
 约束：
@@ -252,6 +265,7 @@ CHECK (
 validation_enabled
 row_tolerance
 lookback_hours
+global_policy_id
 dataset_policy_id
 task_policy_id
 ```
@@ -329,9 +343,10 @@ sync_execution → SUCCEEDED
 以下对象、字段和能力不迁移到新系统：
 
 ```text
+global_validation_policy
 dataset_validation_policy
 task_validation_policy
-dataset/task override_mode
+global/dataset/task override_mode
 validation enabled/disabled
 tolerance_rows
 tolerance_percent
@@ -346,4 +361,4 @@ ALL
 独立 CHECKSUM 方法
 ```
 
-`spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md` 中仍残留的 `dataset_validation_policy` 章节，以及其他文档中的 `task_validation_policy` 描述，均由本文覆盖；阶段 1 最终一致性清理时机械删除，不再重新讨论。
+其他文档中残留的三张独立校验策略表，由本文及对应专项 Review 覆盖；阶段 1 最终一致性清理时机械删除，不再重新讨论。
