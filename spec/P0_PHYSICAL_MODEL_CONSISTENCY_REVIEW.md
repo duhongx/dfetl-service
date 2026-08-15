@@ -51,6 +51,7 @@ spec/TASKS.md
 | C-013 | 删除 `task_validation_policy`；任务级校验覆盖合并为 `sync_task.validation_method_override`。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 | C-014 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 | C-015 | 删除 `dataset_validation_policy`；数据集级校验覆盖合并为 `standard_dataset.validation_method_override`。 | `P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md` |
+| C-016 | 删除 `global_validation_policy`；全局默认使用注册系统设置 `validation.default_method`。 | `P0_GLOBAL_VALIDATION_SETTING_REVIEW.md` |
 
 ## 3. 当前任务与校验配置模型
 
@@ -93,7 +94,7 @@ validation_method_override
 当前校验配置层级为：
 
 ```text
-global_validation_policy
+system_setting[validation.default_method]
 standard_dataset.validation_method_override
 sync_task.validation_method_override
 ```
@@ -101,6 +102,7 @@ sync_task.validation_method_override
 明确删除：
 
 ```text
+global_validation_policy
 dataset_validation_policy
 task_validation_policy
 ```
@@ -110,47 +112,54 @@ task_validation_policy
 ```text
 任务覆盖
 → 数据集覆盖
-→ 全局默认
+→ 系统设置中的全局默认
+→ 注册默认值 ROW_COUNT
 → 数据集合同能力强制
 ```
 
-`NULL` 表示继承，不再保存数据集或任务级 `override_mode`。
+数据集和任务使用 `NULL` 表示继承，不再保存独立 `override_mode`。
 
-## 4. 数据集级校验覆盖的已确认边界
+## 4. 全局默认校验方式的已确认边界
 
-`standard_dataset` 增加：
+注册系统设置：
 
 ```text
-validation_method_override varchar(32) NULL
+validation.default_method
 ```
 
 允许值：
 
 ```text
-NULL
 ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
+注册默认值：
+
+```text
+ROW_COUNT
+```
+
 固定规则：
 
-- 数据集定义同步不得覆盖管理员保存的校验方式覆盖；
-- 数据集覆盖使用 `standard_dataset.revision/updated_at/updated_by`；
-- 修改前后值进入 `audit_log`；
-- 无真实业务主键时不能保存 `ROW_COUNT_CHECKSUM`；
+- `system_setting` 中没有设置行时使用注册默认值；
+- 第一次保存时插入行，后续使用 `system_setting.revision`；
+- Flyway V1 不依赖固定单例策略行存在；
+- 只允许注册枚举，不允许任意文本或未注册 key；
+- 修改成功和失败都进入 `audit_log`；
 - 运行中的执行继续使用启动快照，后续新执行重新解析；
-- 不建立独立策略 revision、发布状态或策略历史表。
+- 无真实业务主键时最终由合同强制为 `ROW_COUNT`。
 
 专项 Review：
 
 ```text
-spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md
+spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
 ```
 
 ## 5. 当前已同步修正的文档
 
 ```text
-spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md
+spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
@@ -158,7 +167,7 @@ spec/TASKS.md
 
 ## 6. 阶段 1 最终机械清理
 
-仍需从以下文档删除旧任务版本和独立校验策略表描述：
+仍需从以下文档删除旧任务版本和三张独立校验策略表描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
@@ -167,7 +176,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
 spec/PHASE1_REVIEW_STATUS.md
-其他引用 sync_task_version/task_validation_policy/dataset_validation_policy 的文档
+其他引用 sync_task_version/global_validation_policy/dataset_validation_policy/task_validation_policy 的文档
 ```
 
 同时继续清理：
@@ -188,14 +197,13 @@ load_batch.phase/time_lower/time_upper/probe_result
 下一项讨论：
 
 ```text
-只有一个全局默认校验方式时，是否还需要独立 global_validation_policy 单例表，
-还是直接使用已经确认的 system_setting 注册项保存？
+任务存在活动同步执行时，是否允许同时发起独立人工校验或定期治理校验？
 ```
 
 确认后继续：
 
-1. 唯一 `SYNC_GATE validation_run` 与执行快照一致性；
-2. Outbox、执行、数据集和机构身份一致性；
+1. 直接完成唯一 `SYNC_GATE validation_run` 与执行快照的字段和外键一致性；
+2. 核对 Outbox、执行、数据集和机构身份一致性；
 3. 删除快照控制对象外键闭环；
 4. P0 表清单、外键矩阵、索引矩阵和枚举统一；
 5. 阶段 1 最终 Review 与签字。
