@@ -283,7 +283,96 @@ load_batch.time_upper
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 ```
 
-## 8. 已修正和待机械清理的文档
+## 8. 已确认：Doris Label 不明确时只探测原事务，`UNKNOWN` 超时后失败
+
+### 8.1 冲突
+
+早期字典同时保存：
+
+```text
+load_batch.status
+load_batch.doris_state
+load_batch.probe_result
+```
+
+三套字段会重复表达同一个 Doris 事务事实，并可能出现互相矛盾的状态组合。旧实现还把 `Publish Timeout` 直接视为成功，没有把“事务已提交”和“数据已经可见”明确分开。
+
+### 8.2 最终规则
+
+`load_batch.status` 固定为：
+
+```text
+PENDING
+LOADING
+PROBING
+SUCCEEDED
+FAILED
+CANCELLED
+```
+
+`load_batch.doris_state` 固定为：
+
+```text
+UNKNOWN
+PREPARE
+COMMITTED
+VISIBLE
+ABORTED
+```
+
+删除：
+
+```text
+load_batch.probe_result
+```
+
+固定边界：
+
+1. 只有 `doris_state=VISIBLE` 且 `rejected_row_count=0` 时，批次才能进入 `SUCCEEDED`。
+2. `Publish Timeout`、客户端超时、连接中断、空响应或响应解析失败均进入 `PROBING`，只查询原 `doris_label`。
+3. `PREPARE/COMMITTED` 继续探测，不能当作 DFETL 批次成功。
+4. `ABORTED` 直接失败。
+5. Label 在限定探测时间内始终为 `UNKNOWN` 时，批次和执行失败，不自动重新提交该批数据。
+6. Label 查询接口在限定时间内始终无法给出可信状态时同样失败。
+7. 失败不推进水位、不进入同步门禁校验、不创建消息 Outbox。
+8. 人工重新采集前必须再次核实旧 Label，避免延迟事务出现后重复写入。
+9. 不建立自动重投、补偿执行、执行对账表或 Label 恢复状态机。
+
+### 8.3 清晰错误信息
+
+Label 相关失败必须保存稳定错误码，例如：
+
+```text
+DORIS_STREAM_LOAD_FAILED
+DORIS_FILTERED_ROWS
+DORIS_LABEL_ABORTED
+DORIS_LABEL_UNKNOWN_TIMEOUT
+DORIS_LABEL_QUERY_TIMEOUT
+DORIS_VISIBILITY_TIMEOUT
+```
+
+错误摘要至少包含：
+
+```text
+批次号
+Label
+最后 Doris 状态
+探测次数
+提交时间和最近探测时间
+Doris 脱敏错误或最后查询异常
+系统未自动重投的说明
+核实旧 Label 后再重新采集的建议动作
+```
+
+执行因批次失败而失败时沿用底层稳定错误码，并在执行错误摘要中增加失败批次号和 Label。不得把密码、完整认证头、业务数据或未经脱敏的完整响应体写入错误字段。
+
+专项 Review：
+
+```text
+spec/P0_DORIS_LABEL_PROBE_REVIEW.md
+```
+
+## 9. 已修正和待机械清理的文档
 
 当前已修正：
 
@@ -291,6 +380,7 @@ spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
@@ -305,8 +395,8 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
 spec/TARGET_METADATA_MODEL.md
 ```
 
-`load_batch.phase/time_lower/time_upper` 已从执行物理字典和当前任务清单清理完成。
+`load_batch.phase/time_lower/time_upper/probe_result` 以及旧 `COMMITTED` 批次终态已经从执行物理字典和当前任务清单清理完成。
 
-## 9. 后续检查顺序
+## 10. 后续检查顺序
 
-下一项继续核对 `load_batch` 的 Doris Label 状态和探测结果组合，只讨论一个真实问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。
+下一项继续核对唯一 `SYNC_GATE validation_run` 与执行、任务版本和范围的一致性，只讨论一个真实问题。其余可以直接判断的字段、外键、索引、状态和文档残留直接修正。

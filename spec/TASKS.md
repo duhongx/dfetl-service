@@ -138,12 +138,18 @@ collection_route.current_version_id
 - 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
 - `load_batch` 不保存重复的 `phase`；批次类型统一从父 `sync_execution.execution_scope` 推导。
 - `load_batch` 不保存 `time_lower/time_upper`；整次业务时间或主键范围只保存在父 `sync_execution`，批次只保存实际分页使用的 `cursor_lower/cursor_upper`。
+- `load_batch` 不保存 `probe_result`；DFETL 批次状态使用 `PENDING/LOADING/PROBING/SUCCEEDED/FAILED/CANCELLED`，Doris 原始事务状态使用 `UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED`。
+- 只有 Label 达到 `VISIBLE` 且拒绝行数为 0，批次才能成功。
+- `Publish Timeout`、客户端超时或响应不明确时只探测原 Label，不自动重新提交。
+- Label 在限定探测时间内始终为 `UNKNOWN` 时，批次和执行失败，不推进水位、不进入正式校验、不创建 Outbox。
+- Label 相关失败必须保存清晰错误码和脱敏错误摘要，至少展示批次号、Label、最后状态、探测次数、失败原因和建议动作。
 
 专项 Review：
 
 ```text
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 ```
 
 ### 1.9 运行请求和技术前检
@@ -313,6 +319,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 ```
 
 已覆盖：
@@ -328,12 +335,14 @@ spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 - [x] 删除 `load_batch.phase`，批次类型由父执行范围推导
 - [x] 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存
 - [x] 批次只保存实际 Keyset 复合游标，不作为跨执行恢复检查点
+- [x] 删除 `load_batch.probe_result`，统一使用 DFETL 批次状态和 Doris 原始状态
+- [x] Label 始终 `UNKNOWN` 或持续不可查询时明确失败，不自动重投
+- [x] Label 失败保存清晰错误码、错误上下文和人工处理建议
 - [x] 成功收尾短事务
 - [x] 日志全文不进入 PostgreSQL
 
 待一致性检查：
 
-- [ ] 核对 `load_batch` Doris Label 状态和探测结果组合。
 - [ ] 核对唯一 `SYNC_GATE validation_run` 与强制校验规则。
 - [ ] 核对 Outbox、执行、任务版本、数据集和机构身份一致性。
 - [ ] 与删除快照控制对象完成双向外键闭环。
@@ -365,6 +374,7 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 - [x] 修正“首次全量立即补充增量”冲突：首次全量与后续增量为独立执行。
 - [x] 修正“批次重复保存 phase”冲突：批次类型从父 `execution_scope` 推导。
 - [x] 修正“批次重复保存时间窗口”冲突：业务范围只保存在父执行，批次只保存复合游标。
+- [x] 修正“Label 三套状态和不明确结果自动重投”冲突：只探测原 Label，`UNKNOWN` 超时后失败并提供清晰错误。
 - [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
 - [ ] 清理 `TARGET_METADATA_MODEL.md` 和其他文档中的旧表名、旧状态及旧语义。
 - [ ] 补回并核对使用文档导航、路由和实施任务。
@@ -553,7 +563,11 @@ spec/PHASE1_FINAL_REVIEW.md
 ### [P1][EXEC-001] 执行成功收尾一致性
 
 - [ ] 父执行保存整次固定时间或主键范围；载入批次只保存实际复合游标、Doris Label 和最终状态。
-- [ ] Doris 响应不明确时探测原 Label。
+- [ ] Doris 响应不明确时进入 `PROBING`，只查询原 Label，不自动重新提交。
+- [ ] 删除 `load_batch.probe_result`，统一使用 DFETL 批次状态和 Doris 原始事务状态。
+- [ ] 只有 `doris_state=VISIBLE` 且拒绝行数为 0，批次才能进入 `SUCCEEDED`。
+- [ ] Label 在限定时间内始终 `UNKNOWN`、持续不可查询或长期未达到 `VISIBLE` 时，批次和执行明确失败。
+- [ ] Label 失败错误至少包含批次号、Label、最后状态、探测次数、失败原因和处理建议。
 - [ ] 不建立检查点和执行对账表。
 - [ ] 首次全量和后续增量分别创建独立 `sync_execution`；同一执行不得混合全量和增量批次。
 - [ ] `load_batch` 不保存 `phase`，批次类型从父 `sync_execution.execution_scope` 推导。
@@ -561,7 +575,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 批次游标只用于诊断和追溯，不作为下一次执行的恢复位置。
 - [ ] 首次全量成功后以开始时间 `T0` 建立初始水位；等待下一次正常调度再执行增量。
 - [ ] 成功收尾短事务锁定执行和水位。
-- [ ] 必须确认全部批次提交、唯一同步门禁校验通过、拒绝行数为 0。
+- [ ] 必须确认全部批次 `SUCCEEDED + VISIBLE`、唯一同步门禁校验通过、拒绝行数为 0。
 - [ ] 更新执行成功、推进或创建水位并按需插入唯一 Outbox。
 - [ ] 事务内不调用 Doris 或 MQ。
 
@@ -683,6 +697,7 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 任务监控展示真实执行、批次、校验和消息状态。
 - [ ] 首次全量与后续增量作为两次独立执行展示。
+- [ ] 批次详情展示 DFETL 状态、Doris 原始状态、Label、事务 ID、探测次数、最近探测时间和清晰失败原因。
 - [ ] 日志中心按 task/execution/engine job 查询和下载，不把全文写入 PostgreSQL。
 - [ ] 告警渠道和规则继续保留。
 - [ ] 命中规则生成 `alert_event`，每渠道生成 `alert_delivery`。
@@ -716,8 +731,14 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 批次类型由父执行范围推导，数据库和 API 中不存在 `load_batch.phase`。
 - [ ] 整次时间或主键范围只保存在父执行，数据库和 API 中不存在 `load_batch.time_lower/time_upper`。
 - [ ] 增量和按时间补采批次使用规范的“增量时间值 + 联合业务主键”复合游标。
+- [ ] 数据库、Java、OpenAPI 和 Vue 类型中不存在 `load_batch.probe_result`。
+- [ ] `Publish Timeout`、客户端超时和响应无法确认时只探测原 Label，不自动重投。
+- [ ] Label 从 `PREPARE/COMMITTED` 变为 `VISIBLE` 后批次才成功。
+- [ ] Label 为 `ABORTED` 时批次和执行失败。
+- [ ] Label 在限定时间内始终 `UNKNOWN` 或持续不可查询时，批次和执行失败且不推进水位。
+- [ ] Label 失败响应能够展示批次号、Label、最后状态、探测次数、失败原因和建议动作。
+- [ ] 人工重新采集前再次核实旧 Label，旧事务未确定时禁止盲目重放。
 - [ ] 中间批次失败后重新采集从第 1 批开始，不使用旧批次游标恢复。
-- [ ] Doris Label 不明确状态探测。
 - [ ] 补采不修改水位。
 - [ ] 外部 API 批量、幂等和机构授权。
 - [ ] Quartz 投影重建和并发保护。
@@ -774,6 +795,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-031 | 首次全量和后续定时增量为两次独立执行，不立即补充增量 |
 | D-032 | 删除 `load_batch.phase`，批次类型由父执行范围推导 |
 | D-033 | 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存，批次只保存复合游标 |
+| D-034 | Doris 返回不明确时只探测原 Label；`UNKNOWN` 超时后失败、不自动重投，并保存清晰错误信息 |
 
 详细结论分散在以下权威文档：
 
@@ -787,6 +809,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY*.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
+spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 ```
 
