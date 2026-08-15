@@ -5,7 +5,7 @@
 > 状态：阶段 1「目标模型冻结与物理表字典复核」进行中  
 > 最近更新：2026-08-15  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 明确修正文档：各项已确认的 `P0_*_REVIEW.md`
+> 明确修正文档：用户确认后的各项 `P0_*_REVIEW.md`
 
 ## 0. 文档定位与阶段门槛
 
@@ -50,20 +50,21 @@ collection_route.current_version_id
 → collection_route_version_institution
 ```
 
+- 不建立独立 `collection_route_institution`。
 - 链路覆盖移除机构时，若仍有当前任务使用该链路和机构，则拒绝移除。
 - 链路问题可以保存和展示，正式执行遇到真实不可执行合同则失败。
 
-### 1.3 同步任务：固定身份、当前配置直接覆盖
+### 1.3 同步任务：固定身份、当前配置覆盖
 
 - 一个任务只属于一家机构和一个标准数据集。
 - 同一机构、同一数据集只能存在一个未删除任务。
 - `institution_id/dataset_id` 是稳定业务身份，任务创建后不可修改。
-- 更换机构或数据集时，必须确认没有活动执行，逻辑删除旧任务，再创建新任务。
-- 旧任务的水位、执行、批次、校验、Outbox 和审计历史继续归属旧任务，不迁移到新任务。
+- 更换机构或数据集时，确认没有活动执行，逻辑删除旧任务，再创建新任务。
+- 旧任务的水位、执行、批次、校验、Outbox 和审计历史继续归属旧任务，不迁移。
 - `sync_task` 直接保存当前有效执行配置。
 - 编辑普通配置直接覆盖原任务，不建立 `sync_task_version`。
 - 删除 `sync_task.current_version_id` 及全部 `task_version_id` 引用。
-- 用户可以在无活动执行时修改当前采集链路、读取参数和调度配置。
+- 用户可以在无活动执行时修改当前链路、数据集合同版本、读取参数和调度配置。
 - 存在 `PENDING/RUNNING/LOADING/VALIDATING` 执行时，禁止修改任务配置。
 - 编辑被拒绝时返回 `TASK_EXECUTION_ACTIVE`，并展示执行 ID、状态和处理建议。
 - 尝试修改机构或数据集时返回 `TASK_IDENTITY_IMMUTABLE`。
@@ -72,10 +73,21 @@ collection_route.current_version_id
 - 历史执行通过 `sync_execution` 启动快照追溯；任务修改历史通过 `audit_log` 追溯。
 - 任务暂停只控制自动调度，暂停后仍可人工运行；暂停和取消当前执行是独立操作。
 
-### 1.4 任务级校验覆盖
+### 1.4 校验覆盖存储
 
-- 不建立独立 `task_validation_policy`。
-- `sync_task.validation_method_override` 保存任务级覆盖：
+任务级覆盖直接保存：
+
+```text
+sync_task.validation_method_override
+```
+
+数据集级覆盖直接保存：
+
+```text
+standard_dataset.validation_method_override
+```
+
+允许值均为：
 
 ```text
 NULL
@@ -83,17 +95,31 @@ ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
-- `NULL` 表示继承数据集级覆盖或全局默认。
-- 不保存 `override_mode`、独立策略 revision、容差、校验回看或校验关闭开关。
-- 任务覆盖与其他任务配置共用 `sync_task.revision` 和操作审计。
-- 活动执行期间禁止修改。
-- 无真实业务主键的数据集不能覆盖为 `ROW_COUNT_CHECKSUM`。
+固定规则：
+
+- `NULL` 表示继承，不保存额外 `override_mode`。
+- 不建立 `task_validation_policy`。
+- 不建立 `dataset_validation_policy`。
+- 任务覆盖使用 `sync_task.revision`。
+- 数据集覆盖使用 `standard_dataset.revision`。
+- 修改前后值进入通用 `audit_log`。
+- 数据集定义同步不得覆盖管理员保存的数据集校验覆盖。
+- 无真实业务主键的数据集不能配置 `ROW_COUNT_CHECKSUM`。
+
+最终解析：
+
+```text
+任务覆盖
+→ 数据集覆盖
+→ 全局默认
+→ 数据集合同能力强制
+```
 
 专项 Review：
 
 ```text
 spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
@@ -112,7 +138,6 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ### 1.6 执行、首次全量和水位
 
 - `sync_execution` 表示任务的一次真实运行，并保存启动时任务配置快照。
-- 已经开始的执行不被后续任务修改热更新。
 - 同一任务禁止并发执行。
 - 运行期间到达的新计划触发直接跳过，不追赶、不补跑。
 - 第一次运行创建独立 `INITIAL_FULL` 执行。
@@ -155,7 +180,7 @@ UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
 - 不建立预检策略层级。
 - 每次正式同步至少执行严格相等的 `ROW_COUNT`，不能关闭。
 - 不支持行数容差和校验 `lookback_hours`。
-- 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许静默降级。
+- 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许执行中静默降级。
 - 校验失败或不一致时执行失败且水位不推进。
 - 人工重新校验生成独立 `validation_run`，不覆盖历史记录和原执行结果。
 
@@ -198,20 +223,22 @@ task_watermark
 - [x] 任务修改覆盖原任务，不建立 `sync_task_version`。
 - [x] 删除全部 `task_version_id`。
 - [x] 活动执行期间禁止修改任务配置。
-- [x] 删除独立 `task_validation_policy`。
-- [x] 任务级校验覆盖合并为 `sync_task.validation_method_override`。
 - [x] `institution_id/dataset_id` 创建后不可修改。
-- [x] 更换机构或数据集时逻辑删除旧任务并创建新任务。
+- [x] 删除独立 `task_validation_policy`。
+- [x] 任务级覆盖合并为 `sync_task.validation_method_override`。
+- [x] 删除独立 `dataset_validation_policy`。
+- [x] 数据集级覆盖合并为 `standard_dataset.validation_method_override`。
 - [x] 删除 `task_watermark.task_version_id`。
 - [x] 校验不可关闭，无容差、无校验回看。
 
 下一项待确认：
 
-- [ ] 是否删除独立 `dataset_validation_policy`，把数据集级校验覆盖合并为 `standard_dataset.validation_method_override`。
+- [ ] 是否删除独立 `global_validation_policy` 单例表，改为使用已确认的 `system_setting` 注册项保存全局默认校验方式。
 
 待机械清理：
 
-- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id/task_validation_policy`。
+- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
+- [ ] 从旧文档删除 `task_validation_policy/dataset_validation_policy`。
 - [ ] 清理任务身份可修改及任务历史迁移描述。
 - [ ] 核对所有复合外键的父唯一约束。
 - [ ] 统一任务和写入枚举名称。
@@ -313,12 +340,12 @@ spec/PHASE1_FINAL_REVIEW.md
 ## M1：核心领域模型
 
 - [ ] 实现机构、业务系统实例、源/目标数据源和多对多关系。
-- [ ] 实现数据集同步、不可变数据集版本和字段合同。
+- [ ] 实现数据集同步、不可变数据集版本、字段合同和数据集级校验覆盖字段。
 - [ ] 实现采集链路、链路版本和字段解析。
-- [ ] 实现固定机构/数据集身份、当前配置可变的 `sync_task`、任务级校验覆盖字段和水位。
-- [ ] 任务编辑接口不允许修改 `institution_id/dataset_id`；更换身份采用逻辑删除后新建。
+- [ ] 实现固定身份、当前配置可变的 `sync_task`、任务级校验覆盖字段和水位。
+- [ ] 任务编辑接口不允许修改 `institution_id/dataset_id`。
 - [ ] 任务编辑和执行启动使用同一任务锁，活动执行期间返回 `TASK_EXECUTION_ACTIVE`。
-- [ ] 删除废止的任务版本和任务校验策略实体、Repository、DTO 与接口。
+- [ ] 删除废止的任务版本和独立校验策略实体、Repository、DTO 与接口。
 
 ## M2：Doris 合同、预检和任务创建
 
@@ -344,8 +371,8 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 移除生产页面 Mock 状态。
 - [ ] 建立稳定 URL、统一前端 API 层和真实分页。
 - [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
-- [ ] 任务编辑被活动执行阻止时，展示执行 ID、状态和处理建议。
 - [ ] 任务编辑页面把机构和数据集作为只读身份信息。
+- [ ] 活动执行阻止任务编辑时展示执行 ID、状态和处理建议。
 
 ## M5：消息、安全和运维
 
@@ -356,14 +383,15 @@ spec/PHASE1_FINAL_REVIEW.md
 
 ## M6：主流程稳定后补测试
 
-- [ ] 数据集、链路、任务唯一性和任务普通配置直接编辑。
+- [ ] 数据集、链路、任务唯一性和普通配置编辑。
 - [ ] 任务创建后不能修改 `institution_id/dataset_id`。
-- [ ] 更换机构或数据集必须逻辑删除旧任务并创建新任务，旧历史不迁移。
+- [ ] 更换机构或数据集必须删除旧任务并新建，旧历史不迁移。
 - [ ] 活动执行期间全部任务配置均不可修改。
-- [ ] `validation_method_override=NULL` 正确继承数据集和全局默认。
-- [ ] 无主键任务拒绝 `ROW_COUNT_CHECKSUM` 覆盖。
+- [ ] 任务和数据集 `validation_method_override=NULL` 正确继承。
+- [ ] 数据集定义同步不覆盖数据集级校验设置。
+- [ ] 无主键数据集和任务拒绝 `ROW_COUNT_CHECKSUM` 覆盖。
 - [ ] 编辑与执行启动并发时不存在配置穿透。
-- [ ] 执行快照不受后续任务修改影响。
+- [ ] 执行快照不受后续任务或数据集设置修改影响。
 - [ ] 首次全量与后续增量独立运行。
 - [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
 - [ ] 校验严格相等、不允许关闭、不允许容差。
@@ -407,8 +435,9 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-028 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` |
 | D-029 | 执行、校验、Outbox、水位删除 `task_version_id`，历史由执行快照追溯 |
 | D-030 | 活动执行期间禁止修改任务配置，不建立待生效配置 |
-| D-031 | 删除 `task_validation_policy`，任务级校验覆盖合并到 `sync_task.validation_method_override` |
-| D-032 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改；更换身份时删除旧任务并新建 |
+| D-031 | 删除 `task_validation_policy`，任务级覆盖合并到 `sync_task.validation_method_override` |
+| D-032 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改 |
+| D-033 | 删除 `dataset_validation_policy`，数据集级覆盖合并到 `standard_dataset.validation_method_override` |
 
 ---
 
@@ -418,7 +447,8 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - 所有 P0 表、字段、外键、唯一约束和索引无冲突；
 - 不存在仍引用旧表、旧状态或废止功能的目标设计；
-- 任务固定业务身份、当前配置覆盖、活动执行编辑边界、校验覆盖和执行快照职责清晰；
+- 任务固定身份、当前配置覆盖、活动执行编辑边界和执行快照职责清晰；
+- 校验覆盖层级及其存储位置唯一；
 - 文档一致；
 - 用户明确签字后才允许创建 Flyway V1。
 
