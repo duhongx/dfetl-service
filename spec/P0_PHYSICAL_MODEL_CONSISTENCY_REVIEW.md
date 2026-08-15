@@ -48,7 +48,8 @@ spec/TASKS.md
 | C-010 | 删除 `load_batch.probe_result`，统一为 DFETL 批次状态和 Doris 原始状态。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
 | C-011 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` 和全部 `task_version_id`。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 | C-012 | 活动执行期间禁止编辑任务配置，不建立待生效配置。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
-| C-013 | 删除 `task_validation_policy`；任务级校验覆盖合并为 `sync_task.validation_method_override` 可空字段。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-013 | 删除 `task_validation_policy`；任务级校验覆盖合并为 `sync_task.validation_method_override`。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-014 | `institution_id/dataset_id` 是稳定任务身份，创建后不可修改；更换身份时逻辑删除旧任务并新建。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 
 ## 3. 可变任务配置模型
 
@@ -56,7 +57,29 @@ spec/TASKS.md
 
 ```text
 sync_task
-= 任务身份 + 当前有效配置
+= 固定业务身份 + 当前有效配置
+```
+
+稳定业务身份：
+
+```text
+institution_id
+dataset_id
+```
+
+普通可编辑配置：
+
+```text
+dataset_version_id
+route_version_id
+name
+task_kind
+write_mode
+doris_key_model
+incremental_field_code
+读取参数
+调度配置
+validation_method_override
 ```
 
 明确删除：
@@ -81,7 +104,30 @@ collection_route_version
 
 历史执行通过 `sync_execution` 启动快照追溯；任务修改历史通过 `audit_log` 追溯。
 
-## 4. 任务级校验覆盖存储
+## 4. 任务业务身份不可修改
+
+一个 `task_id` 在整个生命周期内始终表示同一个：
+
+```text
+医疗机构 + 标准数据集
+```
+
+因此：
+
+- 编辑 DTO 不提供 `institution_id/dataset_id` 修改能力；
+- 旧调用方或通用接口提交不同值时返回 `TASK_IDENTITY_IMMUTABLE`；
+- 更换机构或数据集必须先确认没有活动执行，再逻辑删除旧任务并创建新任务；
+- 旧任务的水位、执行、批次、校验、Outbox 和审计历史继续归属旧任务；
+- 不建设任务身份迁移、历史搬迁、水位迁移或删除快照基线迁移。
+
+未删除任务仍由以下部分唯一索引保证：
+
+```text
+(institution_id, dataset_id)
+WHERE deleted_at IS NULL
+```
+
+## 5. 任务级校验覆盖存储
 
 任务级覆盖直接保存：
 
@@ -101,8 +147,8 @@ ROW_COUNT_CHECKSUM
 
 - `NULL`：继承数据集级覆盖或全局默认；
 - 非空：任务明确覆盖；
-- 不再保存 `override_mode`；
-- 不再维护独立策略 revision、时间和一对一策略行；
+- 不保存 `override_mode`；
+- 不维护独立策略 revision、时间和一对一策略行；
 - 来源为任务时，执行快照的 `validation_source_revision` 使用 `sync_task.revision`；
 - 活动执行期间禁止修改；
 - 无真实业务主键时不能保存 `ROW_COUNT_CHECKSUM`。
@@ -116,7 +162,7 @@ ROW_COUNT_CHECKSUM
 → 数据集合同强制
 ```
 
-## 5. 当前已同步修正的文档
+## 6. 当前已同步修正的文档
 
 ```text
 spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
@@ -126,9 +172,9 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
 ```
 
-## 6. 阶段 1 最终机械清理
+## 7. 阶段 1 最终机械清理
 
-仍需从以下文档删除旧的任务版本和任务策略表描述：
+仍需从以下文档删除旧的任务版本、任务策略表和任务身份可修改描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
@@ -152,12 +198,13 @@ load_batch.phase/time_lower/time_upper/probe_result
 
 这些属于已确认结论的机械同步，不重新讨论。
 
-## 7. 后续检查顺序
+## 8. 后续检查顺序
 
 下一项讨论：
 
 ```text
-任务编辑时，institution_id 和 dataset_id 是否允许修改？
+是否继续保留独立 dataset_validation_policy，
+还是把数据集级校验覆盖合并为 standard_dataset.validation_method_override？
 ```
 
 确认后继续：
