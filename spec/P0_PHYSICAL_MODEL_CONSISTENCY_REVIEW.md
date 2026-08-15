@@ -48,6 +48,7 @@ spec/TASKS.md
 | C-009 | Doris 返回不明确时只探测原 Label；`UNKNOWN` 超时后失败、不自动重投。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
 | C-010 | 删除 `load_batch.probe_result`，统一为 DFETL 批次状态和 Doris 原始状态。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
 | C-011 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` 和所有 `task_version_id` 引用。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-012 | 存在活动执行时禁止修改任务配置和任务级校验覆盖，不建立待生效配置。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 
 ## 3. 已确认：可变任务配置模型
 
@@ -101,7 +102,34 @@ collection_route_version
 
 任务修改历史写入 `audit_log`，不通过任务版本表保存。
 
-### 3.4 物理模型影响
+### 3.4 活动执行期间的编辑边界
+
+任务存在以下任一执行状态时：
+
+```text
+PENDING
+RUNNING
+LOADING
+VALIDATING
+```
+
+禁止修改：
+
+```text
+sync_task 当前配置
+task_validation_policy
+```
+
+固定规则：
+
+- 编辑接口返回 `TASK_EXECUTION_ACTIVE`；
+- 响应包含当前执行 ID、状态和“等待执行结束或先取消执行”的处理建议；
+- 执行启动与任务编辑使用同一任务行锁或等效事务串行化；
+- 不建立待生效配置、配置草稿、执行结束后自动应用或双配置状态；
+- 暂停自动调度和取消当前执行仍是两个独立操作；
+- 逻辑删除同样要求不存在活动执行。
+
+### 3.5 物理模型影响
 
 - `sync_task` 直接保存当前 `dataset_version_id`、`route_version_id`、任务类型、读取参数和调度配置；
 - `task_validation_policy` 继续只保存校验方法继承/覆盖；
@@ -146,6 +174,7 @@ row_tolerance
 validation lookback_hours
 首次全量立即补充增量
 load_batch.phase/time_lower/time_upper/probe_result
+活动执行期间修改任务配置
 ```
 
 这些均属于已确认结论的机械同步，不重新讨论。
@@ -155,7 +184,7 @@ load_batch.phase/time_lower/time_upper/probe_result
 下一项讨论：
 
 ```text
-任务存在活动 sync_execution 时，是否允许编辑当前任务配置？
+任务级校验覆盖是否仍需要独立 task_validation_policy 表。
 ```
 
 确认后继续：
