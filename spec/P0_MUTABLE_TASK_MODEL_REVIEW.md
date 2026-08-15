@@ -7,16 +7,24 @@
 > 校验字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
 
-## 1. 任务采用当前配置覆盖模型
+## 1. 任务采用“固定身份 + 当前配置覆盖”模型
 
 同步任务只保存当前有效配置：
 
 ```text
 sync_task
-= 当前任务身份 + 当前执行配置
+= 固定业务身份 + 当前执行配置
 ```
 
-用户编辑任务时直接更新原 `sync_task`，不为每次修改创建不可变任务版本。
+任务业务身份固定为：
+
+```text
+一个医疗机构 + 一个标准数据集
+```
+
+同一机构、同一数据集只能存在一个未删除任务。
+
+用户编辑任务时直接更新原 `sync_task` 的当前配置，不为每次修改创建不可变任务版本。
 
 目标模型明确删除：
 
@@ -28,21 +36,46 @@ task contract_hash
 任务版本发布、切换和回退流程
 ```
 
-任务业务身份固定为：
+## 2. 任务业务身份创建后不可修改
 
-```text
-一个医疗机构 + 一个标准数据集
-```
-
-同一机构、同一数据集只能存在一个未删除任务。
-
-## 2. 当前任务配置
-
-`sync_task` 直接保存：
+以下字段是任务业务身份：
 
 ```text
 institution_id
 dataset_id
+```
+
+任务创建成功后，编辑接口不得修改这两个字段。
+
+确实需要更换机构或数据集时，固定流程为：
+
+```text
+确认旧任务没有活动执行
+→ 逻辑删除旧任务
+→ 创建新的任务
+```
+
+旧任务的水位、执行、批次、校验、Outbox 和审计历史继续保留在旧任务 ID 下，不迁移到新任务。
+
+不建设：
+
+```text
+任务身份迁移
+历史记录拆分或搬迁
+水位自动迁移
+删除快照基线自动迁移
+同一任务 ID 先后代表不同机构或数据集
+```
+
+这样可以保证一个 `task_id` 在整个生命周期内始终表示同一“机构 + 数据集”同步管道。
+
+## 3. 当前任务配置
+
+`sync_task` 直接保存：
+
+```text
+institution_id                 # 固定身份，创建后不可修改
+dataset_id                     # 固定身份，创建后不可修改
 dataset_version_id
 route_version_id
 name
@@ -64,7 +97,15 @@ validation_method_override
 revision
 ```
 
-用户可以在无活动执行时直接修改链路、读取参数、调度配置和任务级校验方式覆盖。
+用户可以在无活动执行时修改：
+
+```text
+当前采集链路和数据集合同版本
+任务名称
+读取参数
+调度配置
+任务级校验方式覆盖
+```
 
 系统不替用户判断更换链路后是否需要：
 
@@ -77,7 +118,7 @@ revision
 
 平台不建设任务配置迁移、双链路、双水位、自动回退、待生效配置或配置发布状态机。
 
-## 3. 删除独立 `task_validation_policy`
+## 4. 删除独立 `task_validation_policy`
 
 任务级校验覆盖最终只剩一个可选值，没有独立生命周期，因此不建立一对一策略表。
 
@@ -122,7 +163,7 @@ sync_task.validation_method_override
 → 数据集合同能力强制
 ```
 
-## 4. 活动执行期间禁止编辑
+## 5. 活动执行期间禁止编辑
 
 任务存在以下任一活动执行状态时：
 
@@ -149,7 +190,7 @@ VALIDATING
 
 执行启动与任务编辑必须使用同一任务行锁或等效事务串行化，避免并发穿透。
 
-## 5. 历史执行追溯
+## 6. 历史执行追溯
 
 任务配置可以被覆盖，但已经接受的执行必须固定本次运行上下文。
 
@@ -173,7 +214,7 @@ fetch_size / upper_bound_delay_minutes / lookback_seconds
 
 任务修改前后摘要、操作者和时间写入 `audit_log`。
 
-## 6. 对相关表的影响
+## 7. 对相关表的影响
 
 ### `sync_execution`
 
@@ -223,7 +264,7 @@ source_execution_id
 
 任务配置变化不自动修改水位。
 
-## 7. 仍保留的不可变版本
+## 8. 仍保留的不可变版本
 
 以下版本对象继续保留：
 
@@ -237,11 +278,12 @@ field_conversion_contract / rule version
 
 `sync_task` 直接引用当前选择的 `dataset_version_id` 和 `route_version_id`。
 
-## 8. 数据库与应用边界
+## 9. 数据库与应用边界
 
 数据库负责：
 
 - 未删除任务按机构 + 数据集唯一；
+- `institution_id/dataset_id` 构成稳定任务身份；
 - 当前机构、数据集版本、链路版本关系有效；
 - 三种标准任务组合合法；
 - 调度字段组合合法；
@@ -251,6 +293,8 @@ field_conversion_contract / rule version
 
 应用负责：
 
+- 编辑 DTO 不提供机构和数据集修改能力；
+- 收到身份字段变更请求时明确拒绝；
 - 编辑前锁定任务并检查活动执行；
 - 读取当前任务形成执行快照；
 - 记录任务修改审计；
@@ -258,7 +302,7 @@ field_conversion_contract / rule version
 - 无业务主键时拒绝 Checksum 覆盖；
 - 展示当前任务配置和历史执行快照。
 
-## 9. 被废止的旧描述
+## 10. 被废止的旧描述
 
 以下内容不得进入 Flyway V1、Java 实体、Repository、OpenAPI 或 Vue 类型：
 
@@ -273,15 +317,20 @@ message_outbox.task_version_id
 task_watermark.task_version_id
 任务版本发布、迁移和回退接口
 待生效任务配置
+任务创建后修改 institution_id 或 dataset_id
+任务身份迁移和历史自动搬迁
 ```
 
-## 10. 验收
+## 11. 验收
 
 - P0 PostgreSQL 表清单中不存在 `sync_task_version` 和 `task_validation_policy`。
-- `sync_task` 保存当前完整任务配置和可空 `validation_method_override`。
-- `NULL` 明确表示继承，不再保存 `override_mode`。
-- 无活动执行时直接更新原任务并增加 `revision`。
+- `sync_task` 保存固定任务身份、当前完整配置和可空 `validation_method_override`。
+- `institution_id/dataset_id` 创建后不可修改。
+- 更换机构或数据集时必须逻辑删除旧任务并创建新任务。
+- 旧任务全部运行历史继续归属旧 `task_id`。
+- `NULL` 校验覆盖明确表示继承，不再保存 `override_mode`。
+- 无活动执行时可以更新普通任务配置并增加 `revision`。
 - 活动执行期间任务配置和校验方式覆盖均不可修改。
 - 历史执行不因任务后续修改而变化。
 - 任务修改历史通过 `audit_log` 查询。
-- 不建立任务配置版本、策略一对一表、待生效配置或双版本状态机。
+- 不建立任务配置版本、策略一对一表、身份迁移、待生效配置或双版本状态机。
