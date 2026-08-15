@@ -8,14 +8,13 @@
 
 ## 1. Review 范围
 
-本工作包逐项核对：
+逐项核对：
 
 ```text
 全部 P0 PostgreSQL 目标表
 Quartz JDBC JobStore 标准表
 Doris 平台技术表
-业务基线
-目标逻辑模型
+业务基线和目标模型
 各批物理表字典
 历史 SQL 审计
 旧 Java 查询路径
@@ -25,61 +24,47 @@ spec/TASKS.md
 重点检查：
 
 - 同一事实是否重复保存；
-- 同一枚举是否存在多套名称；
+- 枚举是否存在多套名称；
 - 外键父子关系和删除行为是否一致；
-- 唯一性及并发约束是否完整；
+- 唯一性和并发约束是否完整；
 - 已废止旧功能是否仍残留；
-- 物理字典能否无歧义转换为后续 Flyway V1。
+- 物理字典能否无歧义转换为 Flyway V1。
 
-每次只讨论一个真实业务冲突。能直接判断的技术字段、外键和索引直接修正。
+每次只讨论一个真实业务冲突。能直接判断的字段、外键、约束和索引直接修正。
 
 ## 2. 已确认的一致性修正
 
 | 编号 | 修正内容 | 权威文档 |
 | --- | --- | --- |
 | C-001 | 正式同步校验不能关闭，最低为 `ROW_COUNT`。 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
-| C-002 | 行数校验严格相等，删除全部容差字段。 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
-| C-003 | 删除正式校验 `lookback_hours`，只校验本次执行精确范围。 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
+| C-002 | 行数严格相等，删除全部容差字段。 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
+| C-003 | 删除校验 `lookback_hours`，只校验本次执行精确范围。 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
 | C-004 | 删除预检三级策略，只保存和展示预检事实。 | `P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md` |
-| C-005 | 任务允许用户更换链路，系统不建设自动迁移状态机。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-005 | 任务允许用户更换链路，不建设自动迁移状态机。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 | C-006 | 首次全量和后续定时增量为两次独立执行。 | `P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md` |
 | C-007 | 删除 `load_batch.phase`。 | `P0_LOAD_BATCH_MODEL_REVIEW.md` |
 | C-008 | 删除 `load_batch.time_lower/time_upper`，整次范围保存在父执行。 | `P0_LOAD_BATCH_MODEL_REVIEW.md` |
-| C-009 | Doris 返回不明确时只探测原 Label；`UNKNOWN` 超时后失败、不自动重投。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
+| C-009 | Doris 返回不明确时只探测原 Label，`UNKNOWN` 超时后失败、不自动重投。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
 | C-010 | 删除 `load_batch.probe_result`，统一为 DFETL 批次状态和 Doris 原始状态。 | `P0_DORIS_LABEL_PROBE_REVIEW.md` |
-| C-011 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` 和所有 `task_version_id` 引用。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
-| C-012 | 存在活动执行时禁止修改任务配置和任务级校验覆盖，不建立待生效配置。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-011 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` 和全部 `task_version_id`。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-012 | 活动执行期间禁止编辑任务配置，不建立待生效配置。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
+| C-013 | 删除 `task_validation_policy`；任务级校验覆盖合并为 `sync_task.validation_method_override` 可空字段。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 
-## 3. 已确认：可变任务配置模型
+## 3. 可变任务配置模型
 
-### 3.1 冲突
-
-早期目标模型把任务拆成：
-
-```text
-sync_task
-sync_task_version
-sync_task.current_version_id
-```
-
-并要求任务配置变化生成不可变版本。
-
-实际业务规则已重新确认：
-
-> 修改任务就是覆盖原任务当前配置，不需要任务配置版本、发布、切换或回退流程。
-
-### 3.2 最终规则
+最终任务模型：
 
 ```text
 sync_task
-= 当前有效任务配置
+= 任务身份 + 当前有效配置
 ```
 
-删除：
+明确删除：
 
 ```text
 sync_task_version
 sync_task.current_version_id
+task_validation_policy
 sync_execution.task_version_id
 validation_run.task_version_id
 message_outbox.task_version_id
@@ -94,79 +79,68 @@ collection_route_version
 字段转换合同版本
 ```
 
-因为这些表示外部数据合同和链路解析合同，不是任务日常修改历史。
+历史执行通过 `sync_execution` 启动快照追溯；任务修改历史通过 `audit_log` 追溯。
 
-### 3.3 历史追溯
+## 4. 任务级校验覆盖存储
 
-创建执行时，把本次实际使用的任务配置复制到 `sync_execution` 身份字段和配置快照。之后任务修改只影响后续新执行。
-
-任务修改历史写入 `audit_log`，不通过任务版本表保存。
-
-### 3.4 活动执行期间的编辑边界
-
-任务存在以下任一执行状态时：
+任务级覆盖直接保存：
 
 ```text
-PENDING
-RUNNING
-LOADING
-VALIDATING
+sync_task.validation_method_override
 ```
 
-禁止修改：
+允许值：
 
 ```text
-sync_task 当前配置
-task_validation_policy
+NULL
+ROW_COUNT
+ROW_COUNT_CHECKSUM
 ```
 
-固定规则：
+语义：
 
-- 编辑接口返回 `TASK_EXECUTION_ACTIVE`；
-- 响应包含当前执行 ID、状态和“等待执行结束或先取消执行”的处理建议；
-- 执行启动与任务编辑使用同一任务行锁或等效事务串行化；
-- 不建立待生效配置、配置草稿、执行结束后自动应用或双配置状态；
-- 暂停自动调度和取消当前执行仍是两个独立操作；
-- 逻辑删除同样要求不存在活动执行。
+- `NULL`：继承数据集级覆盖或全局默认；
+- 非空：任务明确覆盖；
+- 不再保存 `override_mode`；
+- 不再维护独立策略 revision、时间和一对一策略行；
+- 来源为任务时，执行快照的 `validation_source_revision` 使用 `sync_task.revision`；
+- 活动执行期间禁止修改；
+- 无真实业务主键时不能保存 `ROW_COUNT_CHECKSUM`。
 
-### 3.5 物理模型影响
-
-- `sync_task` 直接保存当前 `dataset_version_id`、`route_version_id`、任务类型、读取参数和调度配置；
-- `task_validation_policy` 继续只保存校验方法继承/覆盖；
-- `task_watermark` 只保存任务当前正式水位；
-- `validation_run` 关联执行或任务，并使用运行快照；
-- `message_outbox` 关联执行并保存消息发布快照；
-- 此前提出的 `validation_run` 三列任务版本复合外键取消。
-
-专项 Review：
+最终解析：
 
 ```text
-spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
+任务字段
+→ 数据集策略
+→ 全局默认
+→ 数据集合同强制
 ```
 
-## 4. 当前已同步修正的文档
+## 5. 当前已同步修正的文档
 
 ```text
 spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
 ```
 
-## 5. 阶段 1 最终机械清理清单
+## 6. 阶段 1 最终机械清理
 
-仍需从以下文档删除旧的任务版本描述：
+仍需从以下文档删除旧的任务版本和任务策略表描述：
 
 ```text
 spec/PRODUCT_AND_BUSINESS_DECISIONS.md
 spec/TARGET_METADATA_MODEL.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
 spec/PHASE1_REVIEW_STATUS.md
-其他引用 sync_task_version/current_version_id/task_version_id 的文档
+其他引用 sync_task_version/task_validation_policy 的文档
 ```
 
-同时继续清理已经确认废止的：
+同时继续清理：
 
 ```text
 validation enabled
@@ -174,17 +148,16 @@ row_tolerance
 validation lookback_hours
 首次全量立即补充增量
 load_batch.phase/time_lower/time_upper/probe_result
-活动执行期间修改任务配置
 ```
 
-这些均属于已确认结论的机械同步，不重新讨论。
+这些属于已确认结论的机械同步，不重新讨论。
 
-## 6. 后续检查顺序
+## 7. 后续检查顺序
 
 下一项讨论：
 
 ```text
-任务级校验覆盖是否仍需要独立 task_validation_policy 表。
+任务编辑时，institution_id 和 dataset_id 是否允许修改？
 ```
 
 确认后继续：

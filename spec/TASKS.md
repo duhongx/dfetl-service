@@ -12,7 +12,7 @@
 发生冲突时按以下顺序处理：
 
 1. `PRODUCT_AND_BUSINESS_DECISIONS.md` 中尚未被后续明确修正的规则；
-2. 用户确认后的专项 Review 文档；
+2. 用户确认后的专项 Review；
 3. P0 物理表字典；
 4. 本任务清单；
 5. 老代码、历史 SQL 和归档文档。
@@ -60,23 +60,40 @@ collection_route.current_version_id
 - `sync_task` 直接保存当前有效配置。
 - 编辑任务直接覆盖原任务，不建立 `sync_task_version`。
 - 删除 `sync_task.current_version_id` 及全部 `task_version_id` 引用。
-- 用户可以直接修改当前采集链路、读取参数和调度配置。
-- 存在 `PENDING/RUNNING/LOADING/VALIDATING` 执行时，禁止修改任务配置和任务级校验覆盖。
-- 编辑被拒绝时返回 `TASK_EXECUTION_ACTIVE`，并展示当前执行 ID、状态和处理建议。
-- 执行启动与任务编辑必须串行化，不能出现并发穿透。
-- 不建立待生效配置、配置草稿、自动应用或双配置状态。
+- 用户可以在无活动执行时修改当前采集链路、读取参数和调度配置。
+- 存在 `PENDING/RUNNING/LOADING/VALIDATING` 执行时，禁止修改任务配置。
+- 编辑被拒绝时返回 `TASK_EXECUTION_ACTIVE`，并展示执行 ID、状态和处理建议。
+- 执行启动与任务编辑必须串行化，不建立待生效配置或双配置状态。
 - 系统不替用户判断换链路后是否应重置水位、重新全量或处理删除快照基线。
 - 历史执行通过 `sync_execution` 启动快照追溯；任务修改历史通过 `audit_log` 追溯。
 - 任务暂停只控制自动调度，暂停后仍可人工运行；暂停和取消当前执行是独立操作。
+
+### 1.4 任务级校验覆盖
+
+- 不建立独立 `task_validation_policy`。
+- `sync_task.validation_method_override` 保存任务级覆盖：
+
+```text
+NULL
+ROW_COUNT
+ROW_COUNT_CHECKSUM
+```
+
+- `NULL` 表示继承数据集级覆盖或全局默认。
+- 不保存 `override_mode`、独立策略 revision、容差、校验回看或校验关闭开关。
+- 任务覆盖与其他任务配置共用 `sync_task.revision` 和操作审计。
+- 活动执行期间禁止修改。
+- 无真实业务主键的数据集不能覆盖为 `ROW_COUNT_CHECKSUM`。
 
 专项 Review：
 
 ```text
 spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
-### 1.4 三种标准任务组合
+### 1.5 三种标准任务组合
 
 | 数据集合同 | 任务类型 | 写入方式 | Doris Key 模型 |
 | --- | --- | --- | --- |
@@ -88,7 +105,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
 - 多机构共享 ODS 时，无主键任务只清理当前机构范围。
 - Reader 第一阶段固定单并发，Fetch Size 可配置。
 
-### 1.5 执行、首次全量和水位
+### 1.6 执行、首次全量和水位
 
 - `sync_execution` 表示任务的一次真实运行，并保存启动时任务配置快照。
 - 已经开始的执行不被后续任务修改热更新。
@@ -103,7 +120,7 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
 - 数据补采不修改正式水位。
 - `task_watermark` 只保存当前值，不保存任务版本或历史表。
 
-### 1.6 `load_batch` 和 Doris Label
+### 1.7 `load_batch` 和 Doris Label
 
 - 批次类型从父 `sync_execution.execution_scope` 推导，不保存 `phase`。
 - 整次时间或主键范围保存在父执行，不保存 `time_lower/time_upper`。
@@ -126,14 +143,7 @@ UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
 - `UNKNOWN` 超时、持续不可查询或长期未达到 `VISIBLE` 时，批次和执行失败。
 - 失败信息必须包含批次号、Label、最后状态、探测次数、失败原因和建议动作。
 
-专项 Review：
-
-```text
-spec/P0_LOAD_BATCH_MODEL_REVIEW.md
-spec/P0_DORIS_LABEL_PROBE_REVIEW.md
-```
-
-### 1.7 预检和校验
+### 1.8 预检和校验
 
 - 预检只能人工启动，每次扫描整条链路。
 - 预检只保存字段级和组合规则级汇总，不保存行级详情和样例。
@@ -143,9 +153,9 @@ spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 - 不支持行数容差和校验 `lookback_hours`。
 - 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许静默降级。
 - 校验失败或不一致时执行失败且水位不推进。
-- 人工重新校验生成独立 `validation_run`，不覆盖历史记录。
+- 人工重新校验生成独立 `validation_run`，不覆盖历史记录和原执行结果。
 
-### 1.8 消息、外部 API 和支撑对象
+### 1.9 消息、外部 API 和支撑对象
 
 - 消息只使用 RabbitMQ，配置只存在于数据集级。
 - 每次成功执行最多创建一条小型 `message_outbox`。
@@ -165,7 +175,7 @@ spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 
 状态：**物理字段已完成，正在做一致性收口。**
 
-已完成：
+已完成对象：
 
 ```text
 collection_route
@@ -173,7 +183,6 @@ collection_route_version
 collection_route_version_institution
 route_field_resolution
 sync_task
-task_validation_policy
 task_watermark
 ```
 
@@ -183,14 +192,20 @@ task_watermark
 - [x] 删除预检策略层级。
 - [x] 任务可直接更换链路。
 - [x] 任务修改覆盖原任务，不建立 `sync_task_version`。
+- [x] 删除全部 `task_version_id`。
+- [x] 活动执行期间禁止修改任务配置。
+- [x] 删除独立 `task_validation_policy`。
+- [x] 任务级校验覆盖合并为 `sync_task.validation_method_override`。
 - [x] 删除 `task_watermark.task_version_id`。
 - [x] 校验不可关闭，无容差、无校验回看。
-- [x] 活动执行期间禁止修改任务配置和任务级校验覆盖。
-- [x] 不建立待生效配置或配置切换状态。
+
+下一项待确认：
+
+- [ ] 任务编辑时是否允许修改 `institution_id/dataset_id` 业务身份。
 
 待机械清理：
 
-- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
+- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id/task_validation_policy`。
 - [ ] 核对所有复合外键的父唯一约束。
 - [ ] 统一任务和写入枚举名称。
 
@@ -198,7 +213,7 @@ task_watermark
 
 状态：**物理字段第一轮完成，继续一致性收口。**
 
-已完成：
+已完成对象：
 
 ```text
 sync_execution
@@ -293,9 +308,9 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 实现机构、业务系统实例、源/目标数据源和多对多关系。
 - [ ] 实现数据集同步、不可变数据集版本和字段合同。
 - [ ] 实现采集链路、链路版本和字段解析。
-- [ ] 实现可变 `sync_task`、任务校验策略和水位。
+- [ ] 实现可变 `sync_task`、任务级校验覆盖字段和水位。
 - [ ] 任务编辑和执行启动使用同一任务锁，活动执行期间返回 `TASK_EXECUTION_ACTIVE`。
-- [ ] 删除废止的任务版本实体、Repository、DTO 和接口。
+- [ ] 删除废止的任务版本和任务校验策略实体、Repository、DTO 与接口。
 
 ## M2：Doris 合同、预检和任务创建
 
@@ -321,7 +336,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 移除生产页面 Mock 状态。
 - [ ] 建立稳定 URL、统一前端 API 层和真实分页。
 - [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
-- [ ] 任务编辑被活动执行阻止时，页面明确展示执行 ID、状态和处理建议。
+- [ ] 任务编辑被活动执行阻止时，展示执行 ID、状态和处理建议。
 
 ## M5：消息、安全和运维
 
@@ -333,8 +348,10 @@ spec/PHASE1_FINAL_REVIEW.md
 ## M6：主流程稳定后补测试
 
 - [ ] 数据集、链路、任务唯一性和任务直接编辑。
-- [ ] 活动执行期间任务配置和任务级校验覆盖均不可修改。
-- [ ] 编辑与执行启动并发时只能有一方先成功，不出现配置穿透。
+- [ ] 活动执行期间全部任务配置均不可修改。
+- [ ] `validation_method_override=NULL` 正确继承数据集和全局默认。
+- [ ] 无主键任务拒绝 `ROW_COUNT_CHECKSUM` 覆盖。
+- [ ] 编辑与执行启动并发时不存在配置穿透。
 - [ ] 执行快照不受后续任务修改影响。
 - [ ] 首次全量与后续增量独立运行。
 - [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
@@ -378,7 +395,8 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-027 | Label 失败信息必须清晰、可排查 |
 | D-028 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` |
 | D-029 | 执行、校验、Outbox、水位删除 `task_version_id`，历史由执行快照追溯 |
-| D-030 | 活动执行期间禁止修改任务配置和任务级校验覆盖，不建立待生效配置 |
+| D-030 | 活动执行期间禁止修改任务配置，不建立待生效配置 |
+| D-031 | 删除 `task_validation_policy`，任务级校验覆盖合并到 `sync_task.validation_method_override` |
 
 ---
 
@@ -388,7 +406,7 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - 所有 P0 表、字段、外键、唯一约束和索引无冲突；
 - 不存在仍引用旧表、旧状态或废止功能的目标设计；
-- 任务可变配置、活动执行编辑边界和执行快照职责清晰；
+- 任务可变配置、活动执行编辑边界、校验覆盖和执行快照职责清晰；
 - 文档一致；
 - 用户明确签字后才允许创建 Flyway V1。
 
