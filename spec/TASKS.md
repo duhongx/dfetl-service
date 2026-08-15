@@ -87,7 +87,13 @@ sync_task.validation_method_override
 standard_dataset.validation_method_override
 ```
 
-允许值均为：
+全局默认保存为注册系统设置：
+
+```text
+system_setting[validation.default_method]
+```
+
+数据集和任务覆盖允许值：
 
 ```text
 NULL
@@ -95,23 +101,39 @@ ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
+全局设置允许值：
+
+```text
+ROW_COUNT
+ROW_COUNT_CHECKSUM
+```
+
+注册默认值：
+
+```text
+ROW_COUNT
+```
+
 固定规则：
 
-- `NULL` 表示继承，不保存额外 `override_mode`。
-- 不建立 `task_validation_policy`。
+- 数据集和任务的 `NULL` 表示继承，不保存额外 `override_mode`。
+- 不建立 `global_validation_policy`。
 - 不建立 `dataset_validation_policy`。
+- 不建立 `task_validation_policy`。
 - 任务覆盖使用 `sync_task.revision`。
 - 数据集覆盖使用 `standard_dataset.revision`。
+- 全局覆盖使用 `system_setting.revision`；设置行缺失时使用注册默认值。
 - 修改前后值进入通用 `audit_log`。
 - 数据集定义同步不得覆盖管理员保存的数据集校验覆盖。
-- 无真实业务主键的数据集不能配置 `ROW_COUNT_CHECKSUM`。
+- 无真实业务主键的数据集最终只能使用 `ROW_COUNT`。
 
 最终解析：
 
 ```text
 任务覆盖
 → 数据集覆盖
-→ 全局默认
+→ system_setting[validation.default_method]
+→ 注册默认值 ROW_COUNT
 → 数据集合同能力强制
 ```
 
@@ -120,6 +142,7 @@ ROW_COUNT_CHECKSUM
 ```text
 spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
 spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md
+spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
 spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
@@ -228,17 +251,19 @@ task_watermark
 - [x] 任务级覆盖合并为 `sync_task.validation_method_override`。
 - [x] 删除独立 `dataset_validation_policy`。
 - [x] 数据集级覆盖合并为 `standard_dataset.validation_method_override`。
+- [x] 删除独立 `global_validation_policy`。
+- [x] 全局默认改为注册设置 `validation.default_method`。
 - [x] 删除 `task_watermark.task_version_id`。
 - [x] 校验不可关闭，无容差、无校验回看。
 
 下一项待确认：
 
-- [ ] 是否删除独立 `global_validation_policy` 单例表，改为使用已确认的 `system_setting` 注册项保存全局默认校验方式。
+- [ ] 任务存在活动同步执行时，是否允许同时发起独立人工校验或定期治理校验。
 
 待机械清理：
 
 - [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
-- [ ] 从旧文档删除 `task_validation_policy/dataset_validation_policy`。
+- [ ] 从旧文档删除 `global_validation_policy/dataset_validation_policy/task_validation_policy`。
 - [ ] 清理任务身份可修改及任务历史迁移描述。
 - [ ] 核对所有复合外键的父唯一约束。
 - [ ] 统一任务和写入枚举名称。
@@ -335,6 +360,7 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 明确 PostgreSQL、Doris、RabbitMQ、SeaTunnel 依赖和敏感环境变量。
 - [ ] 区分开发、测试和生产配置。
+- [ ] 注册 `validation.default_method`，默认 `ROW_COUNT`，仅接受两个已确认枚举值。
 - [ ] 首个管理员通过部署 Secret、环境变量或一次性命令初始化。
 
 ## M1：核心领域模型
@@ -345,7 +371,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 实现固定身份、当前配置可变的 `sync_task`、任务级校验覆盖字段和水位。
 - [ ] 任务编辑接口不允许修改 `institution_id/dataset_id`。
 - [ ] 任务编辑和执行启动使用同一任务锁，活动执行期间返回 `TASK_EXECUTION_ACTIVE`。
-- [ ] 删除废止的任务版本和独立校验策略实体、Repository、DTO 与接口。
+- [ ] 删除废止的任务版本和三张独立校验策略实体、Repository、DTO 与接口。
 
 ## M2：Doris 合同、预检和任务创建
 
@@ -373,6 +399,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
 - [ ] 任务编辑页面把机构和数据集作为只读身份信息。
 - [ ] 活动执行阻止任务编辑时展示执行 ID、状态和处理建议。
+- [ ] 系统设置页面提供受控的默认校验方式选项。
 
 ## M5：消息、安全和运维
 
@@ -388,10 +415,12 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 更换机构或数据集必须删除旧任务并新建，旧历史不迁移。
 - [ ] 活动执行期间全部任务配置均不可修改。
 - [ ] 任务和数据集 `validation_method_override=NULL` 正确继承。
+- [ ] `validation.default_method` 设置行缺失时使用注册默认值 `ROW_COUNT`。
+- [ ] 全局设置只接受 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
 - [ ] 数据集定义同步不覆盖数据集级校验设置。
-- [ ] 无主键数据集和任务拒绝 `ROW_COUNT_CHECKSUM` 覆盖。
+- [ ] 无主键数据集和任务最终只能使用 `ROW_COUNT`。
 - [ ] 编辑与执行启动并发时不存在配置穿透。
-- [ ] 执行快照不受后续任务或数据集设置修改影响。
+- [ ] 执行快照不受后续任务、数据集或全局设置修改影响。
 - [ ] 首次全量与后续增量独立运行。
 - [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
 - [ ] 校验严格相等、不允许关闭、不允许容差。
@@ -438,6 +467,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-031 | 删除 `task_validation_policy`，任务级覆盖合并到 `sync_task.validation_method_override` |
 | D-032 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改 |
 | D-033 | 删除 `dataset_validation_policy`，数据集级覆盖合并到 `standard_dataset.validation_method_override` |
+| D-034 | 删除 `global_validation_policy`，全局默认改为 `system_setting[validation.default_method]` |
 
 ---
 
