@@ -23,6 +23,7 @@ task_watermark_history
 task_governance_override
 任务草稿表
 任务配置发布/回退表
+待生效任务配置表
 ```
 
 核心边界：
@@ -30,6 +31,7 @@ task_governance_override
 - 任务身份固定为“一个医疗机构 + 一个标准数据集”；
 - `sync_task` 直接保存当前有效任务配置；
 - 编辑任务直接覆盖当前配置，不生成任务版本；
+- 存在活动执行时禁止修改任务配置和任务级校验覆盖；
 - 已接受执行使用 `sync_execution` 启动快照，不受后续任务修改影响；
 - 校验只允许继承或覆盖校验方法，正式同步最低为 `ROW_COUNT`；
 - 消息策略只存在于数据集级；
@@ -263,8 +265,10 @@ INDEX idx_sync_task_schedule_projection
 编辑任务：
 
 ```text
-读取当前 revision
-→ 校验用户提交的新配置
+锁定 sync_task
+→ 查询是否存在 PENDING/RUNNING/LOADING/VALIDATING 执行
+→ 存在则返回 TASK_EXECUTION_ACTIVE，不更新任何配置
+→ 不存在则校验用户提交的新配置和 revision
 → UPDATE sync_task ... WHERE id=? AND revision=?
 → revision + 1
 → 写 audit_log 修改前后摘要
@@ -272,6 +276,13 @@ INDEX idx_sync_task_schedule_projection
 → 同步 Quartz 投影
 ```
 
+固定规则：
+
+- 活动执行期间禁止修改 `sync_task` 当前配置；
+- 活动执行期间禁止修改 `task_validation_policy`；
+- 拒绝信息必须包含当前执行 ID、状态和“等待执行结束或先取消执行”的处理建议；
+- 执行启动与任务编辑使用同一任务行锁或等效事务串行化，防止并发穿透；
+- 不建立待生效配置、配置草稿或执行结束后自动应用；
 - 不插入任务版本；
 - 不自动运行任务；
 - 不自动重置水位；
@@ -284,6 +295,7 @@ INDEX idx_sync_task_schedule_projection
 - 暂停只设置 `schedule_enabled=false`，提交后删除 Quartz Job/Trigger；
 - 恢复设置为 `true`，根据当前任务配置重建 Quartz 投影；
 - 暂停后仍允许人工运行；
+- 暂停和取消是独立运行操作，不等同于编辑任务配置；
 - 失败、取消或校验失败不自动修改调度开关。
 
 逻辑删除：
@@ -292,8 +304,6 @@ INDEX idx_sync_task_schedule_projection
 - 设置 `deleted_at/deleted_by` 并关闭后续调度；
 - 不删除水位、执行、批次、校验、Outbox 和审计历史；
 - 释放“机构 + 数据集”未删除唯一关系，允许以后重新创建。
-
-是否允许在活动执行期间编辑当前任务配置，作为下一项业务边界单独确认。
 
 ## 3. `task_validation_policy`
 
@@ -327,6 +337,8 @@ CHECK (revision >= 0)
 ```
 
 保存服务必须拒绝无真实业务主键的数据集配置 `ROW_COUNT_CHECKSUM`。
+
+任务级校验覆盖属于任务配置，修改时同样执行“无活动执行”检查。
 
 不保存：
 
@@ -433,7 +445,7 @@ fetch_size / upper_bound_delay_minutes / lookback_seconds
 消息策略快照
 ```
 
-之后任务修改不得热更新已有执行。
+之后任务修改不得热更新已有执行。由于活动执行期间禁止编辑任务，执行快照主要承担运行隔离、历史追溯和进程恢复，不承担并发配置切换。
 
 相应删除：
 
@@ -485,16 +497,21 @@ message_outbox.task_version_id
 task_watermark.task_version_id
 任务版本 version_no/contract_hash/change_summary
 任务版本发布、切换和回退接口
+待生效任务配置
+活动执行期间修改任务配置
 ```
 
 ## 8. 验收
 
 - `sync_task` 包含当前完整任务配置。
-- 编辑任务直接更新原行，并通过 revision 防止并发静默覆盖。
+- 无活动执行时，编辑任务直接更新原行，并通过 revision 防止并发静默覆盖。
+- 存在 `PENDING/RUNNING/LOADING/VALIDATING` 执行时，任务配置和任务级校验覆盖均不能修改。
+- 编辑拒绝响应包含当前执行 ID、状态和明确处理建议。
+- 执行启动与任务编辑不存在并发穿透。
 - 未删除任务按机构 + 数据集唯一。
 - 当前任务引用的数据集版本、链路版本和覆盖机构关系有效。
 - 三种标准任务组合由数据库和服务共同保证。
 - `task_validation_policy` 只处理校验方法继承或覆盖。
 - `task_watermark` 不保存任务版本字段。
 - 历史执行通过启动快照追溯，不依赖当前任务值。
-- 不存在任务配置版本发布、迁移或回退状态机。
+- 不存在任务配置版本发布、迁移、回退、待生效或双配置状态机。
