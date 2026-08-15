@@ -206,6 +206,15 @@ UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
 - 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许执行中静默降级。
 - 校验失败或不一致时执行失败且水位不推进。
 - 人工重新校验生成独立 `validation_run`，不覆盖历史记录和原执行结果。
+- 同一任务的活动同步执行与独立人工/治理校验互斥；同步自身的 `SYNC_GATE` 除外。
+- 冲突时直接返回 `TASK_OPERATION_ACTIVE`，不排队、不等待、不补跑。
+- 冲突响应必须包含占用对象 ID、类型、状态和处理建议。
+
+专项 Review：
+
+```text
+spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
+```
 
 ### 1.9 消息、外部 API 和支撑对象
 
@@ -256,10 +265,6 @@ task_watermark
 - [x] 删除 `task_watermark.task_version_id`。
 - [x] 校验不可关闭，无容差、无校验回看。
 
-下一项待确认：
-
-- [ ] 任务存在活动同步执行时，是否允许同时发起独立人工校验或定期治理校验。
-
 待机械清理：
 
 - [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
@@ -290,7 +295,13 @@ message_outbox
 - [x] 删除批次 `phase/time_lower/time_upper/probe_result`。
 - [x] Label 不明确只探测原事务，超时失败，不自动重投。
 - [x] Label 失败信息必须清晰。
+- [x] 同一任务同步执行与独立校验互斥，`SYNC_GATE` 除外。
+- [x] 冲突不排队、不补跑，返回 `TASK_OPERATION_ACTIVE`。
 - [x] 日志全文不进入 PostgreSQL。
+
+下一项待确认：
+
+- [ ] 同一任务是否允许同时存在两条活动独立校验运行。
 
 待一致性检查：
 
@@ -387,6 +398,8 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 实现 Keyset 分页、`load_batch`、确定性 Label 和探测。
 - [ ] 实现首次全量、正常增量、重新采集和数据补采。
 - [ ] 实现严格 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
+- [ ] 启动同步、独立校验和任务编辑锁定同一 `sync_task`，保证互斥和无并发穿透。
+- [ ] 互斥冲突返回占用对象 ID、类型、状态和建议，不建立排队状态。
 - [ ] 实现水位原子提交和唯一 Outbox。
 - [ ] 实现 Doris 删除快照技术表和人工应用流程。
 - [ ] 实现 Quartz 投影重建和并发保护。
@@ -399,6 +412,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
 - [ ] 任务编辑页面把机构和数据集作为只读身份信息。
 - [ ] 活动执行阻止任务编辑时展示执行 ID、状态和处理建议。
+- [ ] 同步与独立校验冲突时展示占用操作和明确处理建议。
 - [ ] 系统设置页面提供受控的默认校验方式选项。
 
 ## M5：消息、安全和运维
@@ -420,6 +434,11 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 数据集定义同步不覆盖数据集级校验设置。
 - [ ] 无主键数据集和任务最终只能使用 `ROW_COUNT`。
 - [ ] 编辑与执行启动并发时不存在配置穿透。
+- [ ] 同任务活动同步期间独立校验不能启动。
+- [ ] 同任务活动独立校验期间计划、人工和外部 API 同步不能启动。
+- [ ] `SYNC_GATE` 不被互斥规则错误阻止。
+- [ ] 不同任务仍可并行。
+- [ ] 冲突时不产生排队、等待或自动补跑记录。
 - [ ] 执行快照不受后续任务、数据集或全局设置修改影响。
 - [ ] 首次全量与后续增量独立运行。
 - [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
@@ -468,6 +487,7 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-032 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改 |
 | D-033 | 删除 `dataset_validation_policy`，数据集级覆盖合并到 `standard_dataset.validation_method_override` |
 | D-034 | 删除 `global_validation_policy`，全局默认改为 `system_setting[validation.default_method]` |
+| D-035 | 同一任务同步执行与独立人工/治理校验互斥，`SYNC_GATE` 除外 |
 
 ---
 
@@ -479,6 +499,7 @@ spec/PHASE1_FINAL_REVIEW.md
 - 不存在仍引用旧表、旧状态或废止功能的目标设计；
 - 任务固定身份、当前配置覆盖、活动执行编辑边界和执行快照职责清晰；
 - 校验覆盖层级及其存储位置唯一；
+- 同任务运行操作互斥边界明确；
 - 文档一致；
 - 用户明确签字后才允许创建 Flyway V1。
 

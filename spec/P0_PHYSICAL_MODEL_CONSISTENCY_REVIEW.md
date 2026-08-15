@@ -52,6 +52,7 @@ spec/TASKS.md
 | C-014 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改。 | `P0_MUTABLE_TASK_MODEL_REVIEW.md` |
 | C-015 | 删除 `dataset_validation_policy`；数据集级校验覆盖合并为 `standard_dataset.validation_method_override`。 | `P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md` |
 | C-016 | 删除 `global_validation_policy`；全局默认使用注册系统设置 `validation.default_method`。 | `P0_GLOBAL_VALIDATION_SETTING_REVIEW.md` |
+| C-017 | 同一任务的同步执行与独立人工/治理校验互斥；`SYNC_GATE` 除外。 | `P0_TASK_OPERATION_EXCLUSION_REVIEW.md` |
 
 ## 3. 当前任务与校验配置模型
 
@@ -156,16 +157,57 @@ ROW_COUNT
 spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
 ```
 
-## 5. 当前已同步修正的文档
+## 5. 同步与独立校验互斥
+
+同一任务固定只允许一种业务运行形态：
 
 ```text
-spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+活动同步执行（包含自身 SYNC_GATE）
+或
+活动独立人工/治理校验
+```
+
+活动同步状态：
+
+```text
+PENDING
+RUNNING
+LOADING
+VALIDATING
+```
+
+活动独立校验：
+
+```text
+trigger_type IN ('MANUAL','MANUAL_RECHECK','SCHEDULED')
+AND status IN ('PENDING','RUNNING')
+```
+
+固定规则：
+
+- 活动同步存在时，独立校验直接拒绝；
+- 活动独立校验存在时，计划、人工和外部 API 同步直接拒绝；
+- `SYNC_GATE` 属于父同步执行内部流程，不受互斥限制；
+- 不同任务可以并行；
+- 冲突不排队、不等待、不补跑；
+- 统一返回 `TASK_OPERATION_ACTIVE`，包含占用对象 ID、类型、状态和处理建议；
+- 同步启动、独立校验启动和任务编辑锁定同一条 `sync_task`，避免并发穿透。
+
+专项 Review：
+
+```text
+spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
+```
+
+## 6. 当前已同步修正的文档
+
+```text
+spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
 ```
 
-## 6. 阶段 1 最终机械清理
+## 7. 阶段 1 最终机械清理
 
 仍需从以下文档删除旧任务版本和三张独立校验策略表描述：
 
@@ -188,16 +230,17 @@ validation lookback_hours
 首次全量立即补充增量
 load_batch.phase/time_lower/time_upper/probe_result
 任务身份可修改描述
+允许同步和独立校验同时运行的旧描述
 ```
 
 这些属于已确认结论的机械同步，不重新讨论。
 
-## 7. 后续检查顺序
+## 8. 后续检查顺序
 
 下一项讨论：
 
 ```text
-任务存在活动同步执行时，是否允许同时发起独立人工校验或定期治理校验？
+同一任务是否允许同时存在两条活动独立校验运行？
 ```
 
 确认后继续：
