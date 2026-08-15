@@ -5,269 +5,153 @@
 > 状态：阶段 1「目标模型冻结与物理表字典复核」进行中  
 > 最近更新：2026-08-15  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 详细逻辑模型：`spec/TARGET_METADATA_MODEL.md`
+> 明确修正文档：各项已确认的 `P0_*_REVIEW.md`
 
-## 0. 文档定位
+## 0. 文档定位与阶段门槛
 
-本文件是当前实施任务和阶段门槛的唯一任务清单。原任务清单中已被后续 Review 修正的内容，不再作为实现依据；历史版本已归档到：
+发生冲突时按以下顺序处理：
 
-```text
-spec/reference/legacy/TASKS_before_phase1_consistency_20260814.md
-```
-
-发生冲突时按以下优先级处理：
-
-1. `spec/PRODUCT_AND_BUSINESS_DECISIONS.md`；
-2. 已确认的专项 Review 文档；
-3. 各批 P0 物理表字典；
+1. `PRODUCT_AND_BUSINESS_DECISIONS.md` 中尚未被后续明确修正的规则；
+2. 用户确认后的专项 Review 文档；
+3. P0 物理表字典；
 4. 本任务清单；
 5. 老代码、历史 SQL 和归档文档。
 
-当前阶段仍只允许修改文档：
+当前阶段只允许修改文档：
 
 - 不创建或固化 `V1__baseline.sql`；
 - 不修改实体、Repository 或正式数据库结构；
 - 不移动旧 SQL 到 Flyway 扫描目录；
 - 不连接、修改、认领或升级老 `df_ygt/df_etl` 数据库；
-- 目标模型最终签字后才进入阶段 2。
+- 用户明确签字后才进入阶段 2。
 
 ---
 
-## 1. 当前已确认的业务基线
+## 1. 当前确认的核心业务基线
 
-### 1.1 部署和元数据库
+### 1.1 部署和资源
 
-- 一个部署和一套独立 PostgreSQL 元数据库只服务一个医共体。
-- 不建立租户表，不在业务表重复保存 `community_id`。
-- 老系统继续使用原 `df_ygt/df_etl` 数据库运行。
-- 新系统使用完全独立的新 PostgreSQL 数据库。
-- 老库结构和历史 SQL 只作为证据，不允许 Flyway baseline 老库。
-
-### 1.2 机构、业务系统实例和数据源
-
-- 机构按扁平集合管理，不建立机构层级。
+- 一个部署和一套独立 PostgreSQL 元数据库只服务一个医共体，不建立租户表。
+- 机构按扁平集合管理。
 - 业务系统实例与机构、源数据源均为多对多。
-- 实例与数据源关联表是纯关联，不保存用途、优先级、主备或自动切换。
-- 源数据源支持 `HOST_PORT` 和完整 JDBC URL，凭据与 URL 分离。
+- 源数据源支持 `HOST_PORT/JDBC_URL`，凭据与 URL 分离。
 - Doris 表示一个逻辑部署，支持一个或多个 FE，不管理 BE。
-- 不建立数据源组和任务组。
 
-### 1.3 标准数据集和字段合同
+### 1.2 数据集和链路
 
-- 标准数据集只允许管理员从医共体规范库人工同步，不自动同步、不手工新增。
-- 只有规范化定义内容和 Hash 变化时才生成新版本。
-- 数据集身份、不可变版本和不可变字段版本分离。
-- 医疗字段转换合同统一服务 Doris DDL、Reader、预检和 Checksum。
-- 标准字段与源 JDBC 字段只允许大小写差异。
-- 不提供别名、人工字段重命名、默认值或转换表达式改变字段身份。
-- 源字段集合必须与标准字段集合完全一致；缺少、额外或大小写折叠重名均形成明确结构问题。
-- 未知医疗类型或格式保存为 `UNSUPPORTED`，不回退为 `VARCHAR(256)`。
-
-### 1.4 Doris ODS、RAW 和技术表
-
-- 每个标准数据集在一个 Doris 逻辑部署中固定共用一张 ODS 和一张 RAW。
-- 多家机构共用同一物理表，通过标准医疗机构代码隔离。
-- PostgreSQL 不建立 Doris 业务表登记表或结构版本表。
-- 普通同步只核对实际结构，不自动建表、加列或修改结构。
-- 建表和重建必须由用户显式发起。
-- ODS 使用严格医疗字段合同；RAW 只用于预检，业务字段全部为可空字符串。
-- `_dfetl_key_snapshot` 和 `_dfetl_delete_diff` 是共享平台技术表，不属于 ODS/RAW 业务表。
-
-### 1.5 采集链路
-
-- 同一系统实例、源数据源、标准数据集和源对象只建立一条未删除链路。
-- 一条链路可以覆盖多家机构，不因共享视图包含多机构而复制链路。
-- 链路身份与不可变版本分离。
-- 当前覆盖机构只通过：
+- 标准数据集只允许管理员人工同步，不自动同步、不手工新增。
+- 只有规范化定义变化才生成新的 `standard_dataset_version`。
+- 标准字段与源字段只允许大小写差异，不支持人工重命名和 `CUSTOM_SQL`。
+- 一条采集链路可以覆盖多家机构。
+- 当前覆盖机构只来自：
 
 ```text
 collection_route.current_version_id
 → collection_route_version_institution
 ```
 
-查询，不建立独立可变的 `collection_route_institution`。
+- 链路覆盖移除机构时，若仍有当前任务使用该链路和机构，则拒绝移除。
+- 链路问题可以保存和展示，正式执行遇到真实不可执行合同则失败。
 
-- 链路不保存运行状态、最近同步或任务状态。
-- 结构和字段解析问题可以保存并展示，不作为创建任务的数据库门禁。
-- 链路当前配置变化生成新版本；Hash 未变化不生成重复版本。
-
-### 1.6 同步任务、任务版本和链路切换
+### 1.3 同步任务：当前配置直接覆盖
 
 - 一个任务只属于一家机构和一个标准数据集。
-- 同一机构、同一数据集只能存在一个未删除任务，最终由 PostgreSQL 部分唯一索引保证。
-- `sync_task` 只保存长期身份、当前版本指针、调度开关和逻辑删除信息。
-- `sync_task` 不保存 `route_id`；当前链路由当前 `sync_task_version.route_version_id` 推导。
-- 用户可以为原任务创建新版本并显式更换采集链路。
+- 同一机构、同一数据集只能存在一个未删除任务。
+- `sync_task` 直接保存当前有效配置。
+- 编辑任务直接覆盖原任务，不建立 `sync_task_version`。
+- 删除 `sync_task.current_version_id` 及全部 `task_version_id` 引用。
+- 用户可以直接修改当前采集链路、读取参数和调度配置。
 - 系统不替用户判断换链路后是否应重置水位、重新全量或处理删除快照基线。
-- 不建设自动迁移、双链路、双水位、自动回退或源系统切换状态机。
-- 存在活动执行时不得切换任务版本。
-- 任务不保存与执行重复的生命周期状态；暂停只设置 `schedule_enabled=false`，暂停后仍可人工运行。
-
-### 1.7 三种标准任务组合
-
-| 数据集合同 | 任务类型 | 写入方式 | Doris Key 模型 |
-| --- | --- | --- | --- |
-| 无真实业务主键 | `FULL_ONLY` | `REPLACE_INSTITUTION_SCOPE` | `DUPLICATE_KEY` |
-| 有业务主键且有有效增量字段 | `FULL_THEN_INCREMENTAL` | `UPSERT` | `UNIQUE_KEY` |
-| 有业务主键但无有效增量字段 | `FULL_ONLY` | `UPSERT` | `UNIQUE_KEY` |
-
-- 无主键任务不得生成 Hash、自增 ID、`row_number()` 等假主键。
-- 多机构共享 ODS 时，无主键任务只清理当前机构范围，禁止整表清空。
-- 普通同步任务不支持 `CUSTOM_SQL`、`ID_RANGE` 或 `CUSTOM_WINDOW`。
-
-### 1.8 调度、执行、首次全量、失败、取消和水位
-
-- 第一阶段 Reader 固定单并发；Fetch Size 可配置。
-- 同一任务禁止并发执行。
-- 任务运行期间到达的新计划触发直接跳过，不建立追赶或补跑状态。
-- 执行失败只告警，不自动暂停任务；下一次计划调度正常运行。
-- 不自动重试，不支持从失败批次继续。
-- 普通失败只提供人工“重新采集”，新执行从任务范围起点和第 1 批重新读取。
-- 数据补采是独立命令，不修改正式水位。
-- 取消只终止当前执行，不修改任务调度开关。
-- `task_watermark` 只保存当前正式时间水位，不建立水位历史表。
-- 水位只在全部载入成功、同步门禁校验通过后推进。
-- Doris 返回不明确时查询确定性 Label，探测结果直接保存到 `load_batch`。
-- 不建立 `execution_checkpoint`、`execution_reconciliation` 或跨执行恢复字段。
-- `FULL_THEN_INCREMENTAL` 表示同一长期任务跨多次执行的运行方式，不表示一条复合执行。
-- 没有正式水位时，第一次运行创建一条独立 `INITIAL_FULL sync_execution`，只包含全量批次。
-- 首次全量成功并通过门禁校验后，将首次全量开始时间 `T0` 写为初始正式水位。
-- 首次全量完成后不立即执行补充增量；等待下一次正常 Cron/间隔触发，再创建新的 `INCREMENTAL sync_execution`。
-- 首次全量运行期间到达的计划触发直接跳过，完成后不补跑。
-- 首次全量和后续增量分别拥有独立执行、批次、校验、日志和 Outbox。
-- 首次全量失败或取消时不创建水位；下一次正常运行仍执行首次全量。
-- `load_batch` 不保存重复的 `phase`；批次类型统一从父 `sync_execution.execution_scope` 推导。
-- `load_batch` 不保存 `time_lower/time_upper`；整次业务时间或主键范围只保存在父 `sync_execution`，批次只保存实际分页使用的 `cursor_lower/cursor_upper`。
-- `load_batch` 不保存 `probe_result`；DFETL 批次状态使用 `PENDING/LOADING/PROBING/SUCCEEDED/FAILED/CANCELLED`，Doris 原始事务状态使用 `UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED`。
-- 只有 Label 达到 `VISIBLE` 且拒绝行数为 0，批次才能成功。
-- `Publish Timeout`、客户端超时或响应不明确时只探测原 Label，不自动重新提交。
-- Label 在限定探测时间内始终为 `UNKNOWN` 时，批次和执行失败，不推进水位、不进入正式校验、不创建 Outbox。
-- Label 相关失败必须保存清晰错误码和脱敏错误摘要，至少展示批次号、Label、最后状态、探测次数、失败原因和建议动作。
+- 历史执行通过 `sync_execution` 启动快照追溯；任务修改历史通过 `audit_log` 追溯。
+- 任务暂停只控制自动调度，暂停后仍可人工运行。
 
 专项 Review：
 
 ```text
-spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
+spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
+spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
+```
+
+### 1.4 三种标准任务组合
+
+| 数据集合同 | 任务类型 | 写入方式 | Doris Key 模型 |
+| --- | --- | --- | --- |
+| 无真实业务主键 | `FULL_ONLY` | `REPLACE_INSTITUTION_SCOPE` | `DUPLICATE_KEY` |
+| 有业务主键且有增量字段 | `FULL_THEN_INCREMENTAL` | `UPSERT` | `UNIQUE_KEY` |
+| 有业务主键但无增量字段 | `FULL_ONLY` | `UPSERT` | `UNIQUE_KEY` |
+
+- 无主键任务不生成假主键。
+- 多机构共享 ODS 时，无主键任务只清理当前机构范围。
+- Reader 第一阶段固定单并发，Fetch Size 可配置。
+
+### 1.5 执行、首次全量和水位
+
+- `sync_execution` 表示任务的一次真实运行，并保存启动时任务配置快照。
+- 已经开始的执行不被后续任务修改热更新。
+- 同一任务禁止并发执行。
+- 运行期间到达的新计划触发直接跳过，不追赶、不补跑。
+- 第一次运行创建独立 `INITIAL_FULL` 执行。
+- 首次全量成功后以开始时间 `T0` 建立初始水位。
+- 后续等待下一次正常调度，再创建独立 `INCREMENTAL` 执行。
+- 不在首次全量执行内立即追加增量。
+- 失败不自动重试、不自动暂停任务、不推进水位。
+- 重新采集创建新执行，从范围起点和第 1 批重新读取。
+- 数据补采不修改正式水位。
+- `task_watermark` 只保存当前值，不保存任务版本或历史表。
+
+### 1.6 `load_batch` 和 Doris Label
+
+- 批次类型从父 `sync_execution.execution_scope` 推导，不保存 `phase`。
+- 整次时间或主键范围保存在父执行，不保存 `time_lower/time_upper`。
+- 批次只保存实际 Keyset 复合游标，不作为跨执行恢复点。
+- 删除 `probe_result`。
+- DFETL 批次状态：
+
+```text
+PENDING/LOADING/PROBING/SUCCEEDED/FAILED/CANCELLED
+```
+
+- Doris 原始状态：
+
+```text
+UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
+```
+
+- 只有 `VISIBLE` 且拒绝行数为 0，批次才能成功。
+- `Publish Timeout`、客户端超时或响应不明确时只探测原 Label，不自动重投。
+- `UNKNOWN` 超时、持续不可查询或长期未达到 `VISIBLE` 时，批次和执行失败。
+- 失败信息必须包含批次号、Label、最后状态、探测次数、失败原因和建议动作。
+
+专项 Review：
+
+```text
 spec/P0_LOAD_BATCH_MODEL_REVIEW.md
 spec/P0_DORIS_LABEL_PROBE_REVIEW.md
 ```
 
-### 1.9 运行请求和技术前检
+### 1.7 预检和校验
 
-无效请求在创建执行前拒绝，包括：
+- 预检只能人工启动，每次扫描整条链路。
+- 预检只保存字段级和组合规则级汇总，不保存行级详情和样例。
+- 预检事实不阻止任务创建和运行。
+- 不建立预检策略层级。
+- 每次正式同步至少执行严格相等的 `ROW_COUNT`，不能关闭。
+- 不支持行数容差和校验 `lookback_hours`。
+- 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许静默降级。
+- 校验失败或不一致时执行失败且水位不推进。
+- 人工重新校验生成独立 `validation_run`，不覆盖历史记录。
 
-```text
-任务不存在或已删除
-无权限
-参数无效
-外部 API 幂等冲突
-同任务已有活动执行
-```
+### 1.8 消息、外部 API 和支撑对象
 
-请求被系统接受后：
-
-```text
-创建 PENDING sync_execution
-→ 固定任务版本、范围和运行快照
-→ 执行源连接、链路合同、目标 Doris 和必要配置技术前检
-```
-
-技术前检失败时保留 `FAILED sync_execution`，记录稳定错误码和脱敏摘要；不增加 `PRECHECKING` 状态。
-
-### 1.10 数据预检
-
-- 预检只能人工启动，每次扫描整条采集链路。
-- 同一链路同一时间只允许一个活动预检；不同链路并发由全局参数控制。
-- 执行状态和结果状态分离。
-- 预检只保存字段级和组合规则级汇总，不保存行级详情、业务键、原值、样例、修复状态或严重级别。
-- 汇总直接导出 XLSX/CSV，不建立异步导出任务表和长期文件。
-- RAW 终态后保留 1 天再按运行 ID 清理。
-- 预检只保存和展示事实：未执行、通过、有问题、已过期。
-- 不建立全局、数据集或任务级预检策略。
-- 未预检、存在问题或结果过期均不阻止任务创建和运行。
-
-### 1.11 数据校验：正式同步不可关闭且行数严格相等
-
-每次正式同步都必须执行同步后校验：
-
-```text
-写入完成
-→ 创建唯一 SYNC_GATE validation_run
-→ 至少执行 ROW_COUNT
-→ 必须 COMPLETED + PASS
-→ sync_execution 才能 SUCCEEDED
-→ 按需推进正式水位
-→ 按需创建 message_outbox
-```
-
-固定规则：
-
-- 不提供关闭正式同步校验的配置、接口或页面开关。
-- `global_validation_policy`、`dataset_validation_policy`、`task_validation_policy` 均不保存 `enabled`。
-- 三张策略表只允许继承或覆盖 `validation_method`。
-- 三张策略表均不保存 `row_tolerance`、绝对容差、百分比容差或 `lookback_hours`。
-- `ROW_COUNT` 固定要求 `source_row_count = target_row_count`，差异 1 行也失败。
-- 正式门禁只校验本次执行的精确机构和数据范围，不向历史范围回看。
-- 无真实业务主键的数据集固定使用 `ROW_COUNT`。
-- 有真实业务主键的数据集可配置 `ROW_COUNT_CHECKSUM`。
-- `ROW_COUNT_CHECKSUM` 必须同时满足行数严格相等和业务字段 Checksum 一致，不允许静默降级。
-- 默认不自动复检；人工重新校验生成独立 `validation_run`。
-- 校验不一致和技术失败都阻止执行成功和水位推进。
-- 校验内部可以分批计算，但 PostgreSQL 只保存整次最终结果和小型 `difference_summary JSONB`。
-
-权威字典：
-
-```text
-spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
-```
-
-### 1.12 删除识别
-
-- 源端没有删除标识或流水时，使用定期完整联合业务主键快照识别删除。
-- PostgreSQL 只保存快照运行、有效基线指针、删除对账汇总和人工应用历史。
-- 完整业务键和删除差异明细存入 Doris 共享技术表。
-- 差集在 Doris 中通过 anti join 完成，不拉入 Java `HashSet`。
-- 第一次完整成功快照只建立基线；失败或不完整候选不能替换基线。
-- 第一阶段不自动删除 ODS。
-- 实际应用删除必须 dry-run、二次确认和审计。
-
-### 1.13 RabbitMQ 消息和 Outbox
-
-- P0 只使用 RabbitMQ，删除 Redis Stream。
-- 消息配置只存在于数据集级，任务不能覆盖。
-- Exchange 固定为 `YL`，三个启用数据集使用既定完整 Routing Key。
-- 全量发送本次全量全部数据，增量发送本次增量全部数据。
-- 不支持 `SKIP`、`NOTIFY_ONLY`、完成通知或 TRUNCATE 信号。
-- 每次执行最多创建一条小型 `message_outbox` 指令。
-- Outbox 不保存业务数据、分页进度、逐条消息或投递尝试明细。
-- 状态固定为 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`。
-- 消息重发重新读取当前 Doris，允许内容因后续 UPSERT 发生变化。
-- `PUBLISHED/DEAD_LETTER` 长期保留，不自动清理或归档。
-- `messageKey`、空值处理和 27 位 `messageId` 严格沿用旧消费协议。
-
-### 1.14 外部任务 API
-
-- 属于 P0，用于业务端按机构和数据集确保任务存在。
-- 推荐请求：`targets=[{institutionCode,datasetCodes[]}]`，兼容旧单机构请求。
-- 服务端统一拆成“一个机构 + 一个数据集”原子目标。
-- 任务已存在返回 `EXISTS`；`runAfterCreate` 只运行本次新建任务。
-- 支持 `BEST_EFFORT/ALL_OR_NOTHING`。
-- 所有写操作要求 `requestId`，按 `(client_id, request_id)` 幂等。
-- client 机构授权支持 `ALL/SELECTED`。
-- client 不物理删除，只启停和重置密钥。
-- 不实现应用层限流。
-- 外部接口不能传入源对象、链路、同步、校验或消息内部策略。
-
-### 1.15 本地账号、审计、告警和 Quartz
-
-- 可以使用一个或多个同权限管理员账号，通常 1～3 人，不建设 RBAC。
-- 系统设置提供账号列表、新增、启停和重置密码。
-- 业务写操作同时审计成功和失败；敏感值不得进入审计。
-- 告警保存最小 `alert_event` 和 `alert_delivery` 历史，不建设确认、认领或处理流程；实现优先级最低。
-- Quartz JDBC JobStore 只是可重建调度投影。
-- `sync_task.schedule_enabled` 和当前任务版本 Cron 是唯一业务事实。
-- 暂停、无 Cron 或逻辑删除时删除 Quartz Job/Trigger；misfire 固定跳过。
-- 老 Quartz 运行态不迁移。
+- 消息只使用 RabbitMQ，配置只存在于数据集级。
+- 每次成功执行最多创建一条小型 `message_outbox`。
+- Outbox 不保存业务 payload、分页进度和逐条消息。
+- 外部任务 API 属于 P0，支持批量 targets 和旧单机构请求。
+- 所有外部写操作按 `(client_id, request_id)` 幂等。
+- client 支持 `ALL/SELECTED` 机构授权，不物理删除，不做应用层限流。
+- 本地账号为简单同权限管理员，不建设 RBAC。
+- 告警保留最小事件和投递历史，实施优先级最低。
+- Quartz JDBC JobStore 是可重建投影，任务当前配置是唯一调度事实。
 
 ---
 
@@ -275,79 +159,71 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 
 ### 工作包 1：采集链路、任务、校验覆盖和水位
 
-状态：**物理字段第一轮已完成，等待一致性 Review 收口。**
+状态：**物理字段已完成，正在做一致性收口。**
 
-已完成文档：
+已完成：
 
 ```text
-spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+collection_route
+collection_route_version
+collection_route_version_institution
+route_field_resolution
+sync_task
+task_validation_policy
+task_watermark
 ```
 
-已覆盖：
+已确认：
 
-- [x] `collection_route`
-- [x] `collection_route_version`
-- [x] `collection_route_version_institution`
-- [x] `route_field_resolution`
-- [x] `sync_task`
-- [x] `sync_task_version`
-- [x] `task_validation_policy`
-- [x] `task_watermark`
-- [x] 删除预检策略层级
-- [x] 任务可通过新版本更换链路
-- [x] 当前覆盖机构唯一事实
-- [x] 正式同步校验不可关闭
-- [x] 删除行数容差和校验回看窗口
-- [x] 字段、外键、唯一约束和查询索引第一轮设计
+- [x] 删除独立 `collection_route_institution`。
+- [x] 删除预检策略层级。
+- [x] 任务可直接更换链路。
+- [x] 任务修改覆盖原任务，不建立 `sync_task_version`。
+- [x] 删除 `task_watermark.task_version_id`。
+- [x] 校验不可关闭，无容差、无校验回看。
 
-待一致性检查：
+待确认：
 
-- [ ] 统一任务类型、写入模式和全量/增量枚举名称。
+- [ ] 活动执行期间是否允许编辑当前任务配置。
+
+待机械清理：
+
+- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
 - [ ] 核对所有复合外键的父唯一约束。
-- [ ] 核对链路逻辑删除、覆盖机构移除和任务当前版本引用规则。
-- [ ] 核对任务版本、链路版本和数据集版本的同父关系。
+- [ ] 统一任务和写入枚举名称。
 
 ### 工作包 2：执行、批次、预检、校验和 Outbox
 
-状态：**物理字段第一轮已完成，等待一致性 Review 收口。**
+状态：**物理字段第一轮完成，继续一致性收口。**
 
-已完成文档：
+已完成：
 
 ```text
-spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
-spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
-spec/P0_LOAD_BATCH_MODEL_REVIEW.md
-spec/P0_DORIS_LABEL_PROBE_REVIEW.md
+sync_execution
+load_batch
+precheck_run
+precheck_issue_summary
+validation_run
+message_outbox
 ```
 
-已覆盖：
+已确认：
 
-- [x] `sync_execution`
-- [x] `load_batch`
-- [x] `precheck_run`
-- [x] `precheck_issue_summary`
-- [x] `validation_run`
-- [x] `message_outbox`
-- [x] 已接受运行请求的技术前检失败保留执行历史
-- [x] 首次全量和后续增量使用两条独立执行
-- [x] 删除 `load_batch.phase`，批次类型由父执行范围推导
-- [x] 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存
-- [x] 批次只保存实际 Keyset 复合游标，不作为跨执行恢复检查点
-- [x] 删除 `load_batch.probe_result`，统一使用 DFETL 批次状态和 Doris 原始状态
-- [x] Label 始终 `UNKNOWN` 或持续不可查询时明确失败，不自动重投
-- [x] Label 失败保存清晰错误码、错误上下文和人工处理建议
-- [x] 成功收尾短事务
-- [x] 日志全文不进入 PostgreSQL
+- [x] 已接受运行请求的技术前检失败保留 `FAILED sync_execution`。
+- [x] 首次全量和后续增量为独立执行。
+- [x] 删除批次 `phase/time_lower/time_upper/probe_result`。
+- [x] Label 不明确只探测原事务，超时失败，不自动重投。
+- [x] Label 失败信息必须清晰。
+- [x] 日志全文不进入 PostgreSQL。
 
 待一致性检查：
 
-- [ ] 核对唯一 `SYNC_GATE validation_run` 与强制校验规则。
-- [ ] 核对 Outbox、执行、任务版本、数据集和机构身份一致性。
-- [ ] 与删除快照控制对象完成双向外键闭环。
+- [ ] 从执行、校验、Outbox 删除 `task_version_id`，改用执行快照。
+- [ ] 核对唯一 `SYNC_GATE validation_run` 与执行快照一致性。
+- [ ] 核对 Outbox、执行、数据集和机构身份一致性。
+- [ ] 与删除快照控制对象完成外键闭环。
 
-### 工作包 3：全表外键、索引、状态和文档一致性检查
+### 工作包 3：全表外键、索引、状态和文档一致性
 
 状态：**正在进行。**
 
@@ -361,23 +237,12 @@ spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 
 - [ ] 形成唯一 P0 PostgreSQL 表清单。
 - [ ] 标记 Quartz 标准表、Doris 技术表和不需要数据库表的能力。
-- [ ] 形成完整外键与删除行为矩阵。
-- [ ] 检查每个父外键列的反向查询索引。
-- [ ] 检查所有业务唯一约束和部分唯一索引。
-- [ ] 检查同任务活动执行、同链路活动预检、同任务活动删除快照等并发约束。
+- [ ] 形成完整外键和删除行为矩阵。
+- [ ] 检查所有父外键列的反向索引。
+- [ ] 检查全部业务唯一约束和并发部分唯一索引。
 - [ ] 统一任务、执行、批次、预检、校验、Outbox、告警、外部 API 和删除快照枚举。
-- [x] 修正“正式同步校验可关闭”冲突：正式同步至少执行 `ROW_COUNT`。
-- [x] 修正“正式同步允许行数容差”冲突：源目标行数必须严格相等。
-- [x] 修正“正式同步校验回看窗口”冲突：删除 `lookback_hours`。
-- [x] 修正“预检三级策略”冲突：只保存和展示预检事实。
-- [x] 修正“任务固定 route_id”冲突：当前链路由任务当前版本推导。
-- [x] 修正“首次全量立即补充增量”冲突：首次全量与后续增量为独立执行。
-- [x] 修正“批次重复保存 phase”冲突：批次类型从父 `execution_scope` 推导。
-- [x] 修正“批次重复保存时间窗口”冲突：业务范围只保存在父执行，批次只保存复合游标。
-- [x] 修正“Label 三套状态和不明确结果自动重投”冲突：只探测原 Label，`UNKNOWN` 超时后失败并提供清晰错误。
-- [ ] 核对业务基线、目标模型、各批物理字典、历史 SQL 审计和 Java 查询路径。
-- [ ] 清理 `TARGET_METADATA_MODEL.md` 和其他文档中的旧表名、旧状态及旧语义。
-- [ ] 补回并核对使用文档导航、路由和实施任务。
+- [ ] 清理目标模型和物理字典中的旧表名、旧状态和废止字段。
+- [ ] 核对业务基线、历史 SQL 审计和旧 Java 查询路径。
 
 ### 工作包 4：阶段 1 最终 Review 与签字
 
@@ -393,445 +258,138 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] Doris 业务表和技术表清单明确。
 - [ ] 已废止旧表和功能清单明确。
 - [ ] 外键、删除行为、唯一性和并发约束无冲突。
-- [ ] 所有不可变版本边界明确。
 - [ ] 敏感字段、密钥和审计边界明确。
 - [ ] 应用层约束与数据库约束边界明确。
-- [ ] `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TARGET_METADATA_MODEL.md`、`LEGACY_SQL_AUDIT.md`、功能对齐文档和本任务清单一致。
-- [ ] 没有未决业务问题。
+- [ ] 所有文档一致，没有未决业务问题。
 - [ ] 用户明确确认“目标元数据模型 Review 通过，允许进入阶段 2”。
 
 ---
 
-## 3. 后续实施任务
+## 3. 后续实施里程碑
 
 ## M0：工程、数据库与启动基线
 
-### [P0][INF-001] 建立 JDK 21 / Maven 可运行基线
-
-- [x] 固定 JDK 21 和 Maven Wrapper。
-- [x] `./mvnw -DskipTests package` 已通过。
-- [ ] 在新独立 PostgreSQL 上完成真实启动。
-- [ ] 验证 Actuator 健康检查。
-- [ ] 验证关闭和重启。
-
-### [P0][DB-001] 建立 Flyway 迁移机制
+### [P0][DB-001] Flyway 和新空库
 
 阶段 1 签字后执行：
 
-- [ ] 引入 Flyway PostgreSQL 依赖。
+- [ ] 引入 Flyway PostgreSQL。
 - [ ] 扫描目录固定为 `server/src/main/resources/db/migration`。
 - [ ] `baseline-on-migrate=false`，生产禁止 `clean`。
 - [ ] 生成干净的 `V1__baseline.sql`。
 - [ ] V1 包含全部 P0 表、约束、索引和 Quartz 标准表。
-- [ ] 不写固定管理员密码和环境连接凭据。
-- [ ] 旧 SQL 隔离到非扫描目录。
-- [ ] 提供迁移前检查、迁移后验证和前向修复说明。
-- [ ] 在独立空库执行 `migrate/validate`。
+- [ ] 空库执行 `migrate/validate` 并完成 Spring 启动、关闭和重启验证。
 
-### [P0][DB-003] 完成 P0 物理表字典
+### [P0][CFG-001] 运行配置
 
-- [x] 支撑对象第一轮字典。
-- [x] 机构、实例、源/目标数据源第一轮字典。
-- [x] 数据集、字段合同和策略第一轮字典。
-- [x] 链路、任务、校验覆盖和水位第一轮字典。
-- [x] 执行、批次、预检、校验和 Outbox 第一轮字典。
-- [x] 删除快照 PostgreSQL 控制对象和 Doris 技术表第一轮字典。
-- [ ] 全表一致性复核。
-- [ ] 阶段 1 最终签字。
-
-### [P0][CFG-001] 运行配置和启动文档
-
-- [ ] 列出 PostgreSQL、Doris、RabbitMQ 和 SeaTunnel 依赖。
-- [ ] 明确所有敏感环境变量。
+- [ ] 明确 PostgreSQL、Doris、RabbitMQ、SeaTunnel 依赖和敏感环境变量。
 - [ ] 区分开发、测试和生产配置。
-- [ ] 缺少必要配置时明确失败，不使用危险默认值。
 - [ ] 首个管理员通过部署 Secret、环境变量或一次性命令初始化。
-
-### [P1][DB-002] 最终替换和配置迁移
-
-- [ ] 盘点需要迁移的机构、数据源、数据集、链路、任务、策略和账号配置。
-- [ ] 默认不迁移旧执行历史、Quartz 状态、行级预检、行级校验、每键快照和已废止对象。
-- [ ] 编写显式、可审计、可重复演练的配置转换程序。
-- [ ] 使用脱敏克隆库演练。
-- [ ] 制定暂停旧调度、冻结配置、迁移、核对、切流和回退手册。
 
 ## M1：核心领域模型
 
-### [P0][SRC-001] 业务系统实例和数据源关系
-
-- [ ] 实现 `institution`、`business_system_instance`、`source_datasource`、`target_datasource` 和 FE 端点。
-- [ ] 实现实例—机构、实例—源数据源多对多。
-- [ ] 移除源数据源单机构归属。
-- [ ] 实现启停、连接测试、引用检查和审计。
-- [ ] 列表和详情使用数据库分页查询。
-
-### [P0][DATASET-001] 数据集同步和不可变版本
-
-- [ ] 实现人工同步规范库定义。
-- [ ] 规范化内容并计算 Hash。
-- [ ] Hash 未变化只更新同步结果。
-- [ ] Hash 变化插入数据集版本和完整字段集合。
-- [ ] 权威来源消失时标记 `VOID`。
-- [ ] 不自动迁移链路、任务或 Doris。
-
-### [P0][ROUTE-001] 采集链路和字段解析
-
-- [ ] 实现链路身份、不可变版本和当前版本指针。
-- [ ] 实现版本化覆盖机构集合。
-- [ ] 实现唯一标准字段解析器。
-- [ ] Reader、机构过滤、增量窗口、预检和 Checksum 复用同一解析快照。
-- [ ] 解析问题可保存和展示；正式执行时真实不可执行则失败。
-- [ ] 不提供字段重命名和 `CUSTOM_SQL`。
-
-### [P0][TASK-001] 任务身份、不可变版本和唯一性
-
-- [ ] 实现 `sync_task`、`sync_task_version`、`task_validation_policy` 和 `task_watermark`。
-- [ ] 任务身份固定为机构 + 数据集。
-- [ ] 建立未删除任务部分唯一索引。
-- [ ] 当前链路由当前任务版本推导。
-- [ ] 支持用户显式更换链路并生成新任务版本。
-- [ ] 不自动处理水位、重新全量或删除快照基线。
-- [ ] 任务暂停只控制自动调度。
-- [ ] 逻辑删除保留全部历史。
-
-### [P1][DATASET-002] 数据集服务端分页和查询
-
-- [ ] 支持编码、名称、状态、更新时间和能力筛选。
-- [ ] 字段、策略和链路使用独立批量查询，避免 N+1 和笛卡尔积。
+- [ ] 实现机构、业务系统实例、源/目标数据源和多对多关系。
+- [ ] 实现数据集同步、不可变数据集版本和字段合同。
+- [ ] 实现采集链路、链路版本和字段解析。
+- [ ] 实现可变 `sync_task`、任务校验策略和水位。
+- [ ] 删除废止的任务版本实体、Repository、DTO 和接口。
 
 ## M2：Doris 合同、预检和任务创建
 
-### [P0][DORIS-001] ODS/RAW 固定合同
+- [ ] 统一 ODS/RAW DDL 生成器。
+- [ ] 实现 Doris 实际结构核对。
+- [ ] 实现预检状态机和汇总导出。
+- [ ] 实现任务创建和直接编辑。
+- [ ] 实现执行前上下文快照和技术前检。
 
-- [ ] 统一 DDL 生成器。
-- [ ] ODS 使用精确类型、空值和 Key 模型。
-- [ ] RAW 业务字段全部为可空字符串。
-- [ ] 无主键任务只清理当前机构范围。
-- [ ] 创建共享 `_dfetl_key_snapshot`、`_dfetl_delete_diff`。
-- [ ] 普通执行只核对结构，不自动改表。
+## M3：执行、校验、删除识别和调度
 
-### [P0][PRECHECK-001] 预检事实展示和过期判断
-
-- [ ] 展示未执行、通过、有问题和已过期。
-- [ ] 绑定链路版本、源结构 Hash、字段解析 Hash 和数据集定义 Hash。
-- [ ] 不建设预检策略、覆盖和风险等级。
-- [ ] 不形成任务创建或运行门禁。
-
-### [P0][PRECHECK-002] 预检状态机和汇总
-
-- [ ] 实现待运行、提取中、校验中、已完成、失败和已取消。
-- [ ] 结果单独为通过或有问题。
-- [ ] 同链路活动运行唯一。
-- [ ] 保存字段级和组合规则级汇总。
-- [ ] 支持筛选、分页和直接导出汇总。
-- [ ] 终态 RAW 保留 1 天后清理。
-
-### [P0][TASK-002] 任务创建向导
-
-- [ ] 选择实例、链路、机构和数据集。
-- [ ] 只读展示三种标准任务组合。
-- [ ] 展示字段解析、预检事实、校验方法和消息策略。
-- [ ] 校验方法允许继承或覆盖，但校验不能关闭，也不能配置行数容差或校验回看窗口。
-- [ ] 创建任务和第一个版本使用一个事务。
-- [ ] 并发冲突返回已有任务。
-
-### [P0][TASK-003] 执行前上下文和技术前检
-
-- [ ] 先校验请求身份、权限、参数和活动执行。
-- [ ] 通过后创建 `PENDING sync_execution` 并固定快照。
-- [ ] 检查源连接、链路合同、目标 Doris 和必要配置。
-- [ ] 技术前检失败保留 `FAILED sync_execution`。
-- [ ] 预检事实只展示，不作为技术门禁。
-
-### [P1][TASK-005] Reader 固定单并发
-
-- [ ] 服务端强制 Reader 并发 1。
-- [ ] 前端不提供并发编辑。
-- [ ] Fetch Size 独立配置并进入任务版本。
-
-## M3：同步执行、校验、删除识别和调度
-
-### [P0][TASK-004] 任务执行操作
-
-- [ ] 实现运行、暂停、恢复、取消、重新采集、数据补采、重置水位和逻辑删除。
-- [ ] 重新采集和数据补采使用独立命令。
-- [ ] 重新采集从范围起点和第 1 批读取。
-- [ ] 清空重建必须展示范围、二次确认和审计。
-- [ ] 数据补采不修改正式水位。
-- [ ] 所有操作防止同任务并发执行。
-
-### [P1][EXEC-001] 执行成功收尾一致性
-
-- [ ] 父执行保存整次固定时间或主键范围；载入批次只保存实际复合游标、Doris Label 和最终状态。
-- [ ] Doris 响应不明确时进入 `PROBING`，只查询原 Label，不自动重新提交。
-- [ ] 删除 `load_batch.probe_result`，统一使用 DFETL 批次状态和 Doris 原始事务状态。
-- [ ] 只有 `doris_state=VISIBLE` 且拒绝行数为 0，批次才能进入 `SUCCEEDED`。
-- [ ] Label 在限定时间内始终 `UNKNOWN`、持续不可查询或长期未达到 `VISIBLE` 时，批次和执行明确失败。
-- [ ] Label 失败错误至少包含批次号、Label、最后状态、探测次数、失败原因和处理建议。
-- [ ] 不建立检查点和执行对账表。
-- [ ] 首次全量和后续增量分别创建独立 `sync_execution`；同一执行不得混合全量和增量批次。
-- [ ] `load_batch` 不保存 `phase`，批次类型从父 `sync_execution.execution_scope` 推导。
-- [ ] `load_batch` 不保存 `time_lower/time_upper`；增量和按时间补采批次使用“增量时间值 + 联合业务主键”复合游标。
-- [ ] 批次游标只用于诊断和追溯，不作为下一次执行的恢复位置。
-- [ ] 首次全量成功后以开始时间 `T0` 建立初始水位；等待下一次正常调度再执行增量。
-- [ ] 成功收尾短事务锁定执行和水位。
-- [ ] 必须确认全部批次 `SUCCEEDED + VISIBLE`、唯一同步门禁校验通过、拒绝行数为 0。
-- [ ] 更新执行成功、推进或创建水位并按需插入唯一 Outbox。
-- [ ] 事务内不调用 Doris 或 MQ。
-
-### [P0][VALID-001] 按最终配置执行校验
-
-- [ ] 每次正式同步创建唯一 `SYNC_GATE validation_run`。
-- [ ] 最低方法为严格相等的 `ROW_COUNT`，不能关闭。
-- [ ] `ROW_COUNT` 差异 1 行也必须失败。
-- [ ] `ROW_COUNT_CHECKSUM` 同时验证行数严格相等和全部业务字段 Checksum。
-- [ ] 不静默降级。
-- [ ] 校验失败或不一致时执行失败且水位不推进。
-
-### [P0][VALID-002] 校验配置继承和覆盖
-
-- [ ] 全局、数据集、任务三级只处理 `validation_method`。
-- [ ] 三张策略表均不保存 `enabled`、`row_tolerance` 或 `lookback_hours`。
-- [ ] 前端和 API 不展示关闭开关、容差配置或校验回看窗口。
-- [ ] 运行中执行使用启动时快照。
-
-### [P0][VALID-003] 全量、修改和删除校验工作流
-
-- [ ] 三类校验独立保存运行历史。
-- [ ] 查看与运行按钮语义分离。
-- [ ] 小型差异汇总在 `validation_run.difference_summary`。
-- [ ] 直接导出汇总，不建立行级差异表和异步导出任务。
-
-### [P1][VALID-004] 人工重新校验
-
-- [ ] 不自动延迟复检。
-- [ ] 人工重新校验复用原执行快照和范围，或显式指定治理校验范围。
-- [ ] 新建独立运行，不覆盖历史失败记录。
-
-### [P1][VALID-005] 定期联合主键快照删除识别
-
-- [ ] 快照控制元数据进入 PostgreSQL。
-- [ ] 大规模键和差异进入 Doris 技术表。
-- [ ] 失败候选不切换基线。
-- [ ] 差异在 Doris anti join。
-- [ ] 实际应用删除先 dry-run、二次确认和审计。
-
-### [P0][SCHED-001] Quartz 可重建投影
-
-- [ ] 任务和当前版本是唯一调度事实。
-- [ ] 暂停、无 Cron 或逻辑删除时删除 Quartz Job/Trigger。
-- [ ] 启动和周期对账重建投影。
-- [ ] misfire 固定跳过。
-- [ ] JobDataMap 只保存 taskId。
-- [ ] 首次全量运行期间错过的计划不补跑；等待下一次正常计划产生增量执行。
-- [ ] 真实并发由 `sync_execution` 部分唯一索引保证。
+- [ ] 实现执行状态机和启动快照。
+- [ ] 实现 Keyset 分页、`load_batch`、确定性 Label 和探测。
+- [ ] 实现首次全量、正常增量、重新采集和数据补采。
+- [ ] 实现严格 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
+- [ ] 实现水位原子提交和唯一 Outbox。
+- [ ] 实现 Doris 删除快照技术表和人工应用流程。
+- [ ] 实现 Quartz 投影重建和并发保护。
 
 ## M4：外部 API 和前端真实集成
 
-### [P0][API-001] 外部任务 API
-
-- [ ] 实现 HMAC 独立安全链。
-- [ ] 实现 client 管理和 `ALL/SELECTED` 机构授权。
-- [ ] 实现批量 targets 和旧请求适配。
-- [ ] 实现 `BEST_EFFORT/ALL_OR_NOTHING`。
-- [ ] 所有写操作按 client + requestId 幂等。
-- [ ] 外部调用统一进入任务领域服务。
-- [ ] 不实现应用层限流。
-
-### [P0][WEB-001] 前端 API 层
-
+- [ ] 实现 HMAC、client 管理、机构授权和所有写操作幂等。
 - [ ] 移除生产页面 Mock 状态。
-- [ ] 建立统一鉴权、错误码、超时、取消和响应解析。
-- [ ] 敏感信息只显示掩码。
-
-### [P0][WEB-002] 真实 URL 路由
-
-- [ ] 为机构、数据源、数据集、链路、任务、预检、监控、校验、设置和使用文档建立稳定路由。
-- [ ] 支持刷新、前后退、书签和深链。
-
-### [P0][WEB-003] 数据源管理
-
-- [ ] 源/目标数据源新增、编辑、启停、测试和删除接入真实 API。
-- [ ] Doris 支持一个或多个 FE 端点。
-- [ ] 不展示环境标识。
-
-### [P0][WEB-004] 采集链路操作
-
-- [ ] 链路新增、编辑、删除和引用检查接入真实 API。
-- [ ] 字段解析只读展示。
-- [ ] 数据同步/预检跳转携带完整上下文。
-
-### [P1][WEB-005] 表格、筛选和分页
-
-- [ ] 列表使用服务端分页。
-- [ ] 总数、筛选和排序准确。
-- [ ] 稳定列宽、冻结操作列和独立滚动区域。
-
-### [P1][WEB-006] 空按钮和错误上下文
-
-- [ ] 建立页面—按钮—接口—成功—失败矩阵。
-- [ ] 修复错误复用首条或上次任务上下文。
-- [ ] 保留使用文档菜单、路由和 `/api/docs/**`。
-- [ ] 所有危险操作二次确认。
+- [ ] 建立稳定 URL、统一前端 API 层和真实分页。
+- [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
 
 ## M5：消息、安全和运维
 
-### [P1][MSG-001] RabbitMQ Outbox 发布器
-
-- [ ] 仅实现 RabbitMQ。
-- [ ] 每执行最多一条 Outbox。
-- [ ] 首次全量执行发布全量范围；后续增量执行发布各自增量范围。
-- [ ] 支持扫描、抢占、重试、死信、异常恢复和人工重发。
-- [ ] 不保存业务 payload、分页进度和逐条投递明细。
-- [ ] 严格保持旧消息协议。
-
-### [P1][SEC-001] 账号、敏感信息和审计
-
-- [ ] 实现简单账号管理，不建设 RBAC。
-- [ ] 防止停用当前账号和最后一个启用账号。
-- [ ] 停用或重置密码撤销 Refresh Token。
-- [ ] 所有业务写操作记录成功和失败审计。
-- [ ] 密码、密钥、签名和完整连接凭据不得进入审计或普通日志。
-
-### [P1][OPS-001] 监控、日志和告警
-
-- [ ] 任务监控展示真实执行、批次、校验和消息状态。
-- [ ] 首次全量与后续增量作为两次独立执行展示。
-- [ ] 批次详情展示 DFETL 状态、Doris 原始状态、Label、事务 ID、探测次数、最近探测时间和清晰失败原因。
-- [ ] 日志中心按 task/execution/engine job 查询和下载，不把全文写入 PostgreSQL。
-- [ ] 告警渠道和规则继续保留。
-- [ ] 命中规则生成 `alert_event`，每渠道生成 `alert_delivery`。
-- [ ] 告警实现优先级最低。
-
-### [P1][ARCH-001] 前端结构拆分
-
-- [ ] 按领域拆分页面、组件、API 和类型。
-- [ ] Mock 仅保留为开发 Fixture。
-- [ ] 复用公共表格、筛选、状态和确认组件。
+- [ ] 实现 RabbitMQ Outbox 扫描、重试、死信和人工重发。
+- [ ] 实现简单管理员账号和成功/失败审计。
+- [ ] 实现日志中心和任务监控。
+- [ ] 最后实现告警渠道、规则、事件和投递历史。
 
 ## M6：主流程稳定后补测试
 
-### [P1][TEST-001] 数据集和链路测试
-
-- [ ] 首次同步、重复同步、定义变化和作废恢复。
-- [ ] 多实例、多数据源和多机构覆盖。
-- [ ] 字段解析缺失、额外、大小写重名和类型不支持。
-- [ ] 链路覆盖机构版本化和当前任务引用保护。
-
-### [P1][TEST-002] 任务创建和执行测试
-
-- [ ] 未预检、有问题和过期时仍可创建/运行。
-- [ ] 机构 + 数据集并发创建唯一。
-- [ ] 任务通过新版本更换链路。
-- [ ] 无效请求不创建执行；已接受请求前检失败保留 FAILED 执行。
-- [ ] 第一次运行只创建独立首次全量执行，并在成功后以开始时间建立初始水位。
-- [ ] 首次全量完成后不立即补充增量；下一次正常调度创建独立增量执行。
-- [ ] 首次全量运行期间错过的计划触发不补跑。
-- [ ] 首次全量和增量的执行、批次、校验、日志和 Outbox 相互独立。
-- [ ] 批次类型由父执行范围推导，数据库和 API 中不存在 `load_batch.phase`。
-- [ ] 整次时间或主键范围只保存在父执行，数据库和 API 中不存在 `load_batch.time_lower/time_upper`。
-- [ ] 增量和按时间补采批次使用规范的“增量时间值 + 联合业务主键”复合游标。
-- [ ] 数据库、Java、OpenAPI 和 Vue 类型中不存在 `load_batch.probe_result`。
-- [ ] `Publish Timeout`、客户端超时和响应无法确认时只探测原 Label，不自动重投。
-- [ ] Label 从 `PREPARE/COMMITTED` 变为 `VISIBLE` 后批次才成功。
-- [ ] Label 为 `ABORTED` 时批次和执行失败。
-- [ ] Label 在限定时间内始终 `UNKNOWN` 或持续不可查询时，批次和执行失败且不推进水位。
-- [ ] Label 失败响应能够展示批次号、Label、最后状态、探测次数、失败原因和建议动作。
-- [ ] 人工重新采集前再次核实旧 Label，旧事务未确定时禁止盲目重放。
-- [ ] 中间批次失败后重新采集从第 1 批开始，不使用旧批次游标恢复。
-- [ ] 补采不修改水位。
-- [ ] 外部 API 批量、幂等和机构授权。
-- [ ] Quartz 投影重建和并发保护。
-
-### [P1][TEST-003] 校验和一致性测试
-
-- [ ] 每次正式同步至少执行 `ROW_COUNT`，任何层级均不能关闭。
-- [ ] 源目标行数差异 1 行也必须失败，不存在绝对或百分比容差。
-- [ ] 正式校验不存在 `lookback_hours` 配置，只校验本次执行精确范围。
-- [ ] 行数相同、内容不同的 Checksum 必须失败。
-- [ ] 无业务主键数据集固定 ROW_COUNT。
-- [ ] 校验方法继承和覆盖只影响后续新执行。
-- [ ] 校验不一致或失败时水位不推进。
-- [ ] 成功收尾重复调用不重复推进水位或创建 Outbox。
-- [ ] ODS/RAW 固定合同。
-- [ ] 联合业务主键快照、基线切换和删除差异。
+- [ ] 数据集、链路、任务唯一性和任务直接编辑。
+- [ ] 执行快照不受后续任务修改影响。
+- [ ] 首次全量与后续增量独立运行。
+- [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
+- [ ] 校验严格相等、不允许关闭、不允许容差。
+- [ ] 水位、Outbox 和成功收尾幂等。
+- [ ] 外部 API 批量、幂等和授权。
+- [ ] Quartz 投影重建。
 
 ---
 
 ## 4. 已确认决策索引
 
-| 编号 | 已确认主题 |
+| 编号 | 主题 |
 | --- | --- |
-| D-001 | 单医共体部署、业务系统实例及多对多资源模型 |
-| D-002 | 数据集定义变化采用人工维护流程 |
-| D-003 | 预检只保存和展示事实，不建立策略层级 |
-| D-004 | 第一阶段 Reader 固定单并发 |
-| D-005 | Checksum 范围与校验失败不推进水位 |
-| D-006 | 校验方法下一次执行生效；执行合同生成任务新版本 |
-| D-007 | 删除识别使用 Doris 主键快照和差异技术表 |
-| D-008 | 共享业务系统的多机构数据范围 |
-| D-009 | 源视图机构代码直接等于机构主数据编码 |
-| D-010 | 重新采集与数据补采为两个独立命令 |
-| D-011 | Doris ODS/RAW 固定存储合同 |
-| D-012 | 任务按机构 + 数据集唯一且单机构归属 |
-| D-013 | 三种标准任务组合和无主键机构范围清理 |
-| D-014 | 正式同步至少执行 ROW_COUNT，不允许关闭 |
-| D-015 | 无业务主键数据集固定使用 ROW_COUNT |
-| D-016 | 标准任务不支持 CUSTOM_SQL |
-| D-017 | 字段只允许大小写解析，不支持重命名 |
-| D-018 | 新旧系统及 PostgreSQL 数据库完全隔离 |
-| D-019 | P0 核心目标模型第一批收敛 |
-| D-020 | 简单管理员账号和成功/失败操作审计 |
-| D-021 | 最小告警历史，实施优先级最低 |
-| D-022 | 外部任务 API 属于 P0，不做应用层限流 |
-| D-023 | 外部 API 批量、幂等、授权和 client 生命周期 |
-| D-024 | Quartz JDBC JobStore 为可重建投影 |
-| D-025 | 删除快照和差异采用 PostgreSQL/Doris 分层存储 |
-| D-026 | 链路覆盖机构版本化，任务当前版本引用保护 |
-| D-027 | 已接受运行请求技术前检失败保留 FAILED 执行 |
-| D-028 | 正式同步校验不可关闭，唯一同步门禁校验必须通过 |
-| D-029 | 正式同步行数严格相等，删除所有行数容差配置 |
-| D-030 | 删除正式同步校验 `lookback_hours`，门禁只使用本次精确范围 |
-| D-031 | 首次全量和后续定时增量为两次独立执行，不立即补充增量 |
-| D-032 | 删除 `load_batch.phase`，批次类型由父执行范围推导 |
-| D-033 | 删除 `load_batch.time_lower/time_upper`，整次范围由父执行保存，批次只保存复合游标 |
-| D-034 | Doris 返回不明确时只探测原 Label；`UNKNOWN` 超时后失败、不自动重投，并保存清晰错误信息 |
-
-详细结论分散在以下权威文档：
-
-```text
-spec/PRODUCT_AND_BUSINESS_DECISIONS.md
-spec/P0_SUPPORT_OBJECT_REVIEW.md
-spec/EXTERNAL_API_REVIEW.md
-spec/QUARTZ_JOBSTORE_REVIEW.md
-spec/DELETE_SNAPSHOT_MODEL_REVIEW.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY*.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
-spec/P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md
-spec/P0_LOAD_BATCH_MODEL_REVIEW.md
-spec/P0_DORIS_LABEL_PROBE_REVIEW.md
-spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
-```
+| D-001 | 单医共体部署和独立新 PostgreSQL |
+| D-002 | 机构扁平管理，业务系统实例多对多 |
+| D-003 | 数据集定义人工同步和不可变数据集版本 |
+| D-004 | 链路覆盖机构版本化 |
+| D-005 | 字段只允许大小写解析，不支持重命名和 CUSTOM_SQL |
+| D-006 | 任务按机构 + 数据集唯一 |
+| D-007 | 三种标准任务组合 |
+| D-008 | Reader 第一阶段固定单并发 |
+| D-009 | 预检只保存和展示事实，不作门禁 |
+| D-010 | 正式同步校验不可关闭，至少 ROW_COUNT |
+| D-011 | 行数严格相等，无容差 |
+| D-012 | 删除正式校验 lookback_hours |
+| D-013 | 首次全量和后续增量为独立执行 |
+| D-014 | 失败不自动重试、不自动暂停任务 |
+| D-015 | 重新采集和数据补采为独立命令 |
+| D-016 | 删除识别使用 Doris 技术表保存大规模键 |
+| D-017 | 消息只使用 RabbitMQ，配置只在数据集级 |
+| D-018 | 每执行最多一条小型 Outbox |
+| D-019 | 外部任务 API 属于 P0，不做应用层限流 |
+| D-020 | 简单管理员账号，不建设 RBAC |
+| D-021 | 最小告警历史，优先级最低 |
+| D-022 | Quartz JobStore 是可重建投影 |
+| D-023 | 删除 `load_batch.phase` |
+| D-024 | 删除 `load_batch.time_lower/time_upper` |
+| D-025 | 删除 `load_batch.probe_result` |
+| D-026 | Label 不明确只探测原事务，UNKNOWN 超时后失败 |
+| D-027 | Label 失败信息必须清晰、可排查 |
+| D-028 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` |
+| D-029 | 执行、校验、Outbox、水位删除 `task_version_id`，历史由执行快照追溯 |
 
 ---
 
 ## 5. 完成定义
 
-一个实施任务只有同时满足以下条件才能标记完成：
+阶段 1 完成必须满足：
 
-- 变更范围与任务编号一致，没有夹带未确认的后续设计。
-- Java 生产代码通过 `./mvnw -DskipTests package`。
-- 涉及数据库时，实体、查询、约束、索引和不可变 Flyway SQL 同步更新。
-- 新系统独立空库可以完成全部迁移和 `validate`。
-- 已存在上一正式版本后，同时验证上一版本升级路径。
-- 前端使用真实接口，不以 Toast 或临时 Mock 代替状态更新。
-- 成功、失败、加载、重复请求、权限和人工恢复路径均有明确行为。
-- 危险操作具备影响范围展示、二次确认和成功/失败审计。
-- 敏感信息不进入响应、审计和普通日志。
-- 文档与实际实现、配置和验证结果一致。
-
-阶段 1 的完成定义额外要求：
-
-- 所有 P0 表、关系、字段、状态、外键、唯一约束和索引无冲突；
+- 所有 P0 表、字段、外键、唯一约束和索引无冲突；
 - 不存在仍引用旧表、旧状态或废止功能的目标设计；
-- 用户明确签字后才允许创建 Flyway V1 和进入阶段 2。
+- 任务可变配置与执行快照边界清晰；
+- 文档一致；
+- 用户明确签字后才允许创建 Flyway V1。
+
+后续实施任务完成还必须满足：
+
+- Java 构建通过；
+- 空库迁移和启动通过；
+- 前端使用真实接口；
+- 成功、失败、重复请求、并发和人工恢复路径明确；
+- 危险操作具备二次确认和审计；
+- 敏感信息不进入响应、审计和普通日志。
