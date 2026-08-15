@@ -53,6 +53,7 @@ spec/TASKS.md
 | C-015 | 删除 `dataset_validation_policy`；数据集级校验覆盖合并为 `standard_dataset.validation_method_override`。 | `P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md` |
 | C-016 | 删除 `global_validation_policy`；全局默认使用注册系统设置 `validation.default_method`。 | `P0_GLOBAL_VALIDATION_SETTING_REVIEW.md` |
 | C-017 | 同一任务的同步执行与独立人工/治理校验互斥；`SYNC_GATE` 除外。 | `P0_TASK_OPERATION_EXCLUSION_REVIEW.md` |
+| C-018 | 同一任务最多一条活动独立校验；使用部分唯一索引兜底。 | `P0_INDEPENDENT_VALIDATION_CONCURRENCY_REVIEW.md` |
 
 ## 3. 当前任务与校验配置模型
 
@@ -157,14 +158,14 @@ ROW_COUNT
 spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
 ```
 
-## 5. 同步与独立校验互斥
+## 5. 同任务运行操作互斥
 
 同一任务固定只允许一种业务运行形态：
 
 ```text
-活动同步执行（包含自身 SYNC_GATE）
+一条活动同步执行（包含自身 SYNC_GATE）
 或
-活动独立人工/治理校验
+一条活动独立人工/治理校验
 ```
 
 活动同步状态：
@@ -187,22 +188,35 @@ AND status IN ('PENDING','RUNNING')
 
 - 活动同步存在时，独立校验直接拒绝；
 - 活动独立校验存在时，计划、人工和外部 API 同步直接拒绝；
-- `SYNC_GATE` 属于父同步执行内部流程，不受互斥限制；
+- 同一任务存在活动独立校验时，第二条独立校验直接拒绝；
+- `SYNC_GATE` 属于父同步执行内部流程，不受独立校验唯一约束限制；
 - 不同任务可以并行；
 - 冲突不排队、不等待、不补跑；
 - 统一返回 `TASK_OPERATION_ACTIVE`，包含占用对象 ID、类型、状态和处理建议；
+- 定期治理冲突只跳过本次触发，不创建 `SKIPPED validation_run`；
 - 同步启动、独立校验启动和任务编辑锁定同一条 `sync_task`，避免并发穿透。
+
+数据库并发兜底：
+
+```sql
+CREATE UNIQUE INDEX uk_validation_run_active_independent_task
+    ON validation_run (task_id)
+    WHERE trigger_type IN ('MANUAL','MANUAL_RECHECK','SCHEDULED')
+      AND status IN ('PENDING','RUNNING');
+```
 
 专项 Review：
 
 ```text
 spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
+spec/P0_INDEPENDENT_VALIDATION_CONCURRENCY_REVIEW.md
 ```
 
 ## 6. 当前已同步修正的文档
 
 ```text
 spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
+spec/P0_INDEPENDENT_VALIDATION_CONCURRENCY_REVIEW.md
 spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
 spec/TASKS.md
 ```
@@ -231,6 +245,7 @@ validation lookback_hours
 load_batch.phase/time_lower/time_upper/probe_result
 任务身份可修改描述
 允许同步和独立校验同时运行的旧描述
+允许同任务多条独立校验并发的旧描述
 ```
 
 这些属于已确认结论的机械同步，不重新讨论。
@@ -240,7 +255,7 @@ load_batch.phase/time_lower/time_upper/probe_result
 下一项讨论：
 
 ```text
-同一任务是否允许同时存在两条活动独立校验运行？
+任务存在活动独立校验时，是否允许修改任务当前配置？
 ```
 
 确认后继续：
