@@ -73,36 +73,23 @@ collection_route.current_version_id
 - 删除 `sync_task.current_version_id` 及全部 `task_version_id` 引用。
 - 用户可以修改当前链路、数据集合同版本、读取参数和调度配置。
 - 存在 `PENDING/RUNNING/LOADING/VALIDATING sync_execution` 时，禁止修改任务配置。
-- 编辑被活动同步执行拒绝时返回 `TASK_EXECUTION_ACTIVE`，并展示执行 ID、状态和处理建议。
-- 活动独立校验不阻止任务普通配置编辑；当前校验继续使用启动时快照。
-- 校验启动与任务编辑同时发生时，通过短事务锁确定本次校验使用编辑前或编辑后的完整配置。
+- 编辑被活动同步执行拒绝时返回 `TASK_EXECUTION_ACTIVE`，并展示执行 ID、状态和建议。
+- 活动独立校验不阻止任务普通配置编辑；当前校验继续使用启动快照。
+- 校验启动与任务编辑同时发生时，通过短事务锁确定编辑前或编辑后的完整快照。
 - 尝试修改机构或数据集时返回 `TASK_IDENTITY_IMMUTABLE`。
-- 执行启动与任务编辑必须串行化，不建立待生效配置或双配置状态。
 - 系统不替用户判断换链路后是否应重置水位、重新全量或处理删除快照基线。
 - 历史执行和历史校验通过各自启动快照追溯；任务修改历史通过 `audit_log` 追溯。
-- 任务暂停只控制自动调度，暂停后仍可人工运行；暂停和取消当前执行是独立操作。
+- 任务暂停只控制自动调度；暂停和取消当前执行是独立操作。
 
 ### 1.4 校验覆盖存储
 
-任务级覆盖直接保存：
-
 ```text
+system_setting[validation.default_method]
+standard_dataset.validation_method_override
 sync_task.validation_method_override
 ```
 
-数据集级覆盖直接保存：
-
-```text
-standard_dataset.validation_method_override
-```
-
-全局默认保存为注册系统设置：
-
-```text
-system_setting[validation.default_method]
-```
-
-数据集和任务覆盖允许值：
+数据集和任务覆盖允许：
 
 ```text
 NULL
@@ -110,7 +97,7 @@ ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
-全局设置允许值：
+全局设置允许：
 
 ```text
 ROW_COUNT
@@ -125,18 +112,15 @@ ROW_COUNT
 
 固定规则：
 
-- 数据集和任务的 `NULL` 表示继承，不保存额外 `override_mode`。
-- 不建立 `global_validation_policy`。
-- 不建立 `dataset_validation_policy`。
-- 不建立 `task_validation_policy`。
+- `NULL` 表示继承，不保存额外 `override_mode`。
+- 不建立 `global_validation_policy/dataset_validation_policy/task_validation_policy`。
 - 任务覆盖使用 `sync_task.revision`。
 - 数据集覆盖使用 `standard_dataset.revision`。
 - 全局覆盖使用 `system_setting.revision`；设置行缺失时使用注册默认值。
-- 修改前后值进入通用 `audit_log`。
-- 数据集定义同步不得覆盖管理员保存的数据集校验覆盖。
+- 数据集定义同步不得覆盖管理员设置。
 - 无真实业务主键的数据集最终只能使用 `ROW_COUNT`。
 
-最终解析：
+解析顺序：
 
 ```text
 任务覆盖
@@ -144,15 +128,6 @@ ROW_COUNT
 → system_setting[validation.default_method]
 → 注册默认值 ROW_COUNT
 → 数据集合同能力强制
-```
-
-专项 Review：
-
-```text
-spec/P0_MUTABLE_TASK_MODEL_REVIEW.md
-spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md
-spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 ```
 
 ### 1.5 三种标准任务组合
@@ -169,7 +144,9 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 
 ### 1.6 执行、首次全量和水位
 
-- `sync_execution` 表示任务的一次真实运行，并保存启动时任务配置快照。
+- `sync_execution` 表示任务的一次真实运行，并保存启动时完整配置快照。
+- 执行直接保存任务 revision、机构、数据集版本、链路版本、读取和写入合同、校验来源及消息策略快照。
+- 不建立 `sync_task_version`，执行不保存 `task_version_id`。
 - 同一任务禁止并发执行。
 - 运行期间到达的新计划触发直接跳过，不追赶、不补跑。
 - 第一次运行创建独立 `INITIAL_FULL` 执行。
@@ -183,10 +160,10 @@ spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
 
 ### 1.7 `load_batch` 和 Doris Label
 
-- 批次类型从父 `sync_execution.execution_scope` 推导，不保存 `phase`。
-- 整次时间或主键范围保存在父执行，不保存 `time_lower/time_upper`。
-- 批次只保存实际 Keyset 复合游标，不作为跨执行恢复点。
-- 删除 `probe_result`。
+- 批次类型、整次范围、机构身份和 Checksum 协议从父执行取得。
+- 不保存 `phase/time_lower/time_upper/probe_result/institution_code/checksum_protocol_version`。
+- 批次只保存实际 Keyset 游标、行数、载荷摘要、Label 和事务状态。
+- `committed_at` 更名为 `visible_at`，只在确认 Doris `VISIBLE` 时写入。
 - DFETL 批次状态：
 
 ```text
@@ -214,28 +191,20 @@ UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
 - 不支持行数容差和校验 `lookback_hours`。
 - 有真实业务主键时可配置 `ROW_COUNT_CHECKSUM`，不允许执行中静默降级。
 - 校验失败或不一致时执行失败且水位不推进。
-- 人工重新校验生成独立 `validation_run`，不覆盖历史记录和原执行结果。
-- 同一任务的活动同步执行与独立人工/治理校验互斥；同步自身的 `SYNC_GATE` 除外。
-- 同一任务同一时间最多存在一条活动独立校验。
-- 活动独立校验范围为 `MANUAL/MANUAL_RECHECK/SCHEDULED + PENDING/RUNNING`。
-- 数据库使用 `uk_validation_run_active_independent_task` 部分唯一索引兜底。
-- 冲突时直接返回 `TASK_OPERATION_ACTIVE`，不排队、不等待、不补跑。
-- 定期治理校验发生冲突时跳过本次触发，不创建 `SKIPPED validation_run`。
-- 活动独立校验不冻结任务配置；本次校验使用启动快照，用户可以继续编辑普通任务配置。
-- 冲突响应必须包含占用对象 ID、类型、状态和处理建议。
-
-专项 Review：
-
-```text
-spec/P0_TASK_OPERATION_EXCLUSION_REVIEW.md
-spec/P0_INDEPENDENT_VALIDATION_CONCURRENCY_REVIEW.md
-```
+- 人工重新校验生成独立 `validation_run`，不覆盖历史执行结果。
+- `validation_run` 不保存 `task_version_id`；独立校验保存 `context_snapshot/range_snapshot`。
+- `difference_count` 只在能够准确计算时保存；整次 Checksum 不一致但无法推导差异行数时允许为空。
+- 同一任务同步执行与独立校验互斥；同步自身 `SYNC_GATE` 除外。
+- 同一任务同一时间最多一条活动独立校验。
+- 定期治理冲突时跳过本次触发，不创建 `SKIPPED validation_run`。
+- 活动独立校验不冻结任务配置；本次校验继续使用启动快照。
 
 ### 1.9 消息、外部 API 和支撑对象
 
 - 消息只使用 RabbitMQ，配置只存在于数据集级。
 - 每次成功执行最多创建一条小型 `message_outbox`。
-- Outbox 不保存业务 payload、分页进度和逐条消息。
+- Outbox 不保存 `task_version_id`、业务 payload、分页进度和逐条消息。
+- Outbox 关联原执行，并复制任务、数据集、机构、消息策略和发布范围快照。
 - 外部任务 API 属于 P0，支持批量 targets 和旧单机构请求。
 - 所有外部写操作按 `(client_id, request_id)` 幂等。
 - client 支持 `ALL/SELECTED` 机构授权，不物理删除，不做应用层限流。
@@ -251,17 +220,6 @@ spec/P0_INDEPENDENT_VALIDATION_CONCURRENCY_REVIEW.md
 
 状态：**物理字段已完成，正在做一致性收口。**
 
-已完成对象：
-
-```text
-collection_route
-collection_route_version
-collection_route_version_institution
-route_field_resolution
-sync_task
-task_watermark
-```
-
 已确认：
 
 - [x] 删除独立 `collection_route_institution`。
@@ -271,81 +229,55 @@ task_watermark
 - [x] 删除全部 `task_version_id`。
 - [x] 活动同步执行期间禁止修改任务配置。
 - [x] 活动独立校验期间允许修改普通任务配置。
-- [x] 校验启动与任务编辑具有明确快照边界。
 - [x] `institution_id/dataset_id` 创建后不可修改。
-- [x] 删除独立 `task_validation_policy`。
-- [x] 任务级覆盖合并为 `sync_task.validation_method_override`。
-- [x] 删除独立 `dataset_validation_policy`。
-- [x] 数据集级覆盖合并为 `standard_dataset.validation_method_override`。
-- [x] 删除独立 `global_validation_policy`。
-- [x] 全局默认改为注册设置 `validation.default_method`。
+- [x] 删除三张独立校验策略表。
+- [x] 校验覆盖合并到系统设置、数据集和任务字段。
 - [x] 删除 `task_watermark.task_version_id`。
 - [x] 校验不可关闭，无容差、无校验回看。
 
 待机械清理：
 
-- [ ] 从旧文档删除 `sync_task_version/current_version_id/task_version_id`。
-- [ ] 从旧文档删除 `global_validation_policy/dataset_validation_policy/task_validation_policy`。
-- [ ] 清理任务身份可修改及任务历史迁移描述。
-- [ ] 清理独立校验期间禁止编辑任务的旧描述。
+- [ ] 从早期文档删除旧任务版本和三张校验策略表。
+- [ ] 清理任务身份可修改、独立校验冻结任务配置等旧描述。
 - [ ] 核对所有复合外键的父唯一约束。
 - [ ] 统一任务和写入枚举名称。
 
 ### 工作包 2：执行、批次、预检、校验和 Outbox
 
-状态：**物理字段第一轮完成，继续一致性收口。**
+状态：**当前物理字典已经按可变任务模型重写，继续完成外键闭环。**
 
-已完成对象：
-
-```text
-sync_execution
-load_batch
-precheck_run
-precheck_issue_summary
-validation_run
-message_outbox
-```
-
-已确认：
+已确认并完成：
 
 - [x] 已接受运行请求的技术前检失败保留 `FAILED sync_execution`。
 - [x] 首次全量和后续增量为独立执行。
+- [x] `sync_execution` 删除 `task_version_id` 并保存启动快照。
+- [x] `validation_run` 删除 `task_version_id/policy_snapshot` 并保存校验上下文快照。
+- [x] `message_outbox` 删除 `task_version_id`，按原执行快照创建。
 - [x] 删除批次 `phase/time_lower/time_upper/probe_result`。
+- [x] 删除批次重复的 `institution_code/checksum_protocol_version`。
+- [x] `committed_at` 更名为 `visible_at`。
 - [x] Label 不明确只探测原事务，超时失败，不自动重投。
-- [x] Label 失败信息必须清晰。
 - [x] 同一任务同步执行与独立校验互斥，`SYNC_GATE` 除外。
 - [x] 同一任务最多一条活动独立校验。
-- [x] 独立校验使用部分唯一索引兜底。
 - [x] 活动独立校验不阻止任务普通配置编辑。
-- [x] 冲突不排队、不补跑，返回 `TASK_OPERATION_ACTIVE`。
 - [x] 日志全文不进入 PostgreSQL。
 
 待一致性检查：
 
-- [ ] 从执行、校验、Outbox 删除 `task_version_id`，改用执行和校验启动快照。
-- [ ] 核对唯一 `SYNC_GATE validation_run` 与执行快照一致性。
-- [ ] 核对 Outbox、执行、数据集和机构身份一致性。
-- [ ] 与删除快照控制对象完成外键闭环。
+- [ ] 完成 `delete_snapshot_run/task_delete_snapshot_state/validation_run/delete_apply_run` 外键闭环。
+- [ ] 复核 Outbox 对 `FULL/INCREMENTAL/BACKFILL` 等执行范围的发布映射。
+- [ ] 核对所有父外键列的反向索引。
 
 ### 工作包 3：全表外键、索引、状态和文档一致性
 
 状态：**正在进行。**
 
-主文档：
-
-```text
-spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
-```
-
-检查清单：
-
 - [ ] 形成唯一 P0 PostgreSQL 表清单。
 - [ ] 标记 Quartz 标准表、Doris 技术表和不需要数据库表的能力。
 - [ ] 形成完整外键和删除行为矩阵。
-- [ ] 检查所有父外键列的反向索引。
 - [ ] 检查全部业务唯一约束和并发部分唯一索引。
 - [ ] 统一任务、执行、批次、预检、校验、Outbox、告警、外部 API 和删除快照枚举。
-- [ ] 清理目标模型和物理字典中的旧表名、旧状态和废止字段。
+- [ ] 清理目标模型和早期物理字典中的旧表名、旧状态和废止字段。
 - [ ] 核对业务基线、历史 SQL 审计和旧 Java 查询路径。
 
 ### 工作包 4：阶段 1 最终 Review 与签字
@@ -388,7 +320,7 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - [ ] 明确 PostgreSQL、Doris、RabbitMQ、SeaTunnel 依赖和敏感环境变量。
 - [ ] 区分开发、测试和生产配置。
-- [ ] 注册 `validation.default_method`，默认 `ROW_COUNT`，仅接受两个已确认枚举值。
+- [ ] 注册 `validation.default_method`，默认 `ROW_COUNT`。
 - [ ] 首个管理员通过部署 Secret、环境变量或一次性命令初始化。
 
 ## M1：核心领域模型
@@ -396,10 +328,9 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 实现机构、业务系统实例、源/目标数据源和多对多关系。
 - [ ] 实现数据集同步、不可变数据集版本、字段合同和数据集级校验覆盖字段。
 - [ ] 实现采集链路、链路版本和字段解析。
-- [ ] 实现固定身份、当前配置可变的 `sync_task`、任务级校验覆盖字段和水位。
+- [ ] 实现固定身份、当前配置可变的 `sync_task`、任务级覆盖字段和水位。
 - [ ] 任务编辑接口不允许修改 `institution_id/dataset_id`。
-- [ ] 任务编辑和同步启动使用同一任务锁，活动同步执行期间返回 `TASK_EXECUTION_ACTIVE`。
-- [ ] 独立校验启动与任务编辑使用短事务锁形成完整快照，但活动独立校验不阻止后续编辑。
+- [ ] 活动同步执行期间禁止编辑；活动独立校验期间允许普通配置编辑。
 - [ ] 删除废止的任务版本和三张独立校验策略实体、Repository、DTO 与接口。
 
 ## M2：Doris 合同、预检和任务创建
@@ -408,19 +339,16 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 实现 Doris 实际结构核对。
 - [ ] 实现预检状态机和汇总导出。
 - [ ] 实现任务创建和普通配置直接编辑。
-- [ ] 实现执行前上下文快照和技术前检。
+- [ ] 实现执行和独立校验启动快照及技术前检。
 
 ## M3：执行、校验、删除识别和调度
 
-- [ ] 实现执行状态机和启动快照。
-- [ ] 实现 Keyset 分页、`load_batch`、确定性 Label 和探测。
+- [ ] 实现 `sync_execution` 受控快照字段和状态机。
+- [ ] 实现 Keyset 分页、精简 `load_batch`、确定性 Label 和探测。
+- [ ] API/Java/Vue 统一使用 `visibleAt`，不再使用误导性的 `committedAt`。
 - [ ] 实现首次全量、正常增量、重新采集和数据补采。
 - [ ] 实现严格 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
-- [ ] 启动同步和独立校验锁定同一 `sync_task`，保证两类运行互斥和无并发穿透。
-- [ ] 建立 `uk_validation_run_active_independent_task` 部分唯一索引。
-- [ ] 独立校验启动保存完整任务、链路、范围和校验方式快照。
-- [ ] 互斥冲突返回占用对象 ID、类型、状态和建议，不建立排队状态。
-- [ ] 定期治理冲突只跳过本次触发，不创建 `SKIPPED validation_run`。
+- [ ] 实现独立校验上下文快照、活动唯一索引和运行互斥。
 - [ ] 实现水位原子提交和唯一 Outbox。
 - [ ] 实现 Doris 删除快照技术表和人工应用流程。
 - [ ] 实现 Quartz 投影重建和并发保护。
@@ -432,10 +360,10 @@ spec/PHASE1_FINAL_REVIEW.md
 - [ ] 建立稳定 URL、统一前端 API 层和真实分页。
 - [ ] 接入机构、数据源、数据集、链路、任务、预检、校验和监控页面。
 - [ ] 任务编辑页面把机构和数据集作为只读身份信息。
-- [ ] 活动同步执行阻止任务编辑时展示执行 ID、状态和处理建议。
+- [ ] 活动同步执行阻止编辑时展示执行 ID、状态和建议。
 - [ ] 活动独立校验期间不禁用任务普通配置编辑。
-- [ ] 同步或第二条校验被活动独立校验阻止时，展示当前校验 ID、类型、状态和建议。
-- [ ] 系统设置页面提供受控的默认校验方式选项。
+- [ ] 批次详情展示 `status/dorisState/visibleAt` 和清晰错误信息。
+- [ ] 系统设置页面提供默认校验方式选项。
 
 ## M5：消息、安全和运维
 
@@ -446,30 +374,19 @@ spec/PHASE1_FINAL_REVIEW.md
 
 ## M6：主流程稳定后补测试
 
-- [ ] 数据集、链路、任务唯一性和普通配置编辑。
-- [ ] 任务创建后不能修改 `institution_id/dataset_id`。
-- [ ] 更换机构或数据集必须删除旧任务并新建，旧历史不迁移。
-- [ ] 活动同步执行期间全部任务配置均不可修改。
-- [ ] 活动独立校验期间任务普通配置可以修改。
-- [ ] 独立校验继续使用启动快照，结果不受后续任务修改影响。
-- [ ] 独立校验启动与任务编辑并发时，只采用完整的编辑前或编辑后配置。
-- [ ] 任务和数据集 `validation_method_override=NULL` 正确继承。
-- [ ] `validation.default_method` 设置行缺失时使用注册默认值 `ROW_COUNT`。
-- [ ] 全局设置只接受 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
-- [ ] 数据集定义同步不覆盖数据集级校验设置。
-- [ ] 无主键数据集和任务最终只能使用 `ROW_COUNT`。
-- [ ] 编辑与同步启动并发时不存在配置穿透。
-- [ ] 同任务活动同步期间独立校验不能启动。
-- [ ] 同任务活动独立校验期间计划、人工和外部 API 同步不能启动。
-- [ ] 同任务不能同时存在两条活动独立校验。
-- [ ] `MANUAL/MANUAL_RECHECK/SCHEDULED` 均受同一部分唯一索引限制。
-- [ ] `SYNC_GATE` 不被独立校验部分唯一索引错误阻止。
-- [ ] 定期治理冲突不创建运行记录、不自动补跑。
-- [ ] 不同任务仍可并行。
-- [ ] 冲突时不产生排队、等待或自动补跑记录。
-- [ ] 执行快照不受后续任务、数据集或全局设置修改影响。
+- [ ] 任务固定身份和普通配置编辑。
+- [ ] 活动同步执行期间不能编辑；活动独立校验期间可以编辑。
+- [ ] 执行和独立校验快照不受后续任务修改影响。
+- [ ] 校验启动与任务编辑并发时只采用完整的编辑前或编辑后配置。
+- [ ] 任务、数据集和全局校验方式继承正确。
 - [ ] 首次全量与后续增量独立运行。
-- [ ] Label `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
+- [ ] 执行记录不包含 `task_version_id`，历史仍可完整解释。
+- [ ] `load_batch` 不包含重复范围、机构、协议和探测字段。
+- [ ] `PREPARE/COMMITTED/VISIBLE/ABORTED/UNKNOWN` 全路径。
+- [ ] 只有 `VISIBLE + rejected=0` 批次成功并写 `visibleAt`。
+- [ ] 同步、独立校验和第二条独立校验的互斥正确。
+- [ ] `SYNC_GATE` 不被独立校验唯一索引错误阻止。
+- [ ] Checksum 不一致且无法计算差异行数时，`difference_count` 可以为空并提供汇总。
 - [ ] 校验严格相等、不允许关闭、不允许容差。
 - [ ] 水位、Outbox 和成功收尾幂等。
 - [ ] 外部 API 批量、幂等和授权。
@@ -510,14 +427,17 @@ spec/PHASE1_FINAL_REVIEW.md
 | D-027 | Label 失败信息必须清晰、可排查 |
 | D-028 | 任务修改直接覆盖 `sync_task`，删除 `sync_task_version` |
 | D-029 | 执行、校验、Outbox、水位删除 `task_version_id`，历史由运行快照追溯 |
-| D-030 | 活动同步执行期间禁止修改任务配置，不建立待生效配置 |
-| D-031 | 删除 `task_validation_policy`，任务级覆盖合并到 `sync_task.validation_method_override` |
-| D-032 | `institution_id/dataset_id` 是任务固定身份，创建后不可修改 |
-| D-033 | 删除 `dataset_validation_policy`，数据集级覆盖合并到 `standard_dataset.validation_method_override` |
-| D-034 | 删除 `global_validation_policy`，全局默认改为 `system_setting[validation.default_method]` |
-| D-035 | 同一任务同步执行与独立人工/治理校验互斥，`SYNC_GATE` 除外 |
-| D-036 | 同一任务最多一条活动独立校验，使用部分唯一索引兜底 |
-| D-037 | 活动独立校验不阻止任务普通配置编辑，当前校验继续使用启动快照 |
+| D-030 | 活动同步执行期间禁止修改任务配置 |
+| D-031 | 删除 `task_validation_policy`，任务级覆盖合并到 `sync_task` |
+| D-032 | `institution_id/dataset_id` 是任务固定身份 |
+| D-033 | 删除 `dataset_validation_policy`，数据集级覆盖合并到 `standard_dataset` |
+| D-034 | 删除 `global_validation_policy`，全局默认改为系统设置 |
+| D-035 | 同一任务同步执行与独立校验互斥，`SYNC_GATE` 除外 |
+| D-036 | 同一任务最多一条活动独立校验 |
+| D-037 | 活动独立校验不阻止任务普通配置编辑 |
+| D-038 | 执行、校验和 Outbox 使用启动快照，不再依赖任务版本 |
+| D-039 | 批次删除重复机构和协议字段，确认可见时间统一为 `visible_at` |
+| D-040 | 无法准确推导差异行数时 `validation_run.difference_count` 允许为空 |
 
 ---
 
@@ -527,14 +447,14 @@ spec/PHASE1_FINAL_REVIEW.md
 
 - 所有 P0 表、字段、外键、唯一约束和索引无冲突；
 - 不存在仍引用旧表、旧状态或废止功能的目标设计；
-- 任务固定身份、当前配置覆盖、活动同步执行编辑边界和运行快照职责清晰；
+- 任务固定身份、当前配置覆盖和运行快照职责清晰；
 - 校验覆盖层级及其存储位置唯一；
 - 同任务运行操作互斥和独立校验并发边界明确；
 - 对不影响当前结果的用户操作不增加无意义限制；
 - 文档一致；
 - 用户明确签字后才允许创建 Flyway V1。
 
-后续实施任务完成还必须满足：
+后续实施任务还必须满足：
 
 - Java 构建通过；
 - 空库迁移和启动通过；
