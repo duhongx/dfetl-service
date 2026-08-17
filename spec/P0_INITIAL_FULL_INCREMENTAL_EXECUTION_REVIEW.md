@@ -1,150 +1,108 @@
 # P0 首次全量与后续增量执行边界 Review
 
-> 状态：阶段 1 工作包 3 一致性 Review 已确认  
-> 日期：2026-08-15  
-> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 执行字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`  
-> 水位字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
-> 批次模型：`spec/P0_LOAD_BATCH_MODEL_REVIEW.md`  
-> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
+> 状态：已确认；相关旧“立即补充增量”文案清理已完成  
+> 首次确认：2026-08-15  
+> 最近收口：2026-08-17  
+> Execution 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`  
+> Watermark 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
+> Batch：`spec/P0_LOAD_BATCH_MODEL_REVIEW.md`
 
-## 1. 术语边界
-
-必须区分长期任务和一次运行：
+## 1. Task 与 Execution 边界
 
 ```text
-sync_task
-= 一条长期同步任务配置
-
-sync_execution
-= 该任务的一次实际运行
+sync_task      = 长期当前配置
+sync_execution = Task 的一次真实运行
 ```
 
-因此，“首次全量”和“后续增量”不是两条 `sync_task`，而是同一条 `sync_task` 的两次独立 `sync_execution`。
+`FULL_THEN_INCREMENTAL` 的首次全量和后续增量是**同一 Task 的两次独立 Execution**，不是一条复合 Execution 的两个 Stage。
 
-## 2. 已确认的最终规则
+## 2. 最终规则
 
-对于：
-
-```text
-FULL_THEN_INCREMENTAL
-```
-
-固定执行语义为：
-
-```text
-第一次运行：首次全量执行
-后续运行：按照任务正常调度间隔产生的增量执行
-```
-
-不采用以下设计：
-
-```text
-首次全量完成后，立即在同一 sync_execution 内继续执行补充增量
-```
-
-也不采用：
-
-```text
-为首次全量和后续增量建立父子执行、组合执行或子阶段执行状态机
-```
-
-## 3. 首次全量执行
-
-当 `FULL_THEN_INCREMENTAL` 任务不存在正式水位时，下一次正常运行创建一条独立执行：
-
-```text
-sync_execution.execution_scope = INITIAL_FULL
-```
-
-该执行只负责当前机构的首次全量：
-
-- 只读取当前机构全量数据；
-- 只产生首次全量执行的载入批次；
-- 执行自己的同步门禁校验；
-- 校验通过后独立进入 `SUCCEEDED`；
-- 消息策略启用时，为该全量执行创建一条全量 `message_outbox`；
-- 不在该执行内继续创建增量载入阶段。
-
-首次全量开始时固定记录：
-
-```text
-initial_watermark = 首次全量开始时间 T0
-```
-
-首次全量完整写入并通过同步门禁校验后，创建正式水位：
-
-```text
-task_watermark.watermark_value = T0
-source_execution_id = 本次首次全量执行 ID
-```
-
-这样下一次增量可以覆盖首次全量运行期间发生的修改，但不需要在全量完成后立即追加一次增量执行。
-
-首次全量失败或取消时：
-
-- 不创建正式水位；
-- 不创建成功消息 Outbox；
-- 下一次正常运行仍按首次全量处理；
-- 不创建“补充增量待执行”状态。
-
-## 4. 后续增量执行
-
-首次全量成功后，等待任务下一次正常计划时间。
-
-下一次 Quartz 调度触发，或者用户在之后人工运行该任务时，创建新的独立执行：
-
-```text
-sync_execution.execution_scope = INCREMENTAL
-```
-
-该执行：
-
-```text
-读取当前正式 watermark
-→ 计算本次固定 upper
-→ 按 [watermark, upper) 读取增量
-→ 写入 Doris
-→ 执行自己的同步门禁校验
-→ 成功后推进 watermark = upper
-→ 按需创建本次增量的 message_outbox
-```
-
-首次全量执行和后续增量执行分别拥有：
-
-- 独立 `sync_execution.id/execution_uuid`；
-- 独立状态、开始时间和完成时间；
-- 独立 `load_batch` 集合；
-- 独立 `validation_run`；
-- 独立日志和错误；
-- 独立消息 Outbox。
-
-页面任务运行历史按两次独立执行展示，不在一个执行详情中拼成“全量阶段 + 补充增量阶段”。
-
-## 5. 调度行为
-
-`FULL_THEN_INCREMENTAL` 描述的是同一长期任务在不同执行之间的运行方式，不表示一个复合执行。
-
-调度规则保持简单：
-
-1. 没有正式水位时，计划触发创建首次全量执行。
-2. 首次全量运行期间到达的新计划触发，按既有并发规则直接跳过。
-3. 首次全量结束后不补跑刚才被跳过的计划，也不立即启动增量。
-4. 等待下一次正常 Cron/间隔触发，再创建增量执行。
-5. 首次全量失败不会自动暂停任务；下一次正常调度仍可重新发起首次全量。
-
-## 6. 目标物理模型影响
-
-### 6.1 `sync_execution`
-
-继续保留：
+没有正式 Watermark 时，下一次正常运行创建：
 
 ```text
 execution_scope = INITIAL_FULL
+```
+
+INITIAL_FULL：
+
+- 只读取当前 Institution 全量；
+- 只产生本次 Full Load Batch；
+- 独立执行自己的 SYNC_GATE；
+- Gate PASS 后独立 SUCCEEDED；
+- Message Policy 启用时创建 FULL Outbox；
+- 不在同一 Execution 内继续增量阶段。
+
+开始时捕获：
+
+```text
+T0 = INITIAL_FULL started_at / fixed initial watermark
+```
+
+完整成功后：
+
+```text
+task_watermark.watermark_value = T0
+source_execution_id = INITIAL_FULL execution id
+```
+
+失败/取消：
+
+- 不创建 Watermark；
+- 不创建成功 Outbox；
+- 下一次正常运行仍 INITIAL_FULL；
+- 不创建“待补充增量”状态。
+
+## 3. 后续增量
+
+INITIAL_FULL 成功后**等待下一次正常 Schedule/Manual Run**，再创建新的：
+
+```text
 execution_scope = INCREMENTAL
 ```
 
-两者永远属于不同的执行记录。
+流程：
+
+```text
+读取当前 Watermark
+→ 固定本次 Upper
+→ [watermark,upper) 增量读取
+→ Doris
+→ 本次 SYNC_GATE
+→ PASS 后 Watermark=upper
+→ 按需创建 INCREMENTAL Outbox
+```
+
+INITIAL_FULL 和 INCREMENTAL 分别拥有独立：
+
+```text
+sync_execution id/uuid
+status/time
+load_batch 集合
+validation_run
+log/error
+message_outbox
+```
+
+UI 运行历史按两条 Execution 展示，不拼成一条“Full Stage + Supplemental Increment Stage”。
+
+## 4. Schedule 行为
+
+1. 无 Watermark：正常 Trigger 创建 INITIAL_FULL。
+2. INITIAL_FULL 活动期间到达的新 Trigger 按并发规则跳过。
+3. INITIAL_FULL 结束后不追赶刚才跳过的 Trigger。
+4. 不立即启动 Incremental。
+5. 等下一次正常 Trigger 创建 INCREMENTAL。
+6. INITIAL_FULL Failed 不自动暂停 Task；下一次正常 Trigger 仍可重新 INITIAL_FULL。
+
+## 5. Physical Model
+
+`sync_execution.execution_scope` 保留：
+
+```text
+INITIAL_FULL
+INCREMENTAL
+```
 
 不建立：
 
@@ -152,63 +110,37 @@ execution_scope = INCREMENTAL
 parent_execution_id
 child_execution_id
 supplemental_increment_execution_id
-execution_stage 表
-INITIAL_FULL_AND_INCREMENTAL 组合范围
+execution_stage table
+INITIAL_FULL_AND_INCREMENTAL composite scope
 ```
 
-### 6.2 `load_batch`
+`load_batch` 不保存 `phase`；Batch Scope 从父 Execution 推导。
 
-一个执行内的全部批次必须与该执行范围一致：
+`task_watermark`：
+
+- INITIAL_FULL 成功建立 T0；
+- INCREMENTAL 成功推进到固定 Upper；
+- Failed/Cancelled/Backfill/Independent Validation 不推进；
+- 不建立 Supplemental Watermark 或双 Watermark。
+
+## 6. 旧描述清理状态
+
+以下旧描述全部废止：
 
 ```text
-INITIAL_FULL execution
-→ 全部批次都属于首次全量
-
-INCREMENTAL execution
-→ 全部批次都属于增量
+首次全量完成后立即执行补充增量
+补充增量属于 INITIAL_FULL 同一 Execution
+一条 Execution 同时包含 FULL + INCREMENTAL Batch
+load_batch.phase 重复保存父范围
 ```
 
-已经确认删除：
+2026-08-17 已完成产品基线、Target Model、Task/Execution 字典和 TASKS 中对应旧文案清理，本项不再是待办。
 
-```text
-load_batch.phase
-```
+## 7. 验收
 
-批次类型统一通过父执行推导：
-
-```text
-load_batch.execution_id
-→ sync_execution.execution_scope
-```
-
-不允许同一执行混合全量和增量批次，也不在子表复制父级执行范围。详细结论见 `spec/P0_LOAD_BATCH_MODEL_REVIEW.md`。
-
-### 6.3 `task_watermark`
-
-- 首次全量成功后创建水位，值为首次全量开始时刻 `T0`；
-- 后续增量成功后推进到该执行固定 `upper`；
-- 失败、取消、数据补采和独立治理校验不推进水位；
-- 不建立“补充增量水位”或双水位。
-
-## 7. 被本结论修正的旧描述
-
-以下旧描述废止：
-
-```text
-首次全量完成后立即执行一次补充增量
-补充增量属于首次全量同一执行流程
-一条 INITIAL_FULL 执行同时包含 FULL 和 INCREMENTAL load_batch
-load_batch 通过 phase 重复保存父执行范围
-```
-
-阶段 1 最终一致性清理时，必须从以下文档机械删除或改写这些旧描述：
-
-```text
-spec/PRODUCT_AND_BUSINESS_DECISIONS.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
-spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
-spec/TARGET_METADATA_MODEL.md
-spec/TASKS.md
-```
-
-本文件和 `spec/P0_LOAD_BATCH_MODEL_REVIEW.md` 在上述清理完成前作为该问题的权威 Review 结论。
+- 无 Watermark 时只有 INITIAL_FULL。
+- INITIAL_FULL 成功后 Watermark=T0。
+- 同一 Execution 不混合 Full/Incremental Batch。
+- INITIAL_FULL 后不立即追加 Incremental。
+- 下一次正常触发才创建独立 INCREMENTAL。
+- 两次 Execution 分别拥有独立 Gate/Outbox/History。
