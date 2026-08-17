@@ -1,12 +1,13 @@
 # P0 删除快照控制对象与校验外键闭环
 
-> 状态：阶段 1 删除识别物理模型已按当前 Task + 单机构 Route 收口  
-> 首次 Review：2026-08-15  
-> 最近收口：2026-08-17  
+> 状态：阶段 1 Delete Snapshot FK + Unique Matrix 已确认并收口  
+> 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Route 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`  
 > Task 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
 > Execution/Validation 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`  
+> FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`。
 
 ## 1. 最终对象和边界
@@ -113,11 +114,11 @@ MANUAL
 SCHEDULED
 ```
 
-### 2.2 约束
+### 2.2 约束与唯一性
 
 ```text
 UNIQUE(run_uuid)
-UNIQUE(id,task_id)
+UNIQUE(id,task_id)  # FK Support Unique，不是业务身份
 
 CHECK (task_revision >= 0)
 CHECK (status IN ('PENDING','EXTRACTING','WRITING','COMPARING','COMPLETED','FAILED','CANCELLED'))
@@ -139,6 +140,14 @@ finished_at 非空
 null_key_count = 0
 duplicate_key_count = 0
 source_row_count = key_row_count
+```
+
+同一 Task 活动 Snapshot 唯一：
+
+```sql
+CREATE UNIQUE INDEX uk_delete_snapshot_run_active_task
+ON delete_snapshot_run(task_id)
+WHERE status IN ('PENDING','EXTRACTING','WRITING','COMPARING');
 ```
 
 ### 2.3 当前外键闭环
@@ -185,15 +194,9 @@ REFERENCES delete_snapshot_run(id,task_id)
 ON DELETE RESTRICT
 ```
 
-**不再使用任何 `collection_route_version_institution` 外键。**
+`triggered_by → app_user(id) ON DELETE RESTRICT`。
 
-同一 Task 活动 Snapshot 唯一：
-
-```sql
-CREATE UNIQUE INDEX uk_delete_snapshot_run_active_task
-ON delete_snapshot_run(task_id)
-WHERE status IN ('PENDING','EXTRACTING','WRITING','COMPARING');
-```
+不再使用任何 `collection_route_version_institution` 外键。
 
 ## 3. `task_delete_snapshot_state`
 
@@ -226,11 +229,7 @@ REFERENCES validation_run(id,task_id)
 ON DELETE RESTRICT
 ```
 
-因此 `validation_run` 提供：
-
-```text
-UNIQUE(id,task_id)
-```
+`task_id` 是 PK：一个 Task 最多一条当前 Baseline State。
 
 基线切换时应用锁定 State 并验证：
 
@@ -346,6 +345,9 @@ ON DELETE RESTRICT
 FOREIGN KEY (task_id,institution_id,dataset_id)
 REFERENCES sync_task(id,institution_id,dataset_id)
 ON DELETE RESTRICT
+
+requested_by → app_user(id) ON DELETE RESTRICT
+confirmed_by → app_user(id) ON DELETE RESTRICT
 ```
 
 实际应用前必须验证：
@@ -367,19 +369,41 @@ FAILED
 CANCELLED
 ```
 
-唯一性：
+业务唯一：
 
-```sql
-CREATE UNIQUE INDEX uk_delete_apply_active
-ON delete_apply_run(validation_run_id)
-WHERE dry_run=false AND status IN ('PENDING','RUNNING');
-
-CREATE UNIQUE INDEX uk_delete_apply_success
-ON delete_apply_run(validation_run_id)
-WHERE dry_run=false AND status='SUCCEEDED';
+```text
+UNIQUE(run_uuid)
 ```
 
-允许多次 Dry Run；实际应用必须二次确认并审计。
+Dry Run 允许多次。
+
+真实 Apply 只保留一条 Safety Partial Unique：
+
+```sql
+CREATE UNIQUE INDEX uk_delete_apply_effective
+ON delete_apply_run(validation_run_id)
+WHERE dry_run = false
+  AND status IN ('PENDING','RUNNING','SUCCEEDED');
+```
+
+固定语义：
+
+```text
+无真实 Apply → 可以发起
+已有 PENDING/RUNNING → 禁止第二次真实 Apply
+已有 SUCCEEDED → 永久禁止再次真实 Apply
+FAILED/PARTIAL_FAILED/CANCELLED → 允许重新发起新的真实 Apply
+Dry Run → 不受该索引限制，可多次执行
+```
+
+明确删除旧两条重叠索引：
+
+```text
+uk_delete_apply_active
+uk_delete_apply_success
+```
+
+这样在已有 `SUCCEEDED` 时，新的真实 Apply 在插入 `PENDING` 阶段就会被数据库拒绝，不会等到第二次成功才发现冲突。
 
 ## 6. 基线切换事务
 
@@ -426,9 +450,9 @@ DISTRIBUTED BY HASH(task_id, key_hash) BUCKETS AUTO;
 CREATE TABLE _dfetl_delete_diff (
     validation_run_id  BIGINT       NOT NULL,
     task_id            BIGINT       NOT NULL,
-    key_hash           CHAR(64)     NOT NULL,
-    key_payload        STRING       NOT NULL,
-    detected_at        DATETIME(6)  NOT NULL
+    key_hash            CHAR(64)     NOT NULL,
+    key_payload         STRING       NOT NULL,
+    detected_at         DATETIME(6)  NOT NULL
 )
 DUPLICATE KEY(validation_run_id, task_id, key_hash)
 DISTRIBUTED BY HASH(task_id, key_hash) BUCKETS AUTO;
@@ -453,8 +477,11 @@ Delete Apply 审批流/自动补偿状态机
 
 - Snapshot/Validation/Delete Apply 都能证明属于同一 Task。
 - Task Institution/Dataset 与 Route Version/Dataset Version 通过当前四元 FK 一致。
-- 不存在多机构 Route 关系表依赖。
-- Validation Baseline/Candidate 不能跨 Task。
+- 同 Task 只有一个活动 Delete Snapshot。
+- 同 Candidate 只有一个 Delete Reconciliation。
+- 一个 Delete Reconciliation 在真实 Apply `PENDING/RUNNING/SUCCEEDED` 生命周期内最多一条有效记录。
+- 已成功真实 Apply 后不能再次发起真实 Apply。
+- Dry Run 可以多次执行。
 - 首次 Snapshot 只建立 Baseline。
 - 后续完整 Candidate 对账后原子切换 Baseline。
 - Failure/Cancelled Candidate 不切换。
