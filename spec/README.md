@@ -3,9 +3,10 @@
 > 状态：当前有效  
 > 清理日期：2026-08-17  
 > 一致性对齐：2026-08-17  
+> A1–A3 产品合同：2026-08-17  
 > 清理前 `main`：`5268dc54aaf3abef0785d3cd336ce87271404964`  
 > 可信交接提交：`341e3b5d070e5b2a242457c74d325ca7639c43d4`  
-> 范围：仅清理 `spec/` 文档；不修改 Java、TypeScript、SQL、Flyway 或数据库结构。
+> 范围：仅清理和维护 `spec/` 文档；不修改 Java、TypeScript、SQL、Flyway 或数据库结构。
 
 ## 1. 实际读取与差异结论
 
@@ -39,11 +40,14 @@ head behind by 0 commits
 
 1. 用户最新明确确认；
 2. `CURRENT_CONFIRMED_PROCESS_RULES.md`；
-3. `PRODUCT_AND_BUSINESS_DECISIONS.md`；
-4. `TARGET_METADATA_MODEL.md`；
-5. `TASKS.md`；
-6. 数据库治理文档；
-7. Java/SQL 历史审计和 `reference/legacy` 归档材料。
+3. `FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 中已经确认的 A1–A3 产品交互合同；
+4. `PRODUCT_AND_BUSINESS_DECISIONS.md`；
+5. `TARGET_METADATA_MODEL.md`；
+6. `TASKS.md`；
+7. 数据库治理文档；
+8. Java/SQL 历史审计和 `reference/legacy` 归档材料。
+
+`FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 冻结页面、交互、权限和审计语义，但不冻结 REST URL 细节、预检明细物理载体、Doris 范围替换实现或 Flyway 结构。
 
 `TARGET_METADATA_MODEL.md` 仍处于 Review 进行中，不代表最终签字，不授权创建 Flyway V1 或批量修改后端。
 
@@ -53,10 +57,12 @@ head behind by 0 commits
 | --- | --- | --- |
 | 可信文档清理 | `VERIFIED` | 错误主模型和不可信 Review 文件已清理，可信优先级已恢复。 |
 | 最新流程业务规则 | `CONFIRMED` | 预检问题明细、正式同步、无主键范围替换、校验和 RabbitMQ 规则已确认。 |
-| 核心文档一致性 | `ALIGNED` | 本次已同步修订 `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TARGET_METADATA_MODEL.md` 和 `TASKS.md` 的三处冲突。 |
+| A1–A3 前端产品合同 | `CONFIRMED` | 预检明细页面、无主键范围替换前端语义、页面—操作—权限—审计矩阵已确认；前端代码尚未实施。 |
+| 核心文档一致性 | `ALIGNED` | 已同步修订核心文档冲突，并建立 A1–A3 产品合同。 |
 | P0 目标元数据模型 | `IN_REVIEW` | 预检明细物理载体、P0 支撑对象和物理表字典仍待确认。 |
 | Flyway V1 | `NOT_AUTHORIZED` | 目标模型最终签字前不得创建或固化 `V1__baseline.sql`。 |
 | Java 生产代码迁移 | `IMPLEMENTED` | 迁移和 JDK 21 编译完成；真实 PostgreSQL 启动与健康检查尚未验证。 |
+| 前端产品整改 | `PENDING` | 下一工作包按 A1–A3 合同整改路由、菜单、页面、权限公共层和旧模型交互。 |
 | 前后端业务闭环 | `IN_PROGRESS` | Web 仍有 Mock，真实 API、数据库和端到端联调尚未完成。 |
 
 阶段 1 的准确名称是“可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。`CONFIRMED` 不等于技术设计 `FROZEN`，`IMPLEMENTED` 不等于真实环境 `VERIFIED`。当前实施授权为 `NO`。
@@ -65,8 +71,9 @@ head behind by 0 commits
 
 | 文件 | 分类 | 本次处置 | 说明 |
 | --- | --- | --- | --- |
-| `spec/README.md` | 当前有效 | 新增 | `spec/` 唯一索引、可信顺序和逐文件处置记录。 |
+| `spec/README.md` | 当前有效 | 新增并持续维护 | `spec/` 唯一索引、可信顺序、阶段状态和逐文件处置记录。 |
 | `spec/CURRENT_CONFIRMED_PROCESS_RULES.md` | 当前有效 | 新增 | 只保留后来由用户明确确认的预检、正式同步、校验和 RabbitMQ 数据集级消息规则。 |
+| `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` | 当前有效、产品合同 | 新增 | 冻结 A1 预检问题明细页面、A2 无主键范围替换前端语义和 A3 页面—操作—权限—审计矩阵；代码尚未实施。 |
 | `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退并对齐 | 恢复可信交接内容，并于 2026-08-17 对齐问题记录级预检和 `REPLACE_INSTITUTION_SCOPE`。 |
 | `spec/TARGET_METADATA_MODEL.md` | 当前有效、Review 中 | 回退并对齐 | 恢复可信 Review 模型并补充问题明细逻辑合同；物理载体未确认，仍未冻结。 |
 | `spec/TASKS.md` | 当前有效 | 回退并对齐 | 恢复可信任务清单，并明确阶段 1 为 `IN_PROGRESS`、实施授权为 `NO`。 |
@@ -171,14 +178,14 @@ spec/CURRENT_CONFIRMED_PROCESS_RULES.md
 
 ## 9. 本次修改边界
 
-本次清理：
+本次清理和文档维护：
 
 - 未修改任何 `.java`；
 - 未修改任何 `.ts` 或 `.tsx`；
 - 未修改任何 `.sql`；
 - 未修改 Flyway；
 - 未执行历史批量清理脚本；
-- 未把文档清理解释为数据库、后端或前端实施授权。
+- 未把文档确认解释为数据库、后端或前端代码已经实施。
 
 ## 10. 2026-08-17 核心文档一致性对齐
 
@@ -189,3 +196,29 @@ spec/CURRENT_CONFIRMED_PROCESS_RULES.md
 3. **阶段状态**：阶段 1 为 `IN_PROGRESS`，目标模型未冻结，Flyway V1 和数据库/后端批量实施仍未授权。
 
 本次未修改 Java、TypeScript、SQL、Flyway、Doris 表或 PostgreSQL 结构，也没有替预检明细选择具体物理存储方案。
+
+## 11. 2026-08-17 A1–A3 前端产品合同
+
+已新增：
+
+```text
+spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md
+```
+
+该文档确认：
+
+1. **A1 数据预检问题明细页面合同**：以采集链路为列表顶层，以预检运行保存历史事实；提供运行概览、问题汇总、问题记录明细、脱敏、按权限查看原值、汇总/明细导出和明细到期状态。
+2. **A2 无主键机构范围替换前端语义**：普通用户统一看到“每次全量 · 替换当前机构范围”，界面不得出现 TRUNCATE、DROP_DATA 或清空共享整表的表达。
+3. **A3 页面—操作—权限—审计矩阵**：确认目标信息架构、`domain.action` 权限命名、确认等级、审计通则，以及全部主要页面的操作、权限和审计事件。
+
+当前状态：产品合同 `CONFIRMED`，前端代码 `NOT_IMPLEMENTED`，API 与物理模型继续 `IN_REVIEW`。
+
+下一工作包：
+
+```text
+B1：按目标信息架构整改路由和菜单
+B2：实现 A1 预检 Route/Run/汇总/明细页面
+B3：统一 A2 无主键任务文案和确认交互
+B4：建立权限指令、危险确认和审计调用的前端公共层
+B5：按 A3 矩阵逐页消除空按钮和旧模型交互
+```
