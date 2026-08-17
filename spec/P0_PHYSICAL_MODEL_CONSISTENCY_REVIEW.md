@@ -1,33 +1,27 @@
 # P0 物理模型一致性 Review
 
-> 状态：P0 PostgreSQL 表清单 + FK Matrix + Unique Matrix 已确认；进入 Status/Enum/CHECK Matrix Review  
+> 状态：P0 PostgreSQL Table + FK + Unique + Status/Enum/CHECK Matrix 已确认  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`  
-> FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
-> Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`
+> FK：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Unique：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
+> Status/CHECK：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`
 
-## 1. 已完成的主模型收口
+## 1. 当前唯一主模型
 
 ```text
-Resource:
-Business System Instance 多对多旧模型
-→ Institution + Business Catalog + Source
-
-Route:
-Multi-Institution Shared Route
+Institution + Business Catalog
+→ Source / Target
+→ Standard Dataset + Immutable Dataset Version
 → Single-Institution Route + Immutable Route Version
-
-Task:
-sync_task_version
-→ sync_task Current Config + Execution/Validation Startup Snapshot
-
-Validation:
-Global/Dataset/Task Policy Tables
-→ System Setting + Dataset Override + Task Override + Execution Snapshot
+→ Sync Task Fixed Identity + Current Config
+→ Execution / Validation Startup Snapshot
 ```
 
-## 2. P0 PostgreSQL 表清单：已冻结
+不建立 Business System Instance、Multi-Institution Route、Task Version、独立 Validation Policy Table。
+
+## 2. PostgreSQL 表清单
 
 ```text
 DFETL 领域/控制表 39
@@ -38,246 +32,142 @@ V1 创建             50
 
 `flyway_schema_history` 不计入 50。
 
-## 3. 第 2 项：FK Matrix 已确认
+## 3. FK Matrix：完成
 
-原则：
+已确认：
 
 ```text
 最强复合 FK
 历史 RESTRICT
-纯配置子对象 CASCADE
+纯配置 CASCADE
 普通审计用户 SET NULL
-业务运行责任用户 RESTRICT
-FK 子列具备索引
+运行责任用户 RESTRICT
+FK 子列索引
 ```
 
-已闭环：
+关键闭环包括 Route→Version 同父、Route Version 四元身份、Field Resolution Dataset Version/Field 归属、Watermark/Validation→同 Task Execution、External Request→Execution、Execution→Outbox。
 
-- Route → Route Version 同父指针。
-- Route Version → Route Identity。
-- Watermark / Validation → 同 Task Execution。
-- External Execution → External API Request。
-- `route_field_resolution` 使用 `dataset_version_id + standard_field_id`，不保存重复 `field_code`。
-- Execution → Outbox 复合身份。
+## 4. Unique Matrix：完成
 
-## 4. 第 3 项：Business / Concurrency Unique Matrix 已确认
-
-唯一性分三类：
+三类严格区分：
 
 ```text
 Business Unique
-Concurrency / Safety Partial Unique
+Concurrency Partial Unique
 FK Support Unique
 ```
 
-FK Support Unique 只为复合 FK 服务，不解释为产品业务身份。
+关键规则：
 
-### 4.1 Business Unique 原则
+- Stable Code/ID、Parent Version No、Content Hash、Business Pair 使用 Business Unique。
+- Dataset/Route 相同历史 Hash 复用原不可变 Version。
+- Execution/Precheck/Validation/Delete Snapshot 使用 Partial Unique 做活动并发兜底。
+- External Client Name 可重复，只保证 `client_id`。
+- Delete Apply 使用单条 `PENDING/RUNNING/SUCCEEDED` Safety Partial Unique。
 
-稳定身份使用：
+## 5. Status / Enum / CHECK Matrix：完成
 
-```text
-Code / External ID / Client ID / Username / Setting Key
-父对象内 Version No
-不可变内容 Hash
-业务关系 Pair
-Run UUID / Event ID
-父内自然序号
-```
-
-已有稳定 Code/ID 的对象，展示 Name 默认不唯一。
-
-例外：Alert Channel / Alert Rule 没有独立稳定 Code，因此 `lower(name)` 保持唯一。
-
-External Client：
+### 5.1 状态语义
 
 ```text
-UNIQUE(client_id)
-client_name 可重复
+SUCCEEDED
+= 同步/批次/投递/删除应用等真正业务成功
+
+COMPLETED + result
+= Precheck/Validation/Delete Snapshot 技术完成，业务结果另行表达
 ```
 
-### 4.2 Dataset / Route Hash 复用
+### 5.2 Resource
 
-固定规则：
+- Source/FE Test：`UNTESTED/SUCCESS/FAILED`。
+- Target Aggregate Test：`UNTESTED/SUCCESS/PARTIAL/FAILED`。
+- Test Status 与 `last_tested_at/last_test_error` 组合由 CHECK 保证。
+- Resource Enable/Disable 与 Test Result 保持独立。
+
+### 5.3 Dataset / Task Schedule
+
+Dataset Policy：
 
 ```text
-新 Hash = 当前 Hash
-→ 不创建 Version
-
-新 Hash != 当前 Hash，但历史已存在
-→ 复用历史不可变 Version
-→ 切换 current_version_id
-→ 不创建重复内容 Version
-→ 写 audit_log
-
-新 Hash 历史从未出现
-→ 创建新 Version No
+INHERIT/MANUAL → interval/cron/timezone 均空
+EVERY_N_HOURS → interval + timezone，cron 为空
+CRON → cron + timezone
 ```
 
-因此早期文档中“Hash 变化就插入 Version”的表述只适用于**历史中从未出现过的新 Hash**。本节及 `P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md` 优先。
-
-Version 表表达内容版本；重复保存动作由 `audit_log` 表达。
-
-### 4.3 Runtime Concurrency Partial Unique
+Task：
 
 ```text
-一个 ACTIVE Field Conversion Contract
-一个 Task 一个活动 sync_execution
-一个 Route 一个活动 precheck_run
-一个 Task 一个活动 Independent validation_run
-一个 Task 一个活动 delete_snapshot_run
+MANUAL → interval/cron 空
+EVERY_N_HOURS → interval + 最终错峰 cron + timezone
+CRON → cron + timezone
 ```
 
-跨表 Sync vs Independent Validation 继续锁定同一 `sync_task` 后检查，不新增 Lock/Slot 表。
+Dataset Default 不保存最终 Quartz Cron。
 
-### 4.4 Delete Apply Safety
+### 5.4 Route
 
-只保留：
+`status` 与 `structure_status` 独立，不做数据库耦合 CHECK；允许 `ENABLED + OUTDATED`。
 
-```sql
-CREATE UNIQUE INDEX uk_delete_apply_effective
-ON delete_apply_run(validation_run_id)
-WHERE dry_run=false
-  AND status IN ('PENDING','RUNNING','SUCCEEDED');
-```
+### 5.5 Runtime
 
-删除旧：
+- Execution Trigger/Operation/Range/Terminal/Cancel CHECK 收紧。
+- INCREMENTAL/BACKFILL_TIME 必须同时有 lower + upper。
+- `CANCELLED` 只表示明确取消。
+- Load Batch 只有 Doris `VISIBLE` 才 `SUCCEEDED`。
+- Precheck 使用 `COMPLETED + PASS/ISSUES`。
+- Validation 使用 `COMPLETED + PASS/MISMATCH`。
+
+### 5.6 Validation Source
 
 ```text
-uk_delete_apply_active
-uk_delete_apply_success
+sync_execution.validation_source:
+GLOBAL / DATASET / TASK / CONTRACT
 ```
-
-语义：PENDING/RUNNING 防并发；SUCCEEDED 后永久阻止再次真实 Apply；FAILED/PARTIAL_FAILED/CANCELLED 后允许重新发起；Dry Run 可多次。
-
-## 5. 当前关键复合身份
-
-### Source → Route
 
 ```text
-source_datasource(id,institution_id) UNIQUE
-collection_route(source_datasource_id,institution_id)
-→ source_datasource(id,institution_id)
+validation_run.validation_source:
+GLOBAL / DATASET / TASK / CONTRACT / FIXED
 ```
 
-### Route → Route Version
+`FIXED` 只允许：
 
 ```text
-collection_route(id,institution_id,dataset_id) UNIQUE
-collection_route_version(route_id,institution_id,dataset_id)
-→ collection_route(id,institution_id,dataset_id)
+DELETE_RECONCILIATION + DELETE_KEY_DIFF
 ```
 
-当前指针：
+### 5.7 Support / Delete
+
+- Outbox `PUBLISHED/DEAD_LETTER` 的时间/错误组合已固定。
+- Delete Snapshot 使用 `COMPLETED + result_type`。
+- Delete Apply `SUCCEEDED/PARTIAL_FAILED/FAILED/CANCELLED` 的数量/时间/错误组合已固定。
+- Audit Actor/Source 一一对应。
+- Alert Delivery 与 External Request 终态组合已固定。
+
+## 6. Active Spec 同步范围
+
+本轮已新增/更新：
 
 ```text
-collection_route(id,current_version_id)
-→ collection_route_version(route_id,id)
-DEFERRABLE INITIALLY DEFERRED
+P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md
+P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md
+P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
+P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
+P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md
+P0_SUPPORT_OBJECT_REVIEW.md
+P0_PHYSICAL_TABLE_DICTIONARY.md
 ```
 
-### Route Version
+状态/CHECK 冲突时以新 Matrix 为最终 V1 基线。
 
-```text
-UNIQUE(id,dataset_version_id)
-UNIQUE(id,institution_id,dataset_id,dataset_version_id)
-```
-
-### Field Resolution
-
-```text
-(route_version_id,dataset_version_id)
-→ collection_route_version(id,dataset_version_id)
-
-(dataset_version_id,standard_field_id)
-→ standard_dataset_field(dataset_version_id,id)
-```
-
-### Task → Execution
-
-```text
-sync_task(id,institution_id,dataset_id) UNIQUE
-sync_execution(id,task_id) UNIQUE
-```
-
-### External API → Execution
-
-```text
-external_api_request(client_id,request_id) UNIQUE
-sync_execution(external_client_id,external_request_id)
-→ external_api_request(client_id,request_id)
-```
-
-### Execution → Outbox
-
-```text
-sync_execution(id,task_id,dataset_id,institution_id) UNIQUE
-message_outbox(execution_id,task_id,dataset_id,institution_id)
-→ sync_execution(id,task_id,dataset_id,institution_id)
-```
-
-## 6. User FK 规则
-
-普通审计：
-
-```text
-created_by/updated_by/deleted_by/imported_by/retired_by
-→ app_user ON DELETE SET NULL
-```
-
-运行责任：
-
-```text
-requested_by/requested_by_user_id/confirmed_by/triggered_by/cancel_requested_by
-→ app_user ON DELETE RESTRICT
-```
-
-## 7. 当前明确废止对象
-
-不得进入 V1/API/Entity/Frontend：
-
-```text
-business_system_instance*
-collection_route_institution
-collection_route_version_institution
-sync_task_version
-sync_task.current_version_id
-task_version_id
-global_validation_policy
-dataset_validation_policy
-task_validation_policy
-override_mode
-External Client Name Unique
-Delete Apply 双 Partial Unique
-```
-
-同样不恢复 Validation Disable/Tolerance/Lookback/Auto Revalidate、Task Message Policy、RBAC、Scheduler Reconciliation、External API Rate Limit/Quota。
-
-## 8. Active Spec 收口说明
-
-已新增权威矩阵：
-
-```text
-P0_FOREIGN_KEY_MATRIX_REVIEW.md
-P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md
-```
-
-涉及 Unique 的早期字典若存在更宽泛的旧描述，以 Unique Matrix 为准。尤其：
-
-```text
-Dataset/Route “Hash 变化 → 新 Version”
-```
-
-必须解释为：只有历史中从未出现过的新 Hash 才创建新 Version；历史相同 Hash 直接复用旧 Version。
-
-## 9. Review 顺序
+## 7. Review 顺序
 
 1. [x] P0 PostgreSQL 最终表清单 + 数量。
 2. [x] 全量 FK Matrix。
 3. [x] Business / Concurrency Unique Matrix。
-4. [ ] **Status / Enum / CHECK Matrix。**
-5. [ ] Delete Behavior Matrix。
+4. [x] Status / Enum / CHECK Matrix。
+5. [ ] **Delete Behavior Matrix。**
 6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-下一项只讨论第 4 项。
+下一项只讨论第 5 项 Delete Behavior Matrix。
