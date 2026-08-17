@@ -6,7 +6,7 @@
 > 阶段状态：`IN_PROGRESS`  
 > 实施授权：`NO`；目标模型最终签字前不创建 Flyway V1，不按 Review 草案批量改造数据库和后端  
 > 已验证：Java 生产代码迁移及 JDK 21 编译打包、老库结构快照、62 个历史 SQL 审计、可信 `spec/` 清理  
-> A1–A3 产品合同：`CONFIRMED`；前端产品交互：`IMPLEMENTED`，真实 API/后端：`NOT_IMPLEMENTED`；权威合同见 `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 和 `spec/FRONTEND_API_CONTRACT_V1.md`  
+> A1–A3 产品合同：`CONFIRMED`；前端产品交互：`IMPLEMENTED`；C1–C3：`CONFIRMED_FOR_SIGNOFF`；目标模型：`READY_FOR_SIGNOFF`；实施授权：`NO`  
 > 测试策略：当前阶段不迁移、不补写原单元测试和接口测试；主业务流程跑通并稳定后，再按本清单补接口测试。
 
 ## 1. 项目目标
@@ -1274,6 +1274,26 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - [x] `B5-AUDIT`：二次反查 A3 操作矩阵，补齐数据源凭据/状态治理、核心表格分页、预检批量启动/取消、Execution/Validation 导出及删除对账 Dry Run/Apply。
 
 A1–A3 与 B1–B5 已完成前端 Mock 产品行为实现，并以 ESLint 和 Next.js 生产构建验证；真实 REST API、服务端鉴权/审计、数据库和外部组件尚未实施，因此只能标记前端产品交互为 `IMPLEMENTED`，不能标记端到端系统为 `VERIFIED`。
+
+
+## 5.2 C1–C3 物理设计和签字门槛（2026-08-17）
+
+- [x] `C1`：确认预检问题明细的 PostgreSQL/Doris/对象存储职责、字段、保留、查询、脱敏、导出和清理方案。
+- [x] `C2`：确认 Doris 一机构一 LIST 分区、临时分区原子替换、旧数据备份、切换后校验、回滚和能力探针方案。
+- [x] `C3`：确认账号权限、Session、审计、设置、Export Job、幂等、锁、告警、External Client 和 Quartz JDBCJobStore 物理模型。
+- [x] `C1-C3-DOC`：新增 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`、`P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md` 和 `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`。
+- [x] `SIGNOFF-PREP`：新增 `PHASE1_TARGET_MODEL_SIGNOFF.md`，形成签字范围、冻结边界和实施顺序。
+- [ ] `SIGNOFF`：用户明确批准阶段 1 目标模型并授权实施。
+- [ ] `C4`：签字后依据 `FRONTEND_API_CONTRACT_V1.md` 生成 OpenAPI 3.1、Flyway V1 和后端接口实现。
+
+当前 Gate：
+
+```text
+READY_FOR_SIGNOFF != FROZEN
+Implementation Authorization = NO
+```
+
+`SIGNOFF` 未完成前，`C4` 保持阻塞。
 
 
 ---

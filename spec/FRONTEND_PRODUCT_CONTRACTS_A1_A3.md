@@ -5,8 +5,8 @@
 > 适用范围：A1 数据预检问题明细页面、A2 无主键机构范围替换前端语义、A3 页面—操作—权限—审计矩阵  
 > 产品状态：`CONFIRMED`  
 > 前端实现状态：`IMPLEMENTED`；A3 Mock 产品行为已通过 ESLint 与 Next.js 生产构建，真实 API 接入未完成  
-> 后端与物理模型状态：`IN_REVIEW`  
-> 实施边界：本文冻结产品页面、交互、权限点和审计语义；不决定预检明细物理载体、Doris 原子替换实现、REST URL 细节或 Flyway 表结构。
+> 后端与物理模型状态：`READY_FOR_SIGNOFF`；C1–C3 已完成，实施授权仍为 `NO`  
+> 实施边界：本文冻结产品页面、交互、权限点和审计语义；物理方案分别由 C1–C3 文档冻结，REST API 由 `FRONTEND_API_CONTRACT_V1.md` 冻结；用户签字前仍不创建 Flyway 或后端实现。
 
 ## 1. 文档优先级和适用规则
 

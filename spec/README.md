@@ -40,16 +40,19 @@ head behind by 0 commits
 
 1. 用户最新明确确认；
 2. `CURRENT_CONFIRMED_PROCESS_RULES.md`；
-3. `FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 中已经确认的 A1–A3 产品交互合同；
-4. `PRODUCT_AND_BUSINESS_DECISIONS.md`；
-5. `TARGET_METADATA_MODEL.md`；
-6. `TASKS.md`；
-7. 数据库治理文档；
-8. Java/SQL 历史审计和 `reference/legacy` 归档材料。
+3. `PRODUCT_AND_BUSINESS_DECISIONS.md`；
+4. `FRONTEND_PRODUCT_CONTRACTS_A1_A3.md`；
+5. `FRONTEND_API_CONTRACT_V1.md`；
+6. `TARGET_METADATA_MODEL.md`；
+7. `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`、`P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`、`P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`；
+8. `PHASE1_TARGET_MODEL_SIGNOFF.md`；
+9. `TASKS.md`；
+10. 数据库治理文档；
+11. Java/SQL 历史审计和 `reference/legacy` 归档材料。
 
-`FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 冻结页面、交互、权限和审计语义，但不冻结 REST URL 细节、预检明细物理载体、Doris 范围替换实现或 Flyway 结构。
+`FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 冻结页面行为，`FRONTEND_API_CONTRACT_V1.md` 冻结 REST 合同，C1–C3 文档冻结对应物理方案。
 
-`TARGET_METADATA_MODEL.md` 仍处于 Review 进行中，不代表最终签字，不授权创建 Flyway V1 或批量修改后端。
+`TARGET_METADATA_MODEL.md` 已达到 `READY_FOR_SIGNOFF`，但仍不代表用户最终签字；实施授权保持 `NO`，不授权创建 Flyway V1、OpenAPI 实现或批量修改后端。
 
 ## 2.1 当前阶段与实施授权
 
@@ -59,7 +62,7 @@ head behind by 0 commits
 | 最新流程业务规则 | `CONFIRMED` | 预检问题明细、正式同步、无主键范围替换、校验和 RabbitMQ 规则已确认。 |
 | A1–A3 前端产品合同 | `IMPLEMENTED` | A3 Mock 产品行为已完成并通过 ESLint/Next.js 生产构建；真实 API 和服务端尚未实施。 |
 | 核心文档一致性 | `ALIGNED` | 已同步修订核心文档冲突，并建立 A1–A3 产品合同。 |
-| P0 目标元数据模型 | `IN_REVIEW` | 预检明细物理载体、P0 支撑对象和物理表字典仍待确认。 |
+| P0 目标元数据模型 | `READY_FOR_SIGNOFF` | C1 预检明细、C2 Doris 范围替换和 C3 支撑对象已完成 Review；等待用户签字，实施授权仍为 NO。 |
 | Flyway V1 | `NOT_AUTHORIZED` | 目标模型最终签字前不得创建或固化 `V1__baseline.sql`。 |
 | Java 生产代码迁移 | `IMPLEMENTED` | 迁移和 JDK 21 编译完成；真实 PostgreSQL 启动与健康检查尚未验证。 |
 | 前端产品整改 | `IMPLEMENTED` | 页面、操作、权限、确认、审计、分页和主要失败/空状态已完成；真实 API 接入进入下一阶段。 |
@@ -75,6 +78,10 @@ head behind by 0 commits
 | `spec/CURRENT_CONFIRMED_PROCESS_RULES.md` | 当前有效 | 新增 | 只保留后来由用户明确确认的预检、正式同步、校验和 RabbitMQ 数据集级消息规则。 |
 | `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` | 当前有效、产品合同 | 新增并持续维护 | 冻结 A1–A3 产品合同；前端 Mock 行为已实现，服务端仍待实施。 |
 | `spec/FRONTEND_API_CONTRACT_V1.md` | 当前有效、API 合同 | 新增 | 冻结页面到 REST API、分页、Revision、幂等、权限、审计、错误码、导出任务和长任务状态合同。 |
+| `spec/P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md` | 当前有效、C1 物理设计 | 新增 | 冻结 PostgreSQL 控制面、Doris 明细面、MinIO/S3 导出面及生命周期。 |
+| `spec/P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md` | 当前有效、C2 物理设计 | 新增 | 冻结 LIST 分区、临时分区替换、备份回滚、Label 和能力探针。 |
+| `spec/P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md` | 当前有效、C3 物理设计 | 新增 | 冻结 RBAC、审计、设置、导出、幂等、告警、External Client 和 Quartz。 |
+| `spec/PHASE1_TARGET_MODEL_SIGNOFF.md` | 当前有效、签字单 | 新增 | 记录签字范围、实施授权条件、冻结边界和 D1–D10 实施顺序。 |
 | `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退并对齐 | 恢复可信交接内容，并于 2026-08-17 对齐问题记录级预检和 `REPLACE_INSTITUTION_SCOPE`。 |
 | `spec/TARGET_METADATA_MODEL.md` | 当前有效、Review 中 | 回退并对齐 | 恢复可信 Review 模型并补充问题明细逻辑合同；物理载体未确认，仍未冻结。 |
 | `spec/TASKS.md` | 当前有效 | 回退并对齐 | 恢复可信任务清单，并明确阶段 1 为 `IN_PROGRESS`、实施授权为 `NO`。 |
@@ -238,3 +245,25 @@ Java 后端接口：NOT_IMPLEMENTED
 PostgreSQL / Doris / RabbitMQ：NOT_IMPLEMENTED
 Flyway V1：NOT_AUTHORIZED
 ```
+
+
+## 13. 2026-08-17 C1–C3 物理设计完成
+
+已完成：
+
+```text
+C1 Precheck Detail Physical Design
+C2 Doris Institution Scope Replace Design
+C3 P0 Support Object Physical Model
+```
+
+目标模型状态推进为 `READY_FOR_SIGNOFF`。这只表示评审材料完整，不表示已签字。用户明确批准前：
+
+```text
+Implementation Authorization: NO
+Flyway V1: NOT_AUTHORIZED
+OpenAPI: NOT_GENERATED
+Backend API: NOT_IMPLEMENTED
+```
+
+签字范围和实施顺序见 `PHASE1_TARGET_MODEL_SIGNOFF.md`。

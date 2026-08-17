@@ -1,8 +1,8 @@
 # P0 目标元数据模型
 
-> 状态：`IN_REVIEW`；正在对齐问题记录级预检和无主键机构范围替换；尚未固化为 Flyway `V1`  
-> 实施授权：`NO`；本文件未最终签字，不得据此创建 V1 或批量改造后端  
-> 日期：2026-08-14  
+> 状态：`READY_FOR_SIGNOFF`；C1–C3 物理设计已完成，等待用户签字；尚未固化为 Flyway `V1`  
+> 实施授权：`NO`；当前只具备签字条件，用户明确批准前不得创建 V1、OpenAPI 实现或批量改造后端  
+> 初稿日期：2026-08-14；C1–C3 Review：2026-08-17  
 > 适用范围：新系统独立 PostgreSQL 元数据库  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -17,9 +17,9 @@
 5. 同步任务身份与任务版本分离。未删除任务按机构和数据集唯一；任务没有重复的生命周期状态，当前版本由 `current_version_id` 唯一确定。
 6. 正式水位属于长期任务运行态。载入批次只记录单次执行进度和 Doris 最终状态，不提供跨执行断点续跑；普通失败后由人工从第 1 批重新采集。
 7. 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW。PostgreSQL 不登记 Doris 物理表或结构版本，直接读取 Doris 实际元数据并与数据集版本生成的期望合同核对。
-8. 预检每次扫描整条采集链路；运行记录及字段级/组合规则级汇总长期持久化，同时必须提供可定位具体记录和非法字段的问题明细。问题明细的物理载体、保留期和导出方式仍待 Review，不保留严重级别或平台内修复状态。
+8. 预检每次扫描整条采集链路；运行记录及字段级/组合规则级汇总长期持久化，同时提供可定位具体记录和非法字段的限期问题明细。物理方案已冻结为 PostgreSQL 控制面、Doris 明细面和 S3 兼容导出面，详见 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`；不保留严重级别或平台内修复状态。
 9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
-10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户、机构层级、Doris 表登记或大文件异步导出预建扩展。Review 通过前不创建 `V1__baseline.sql`。
+10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户或机构层级预建扩展。C1–C3 已完成但尚未获得用户签字；签字前不创建 `V1__baseline.sql`、不生成后端实现。
 
 ## 2. 全局数据库约定
 
@@ -342,7 +342,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 
 ## 12. P0 支撑对象
 
-以下老系统能力仍是新服务启动或产品交付所需，但不改变核心领域边界；`V1` 设计时应按当前真实查询逐表核对：
+账号权限、审计、设置、导出、幂等、告警、External Client 和 Quartz 的目标物理模型已在 `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md` 完成 Review。以下旧能力只作为迁移差异核对，不代表复用旧表：
 
 - `app_user`、角色/权限关联和 `audit_log`；禁止 SQL 写入固定管理员密码。
 - `system_setting`；需要为 key 建唯一/主键，并对已知设置值做类型和范围校验。
@@ -430,13 +430,30 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 
 ## 15. Review 门槛与后续步骤
 
-阶段 1 的设计产物已覆盖 P0 表、关系、状态、唯一约束、版本边界和关键索引。进入阶段 2 前必须 Review 确认本文；Review 前：
+C1–C3 已完成：
+
+- `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`：预检明细、保留、查询、导出和权限；
+- `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`：单机构 LIST 分区、临时分区替换、备份与回滚；
+- `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`：RBAC、审计、设置、幂等、告警、External Client 和 Quartz；
+- `PHASE1_TARGET_MODEL_SIGNOFF.md`：签字范围、授权条件和实施顺序。
+
+当前准确状态：
+
+```text
+Target Model: READY_FOR_SIGNOFF
+Implementation Authorization: NO
+Flyway V1: NOT_AUTHORIZED
+OpenAPI Implementation: NOT_GENERATED
+Backend API: NOT_IMPLEMENTED
+```
+
+用户明确批准前：
 
 - 不创建、命名或提交 `server/src/main/resources/db/migration/V1__baseline.sql`；
-- 不移动历史 SQL，避免把“归档位置调整”误当成已建立 Flyway 链；
-- 不修改当前实体去适配尚未 Review 的物理表名；
-- 不连接、修改或 Flyway baseline 老 `df_ygt/df_etl` 数据库。
+- 不生成 OpenAPI 文件或 Controller/DTO/Service 实现；
+- 不移动历史 SQL 以伪装成已建立迁移链；
+- 不修改当前实体去适配尚未签字的物理表；
+- 不连接、修改或 baseline 老 `df_ygt/df_etl` 数据库；
+- 不修改 PostgreSQL、Doris、RabbitMQ 或 Quartz 生产结构。
 
-Review 通过前还必须确认问题明细的物理载体、保留期、查询/导出和权限边界，并完成与 `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TASKS.md` 的一致性检查。
-
-Review 通过后，阶段 2 应一次完成：物理 DDL、Flyway/配置、legacy 隔离、实体和 Repository 对齐、迁移前检查、迁移后验证、失败回退/前向修复说明，以及独立空 PostgreSQL 的 `migrate/validate` 和真实启动验证。
+用户签字并将实施授权改为 `YES` 后，阶段 2 按 `PHASE1_TARGET_MODEL_SIGNOFF.md` 的 D1–D10 顺序执行：先生成 OpenAPI，再生成物理 DDL/Flyway，完成空库迁移验证后才实施后端和真实联调。
