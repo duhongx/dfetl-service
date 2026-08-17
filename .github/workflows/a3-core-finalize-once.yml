@@ -27,6 +27,9 @@ jobs:
           python scripts/a3_patch_precheck_monitor.py
           python scripts/a3_patch_validation.py
 
+      - name: Show generated source around parser error
+        run: nl -ba web/app/etl/app-shell-final.tsx | sed -n '318,336p'
+
       - name: Install dependencies
         working-directory: web
         run: npm ci
