@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：Active Spec 语义收口完成 + 前端产品模型优先  
+> 当前阶段：P0 PostgreSQL 最终表清单已冻结；正在 Review 全量 FK Matrix  
 > 新系统分支：`duhongx/dfetl-service/main`  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -24,6 +24,7 @@
 - [x] 2026-08-17 接入资源/单机构 Route 模型收口。
 - [x] 2026-08-17 Task Version / Validation Policy Active Spec 语义迁移。
 - [x] 运行层旧多机构 Route FK 扫描和修正。
+- [x] P0 PostgreSQL 最终表清单及数量冻结。
 
 ## 3. 当前接入资源模型
 
@@ -69,12 +70,7 @@ Institution + Dataset
 - 一 Institution + Dataset 一条未删除 Route。
 - Source 必须属于同一 Institution。
 - Route Version 保存 Institution/Dataset/Dataset Version/Source/Target/Field Resolution 不可变上下文。
-- Route Version 提供四元父唯一键：
-
-```text
-(id,institution_id,dataset_id,dataset_version_id)
-```
-
+- Route Version 提供四元父唯一键 `(id,institution_id,dataset_id,dataset_version_id)`。
 - 不存在 Route/Route Version 覆盖机构关系表。
 
 ## 5. 当前 Task 模型
@@ -120,14 +116,7 @@ Task
 → Dataset 合同能力强制
 ```
 
-运行时固定到：
-
-```text
-sync_execution.validation_method
-sync_execution.validation_source
-sync_execution.validation_source_revision
-sync_execution.validation_contract_forced
-```
+运行时固定到 `sync_execution` 校验快照。
 
 明确不建立：
 
@@ -157,7 +146,7 @@ Auto revalidate/fail_block
 - 只人工启动。
 - 同 Route 一个活动 Precheck。
 - Route 为单机构，因此 `precheck_run` 保存单 Institution 上下文。
-- Issue Summary 只保存 STRUCTURE/FIELD/COMPOSITE 汇总；不重复 Institution 维度，不保存行级问题。
+- Issue Summary 只保存 STRUCTURE/FIELD/COMPOSITE 汇总，不保存行级问题。
 - Precheck 与正式同步严格分离。
 
 ### Validation / Message
@@ -173,52 +162,40 @@ Auto revalidate/fail_block
 - 大规模 Key/Diff 存 Doris 技术表。
 - Delete Diff 不自动应用；实际应用必须 Dry Run + 二次确认 + Audit。
 
-## 8. 2026-08-17 Active Spec 清理完成范围
+## 8. P0 PostgreSQL 最终表数量
 
-第一轮资源/Route：
-
-```text
-PRODUCT_AND_BUSINESS_DECISIONS.md
-TARGET_METADATA_MODEL.md
-P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md
-P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
-DATABASE_MIGRATION_BASELINE.md
-LEGACY_FUNCTION_ALIGNMENT.md
-JAVA_PRODUCTION_MIGRATION_REVIEW.md
-```
-
-第二轮 Task Version / Validation Policy：
+已由用户确认冻结：
 
 ```text
-P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md
-P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md
-EXTERNAL_API_REVIEW.md
-QUARTZ_JOBSTORE_REVIEW.md
+DFETL P0 领域/控制表       39
+Quartz JDBC JobStore       11
+--------------------------------
+Flyway V1 负责创建         50
 ```
 
-全 Spec 扫描发现并修正：
+- `alert_rule_channel` 保留并计入 39 张 DFETL 表。
+- Quartz 11 张官方 PostgreSQL JobStore 表单独统计。
+- `flyway_schema_history` 由 Flyway 自身管理，不计入上述 50 张。
+- 详细清单见 `P0_PHYSICAL_TABLE_DICTIONARY.md`。
 
-```text
-P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
-P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md
-P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md
-P0_PHYSICAL_TABLE_DICTIONARY.md
-P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
-TASKS.md
-```
+## 9. 当前 Review 顺序
 
-扫描标准不是旧字符串为 0，而是：**任何旧名只允许以“历史/已废止/明确不建立/不得进入 V1”出现，不得作为 Active Model。**
+1. [x] P0 PostgreSQL 最终表清单 + 数量。
+2. [ ] 全量 FK Matrix。
+3. [ ] Business/Concurrency Unique Matrix。
+4. [ ] Status / Enum / CHECK Matrix。
+5. [ ] Delete Behavior Matrix。
+6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-## 9. 当前尚未完成
+下一项只处理：**全量 FK Matrix：Child Columns / Parent Unique / ON DELETE / Child Index**。
 
-这些属于技术一致性核对，不是待业务重新确认：
+## 10. 阶段 1 最终门槛
 
-- [ ] 最终 P0 PostgreSQL 表清单和总数。
-- [ ] 全量 FK：子列 / 父 Unique / ON DELETE / 子索引矩阵。
-- [ ] 全量 Business Unique / Concurrency Unique 矩阵。
-- [ ] 全量状态/CHECK 枚举统一。
-- [ ] 删除行为矩阵。
-- [ ] Execution/Validation/Outbox Snapshot 最小充分性最终 Review。
+- [x] Active Spec 业务语义收口完成。
+- [x] P0 PostgreSQL/Quartz 最终表清单和数量已冻结。
+- [ ] 全量 FK/Unique/Status/Delete Matrix 完成。
+- [ ] Execution/Validation/Outbox Snapshot 最终 Review 完成。
 - [ ] 前端页面、导航、交互、文案按当前模型完成 100%。
 - [ ] `PHASE1_FINAL_REVIEW.md`。
 - [ ] 用户最终签字后才进入数据库/后端实施。
