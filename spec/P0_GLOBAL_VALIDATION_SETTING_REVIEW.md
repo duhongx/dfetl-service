@@ -1,102 +1,89 @@
-# P0 全局默认校验方式系统设置 Review
+# P0 Global Validation Default System Setting Review
 
-> 状态：阶段 1 工作包 3 一致性 Review 已确认  
-> 日期：2026-08-15  
-> 系统设置字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY.md`  
-> 校验字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
-> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
+> 状态：已确认；2026-08-17 独立 Global Policy Table 清理完成  
+> 首次确认：2026-08-15  
+> System Setting 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY.md`  
+> Validation 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`
 
 ## 1. 已确认结论
 
-全局默认校验方式不再使用独立单例表。
+Global Default Validation Method 不使用独立单例表。
 
 删除：
 
 ```text
 global_validation_policy
-GlobalValidationPolicy entity
-GlobalValidationPolicyRepository
-独立全局校验策略 Service
+GlobalValidationPolicy Entity/Repository/Service
+固定 id=1 的 Policy Row
 ```
 
-改为使用已经确认的通用系统设置表：
+改用：
 
 ```text
-system_setting
+system_setting[validation.default_method]
 ```
 
-注册设置项：
+## 2. 注册项
 
 ```text
 setting_key = validation.default_method
 ```
 
-## 2. 设置值
-
-允许值固定为：
+允许值：
 
 ```text
 ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
-注册默认值固定为：
+注册默认：
 
 ```text
 ROW_COUNT
 ```
 
-该设置不允许为空，也不允许保存未注册值或任意文本。
+Setting Registry 定义：Key、Value Type、Default、Allowed Enum、Sensitive Flag、中文说明。
 
-代码中的统一设置注册表负责定义：
+该 Setting 是非敏感 Enum。
+
+## 3. 缺失行语义
+
+`system_setting` 只需要保存管理员真实覆盖值。
+
+数据库不存在该 Key 时：
 
 ```text
-key
-value type
-默认值
-允许枚举
-是否敏感
-中文说明
+应用直接使用注册默认 ROW_COUNT
 ```
 
-`validation.default_method` 是普通非敏感枚举设置。
+首次保存 Insert；后续按 `revision` 乐观锁 Update。
 
-## 3. 缺失行和读取语义
+Flyway V1 不要求预插入固定单例 Policy Row，也不因 Setting Row 缺失阻止启动。
 
-`system_setting` 只保存用户实际覆盖值；设置行尚未创建时，应用直接使用注册默认值：
-
-```text
-ROW_COUNT
-```
-
-第一次保存时插入对应设置行；后续修改使用 `revision` 乐观锁更新。
-
-不要求 Flyway V1 插入一条固定设置数据，也不因设置行缺失阻止应用启动。
-
-## 4. 最终校验方式解析
-
-每次执行启动前按以下顺序解析：
+## 4. 最终 Validation Method 解析
 
 ```text
-sync_task.validation_method_override 非空
-→ standard_dataset.validation_method_override 非空
+sync_task.validation_method_override
+→ standard_dataset.validation_method_override
 → system_setting[validation.default_method]
-→ 注册默认值 ROW_COUNT
-→ 数据集合同能力强制
+→ 注册默认 ROW_COUNT
+→ Dataset 合同能力强制
 ```
 
-最终结果仍然只有：
+最终结果：
 
 ```text
 ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
-无真实业务主键的数据集最终只能使用 `ROW_COUNT`。如果全局默认配置为 `ROW_COUNT_CHECKSUM`，无业务主键任务在执行启动时按数据集合同明确收敛为 `ROW_COUNT`，并在执行快照中记录来源为 `CONTRACT`；这不是执行过程中的静默降级。
+无真实业务主键 Dataset 最终只能 ROW_COUNT。
 
-## 5. 执行快照
+如果 Global Default=ROW_COUNT_CHECKSUM，但 Dataset 合同无真实业务主键，运行上下文明确记录合同强制为 ROW_COUNT；这是启动时合同解析，不是运行中的静默降级。
 
-执行启动后保存：
+## 5. Execution Snapshot
+
+Execution 启动保存：
 
 ```text
 validation_method
@@ -105,75 +92,62 @@ validation_source_revision
 validation_contract_forced
 ```
 
-来源为全局设置时：
+Global 来源：
 
 ```text
 validation_source = GLOBAL
 ```
 
-如果 `system_setting` 中存在覆盖行：
+有 Setting Row：
 
 ```text
 validation_source_revision = system_setting.revision
 ```
 
-如果使用注册默认值且数据库中没有设置行：
+使用注册默认且无 Row：
 
 ```text
 validation_source_revision = NULL
 ```
 
-来源为数据集、任务或合同强制时，继续使用对应对象的 revision 或空值规则。
+已经启动的 Execution 不受后续 Global Setting 修改影响。
 
-已经启动的执行不受后续全局设置修改影响；后续新执行重新解析。
+## 6. 修改和 Audit
 
-## 6. 修改和审计
-
-系统设置页面提供“默认校验方式”配置：
+System Settings 页面提供：
 
 ```text
-ROW_COUNT
-ROW_COUNT_CHECKSUM
+Default Validation Method:
+ROW_COUNT / ROW_COUNT_CHECKSUM
 ```
 
-修改流程：
+修改：
 
 ```text
-读取当前设置或注册默认值
-→ 校验枚举
-→ 插入或按 revision 更新 system_setting
-→ 写 audit_log 成功或失败记录
+读取 Setting Row 或注册默认
+→ 校验 Enum
+→ Insert / revision Update
+→ audit_log 成功/失败
 ```
-
-审计摘要记录旧值、新值和设置 key，不保存敏感信息。
 
 不建立：
 
 ```text
-全局校验策略版本表
-策略发布状态
-待生效策略
-策略历史表
-独立全局校验审计表
+Global Validation Policy Version
+Policy Publish/Pending State
+Policy History
+独立 Global Policy Audit
 ```
 
-## 7. 物理模型影响
+## 7. 目标模型影响
 
-P0 PostgreSQL 表清单删除：
+P0 PostgreSQL 表清单不存在：
 
 ```text
 global_validation_policy
 ```
 
-继续保留：
-
-```text
-system_setting
-standard_dataset.validation_method_override
-sync_task.validation_method_override
-```
-
-最终校验配置存储只有：
+Validation 配置只有：
 
 ```text
 system_setting[validation.default_method]
@@ -181,11 +155,9 @@ standard_dataset.validation_method_override
 sync_task.validation_method_override
 ```
 
-## 8. API 和前端
+## 8. Frontend
 
-系统设置接口只暴露注册项，不允许客户端创建任意 key。
-
-前端展示：
+前端只展示：
 
 ```text
 默认校验方式：行数校验 / 行数与内容校验
@@ -196,30 +168,30 @@ sync_task.validation_method_override
 ```text
 关闭校验
 行数容差
-校验回看窗口
-自动复检
-失败动作
+Validation Lookback
+Auto Revalidate
+Fail Action
 ```
 
-## 9. 被废止的旧描述
+## 9. 旧模型清理状态
 
-以下内容不得进入 Flyway V1、实体、Repository、OpenAPI 或 Vue 类型：
+以下旧描述不得进入 V1/Entity/Repository/OpenAPI/Frontend：
 
 ```text
 global_validation_policy
-固定 id=1 的全局校验策略行
-独立全局策略 revision 和 CRUD
-应用启动依赖单例策略行存在
+固定 id=1 Policy Row
+独立 Global Policy Revision/CRUD
+启动依赖 Global Policy Row 存在
 ```
 
-其他文档中残留的 `global_validation_policy` 由本文件和当前校验物理字典覆盖；阶段 1 最终一致性清理时机械删除，不再重新讨论。
+2026-08-17 Active Spec 已完成该旧模型的机械迁移；剩余出现该字符串的地方只允许是“历史/已废止/明确不建立”说明。
 
 ## 10. 验收
 
-- P0 PostgreSQL 表清单不存在 `global_validation_policy`。
-- `validation.default_method` 是受注册表控制的系统设置。
-- 设置行缺失时使用注册默认值 `ROW_COUNT`。
-- 只接受 `ROW_COUNT/ROW_COUNT_CHECKSUM`。
-- 新执行按任务、数据集、系统设置、合同能力顺序解析。
-- 历史执行使用启动时校验快照。
-- 全局设置修改使用 `system_setting.revision` 和通用 `audit_log`。
+- P0 无 `global_validation_policy`。
+- `validation.default_method` 为受注册表控制的 System Setting。
+- Row 缺失使用 ROW_COUNT。
+- 只接受 ROW_COUNT/ROW_COUNT_CHECKSUM。
+- 新 Execution 按 Task/Dataset/Global/Contract 解析。
+- 历史 Execution 使用启动 Snapshot。
+- 修改通过 `system_setting.revision + audit_log`。
