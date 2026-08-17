@@ -2,7 +2,7 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：P0 技术模型 Review 已通过；P-002 已确认，Phase 1 总体等待前端验收、P-003 与 G-001 最终签字  
+> 状态：P0 技术模型 Review 已通过；P-002/P-003 产品入口决策已收口；Phase 1 总体等待前端验收与 G-001 最终签字  
 > 最近更新：2026-08-17  
 > 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Final Review：`spec/PHASE1_FINAL_REVIEW.md`
@@ -123,8 +123,9 @@ G-001 最终签字前必须完成：
 - [ ] 所有菜单真实 URL。
 - [ ] lint/build/逐页原型验收。
 - [x] **P-002 管理员账号管理入口决策：`系统设置 → 账号管理`。**
+- [x] **P-003 Help/Docs 入口决策：`顶部右侧 Help → /docs`。**
 - [ ] 账号管理页面按已确认入口实际落页并验收。
-- [ ] P-003 Help/Docs 入口确认并落页。
+- [ ] 顶部右侧 Help 与 `/docs` 页面按已确认入口实际落页并验收。
 
 前端必须与已冻结 Spec 100% 对齐。
 
@@ -139,8 +140,8 @@ G-001 最终签字前必须完成：
 - [x] Snapshot 最小充分性 Review。
 - [x] `PHASE1_FINAL_REVIEW.md` 完成。
 - [x] P-002 产品入口决策收口。
-- [ ] P-003 产品入口决策收口。
-- [ ] Frontend 与 Spec 100% 一致，包括账号管理实际落页。
+- [x] P-003 产品入口决策收口。
+- [ ] Frontend 与 Spec 100% 一致，包括账号管理和 Help→`/docs` 实际落页。
 - [ ] 用户 G-001 最终签字。
 
 最终授权语句：
