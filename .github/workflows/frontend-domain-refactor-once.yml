@@ -1,0 +1,78 @@
+name: One-time frontend domain refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/frontend-domain-refactor-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download and apply reviewed refactor patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata="$({ curl -fsS 'https://ntfy.sh/dfetl-refactor-patch-20260817-8f4c2a/json?poll=1&since=all' || true; } \
+            | jq -r 'select(.event == "message") | .message' \
+            | grep '^PATCH_URL=' \
+            | tail -n 1)"
+          test -n "$metadata"
+          patch_url="$(printf '%s' "$metadata" | cut -d';' -f1 | sed 's/^PATCH_URL=//')"
+          test -n "$patch_url"
+          curl -fsSL "$patch_url" -o /tmp/dfetl-refactor.patch
+          test -s /tmp/dfetl-refactor.patch
+
+          already_aligned=false
+          if grep -q 'export type BusinessSystemInstance' web/app/etl/model.ts \
+            && ! grep -q 'export type BusinessCatalog' web/app/etl/model.ts \
+            && grep -q 'precheckRouteDetail' web/app/etl/routing.ts \
+            && grep -q '\[x\] `B4`' spec/TASKS.md; then
+            already_aligned=true
+          fi
+
+          if [ "$already_aligned" = false ]; then
+            git apply --3way --index /tmp/dfetl-refactor.patch
+          fi
+
+          grep -q 'export type BusinessSystemInstance' web/app/etl/model.ts
+          ! grep -q 'export type BusinessCatalog' web/app/etl/model.ts
+          grep -q 'institutionCodes: string\[\]' web/app/etl/model.ts
+          grep -q 'sourceDatasourceCodes: string\[\]' web/app/etl/model.ts
+          grep -q 'precheckRouteDetail' web/app/etl/routing.ts
+          grep -q 'taskVersions' web/app/etl/app-shell-final.tsx
+          grep -q 'permission' web/app/etl/app-shell-final.tsx
+          ! grep -q 'structureStatus' web/app/etl/model.ts
+
+      - name: Verify frontend
+        shell: bash
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Commit verified refactor and remove one-time workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github/workflows -maxdepth 1 -type f \( -name '*once*.yml' -o -name '*refactor*.yml' \) ! -name 'frontend-check.yml' -delete
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(web): align system instances routes task versions and precheck'
+          git push origin HEAD:main
