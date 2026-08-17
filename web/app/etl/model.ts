@@ -62,9 +62,17 @@ export type SourceDataSource = {
   defaultSchema: string;
   jdbcUrl: string;
   username: string;
+  sslEnabled: boolean;
+  readOnly: boolean;
+  queryTimeoutSeconds: number;
+  connectTimeoutSeconds: number;
+  socketTimeoutSeconds: number;
+  poolMaxSize: number;
   status: EnabledStatus;
   testStatus: Exclude<TestStatus, "PARTIAL">;
   lastTestedAt: string;
+  lastTestError: string;
+  description: string;
 };
 
 export type TargetEndpoint = {
@@ -75,6 +83,8 @@ export type TargetEndpoint = {
   enabled: boolean;
   ordinal: number;
   testStatus: Exclude<TestStatus, "PARTIAL">;
+  lastTestedAt: string;
+  lastTestError: string;
 };
 
 export type TargetDataSource = {
@@ -85,6 +95,8 @@ export type TargetDataSource = {
   username: string;
   status: EnabledStatus;
   testStatus: TestStatus;
+  lastTestedAt: string;
+  lastTestError: string;
   endpoints: TargetEndpoint[];
   description: string;
 };
