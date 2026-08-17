@@ -2,7 +2,7 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：Active Spec 语义收口完成 + 前端优先  
+> 状态：P0 PostgreSQL 表清单已冻结 + 前端优先  
 > 最近更新：2026-08-17  
 > 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`
@@ -131,8 +131,6 @@ Active Spec 语义收口
 
 ### 2.2 Task Version / Validation Policy 机械迁移
 
-按已确认顺序完成：
-
 - [x] `P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md`：删除 Global/Dataset Validation Policy 表，合并 Dataset Override。
 - [x] `P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`：删除 Task Version 语义和旧 Route Institution FK。
 - [x] `EXTERNAL_API_REVIEW.md`：新 Task 直接创建 `sync_task`，不创建第一版 Task Version。
@@ -145,6 +143,7 @@ Active Spec 语义收口
 - [x] `P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md`：Delete Snapshot 改四元 Route FK。
 - [x] `P0_PHYSICAL_TABLE_DICTIONARY.md`：更新总索引、Task Version 替代关系和 Validation 最终存储。
 - [x] `P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md`：记录扫描规则和完成情况。
+- [x] `P0_SUPPORT_OBJECT_REVIEW.md`：补回 `alert_rule_channel`，并固定 Quartz 11 张官方表。
 
 ### 2.4 扫描验收原则
 
@@ -162,11 +161,33 @@ Active Spec 语义收口
 
 ---
 
-## 3. 当前最高优先级：前端页面 100%
+## 3. P0 PostgreSQL 最终表清单：已确认
+
+用户已确认：
+
+```text
+DFETL P0 领域/控制表       39
+Quartz JDBC JobStore       11
+--------------------------------
+Flyway V1 负责创建         50
+```
+
+其中：
+
+- [x] `alert_rule_channel` 保留为 Alert Rule ↔ Channel 多对多关系表。
+- [x] Quartz 11 张官方 PostgreSQL JobStore 表单独统计。
+- [x] `flyway_schema_history` 由 Flyway 自身维护，不计入 P0 39、Quartz 11 或 V1 自己定义的 50 张表。
+- [x] 最终表清单详见 `P0_PHYSICAL_TABLE_DICTIONARY.md` 和 `P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md`。
+
+该数量已经冻结；后续不得因实现方便随意增加 P0 持久化表。
+
+---
+
+## 4. 当前最高优先级：前端页面 100%
 
 目标：先把页面、URL、交互、字段和文案完全确定，再进入后端实现。
 
-### 3.1 导航 / 信息架构
+### 4.1 导航 / 信息架构
 
 - [ ] 首页/工作台与最终导航一致。
 - [ ] 接入资源覆盖 Institution、Business Catalog、Source、Target、医共体标准。
@@ -175,7 +196,7 @@ Active Spec 语义收口
 - [ ] Task Center、Data Quality、Operations、System Settings 与最终原型一致。
 - [ ] Help/Docs 和 Account Management 入口按 `PENDING_DECISIONS.md` 逐项确认。
 
-### 3.2 接入资源页面
+### 4.2 接入资源页面
 
 - [ ] Institution CRUD/启停/引用统计。
 - [ ] Business Catalog CRUD/启停/引用保护。
@@ -183,7 +204,7 @@ Active Spec 语义收口
 - [ ] Target Doris CRUD/FE Endpoint/Test/启停。
 - [ ] 医共体标准同步、列表、详情、字段合同、同步默认、Validation Override、Message Policy。
 
-### 3.3 Institution Route
+### 4.3 Institution Route
 
 - [ ] 页面先选择当前 Institution。
 - [ ] 新增 Route：Dataset → Source → Schema → Object → Target。
@@ -194,7 +215,7 @@ Active Spec 语义收口
 - [ ] Dataset 标准变化后 OUTDATED 展示。
 - [ ] Route 详情跳转 Precheck/Task，不混入运行详情。
 
-### 3.4 Task / Precheck / Validation / Operations
+### 4.4 Task / Precheck / Validation / Operations
 
 - [ ] Task 创建/编辑使用当前配置模型，不出现 Task Version UI。
 - [ ] Precheck 人工启动、汇总、再次 Precheck 交互完整。
@@ -203,7 +224,7 @@ Active Spec 语义收口
 - [ ] Message Policy 只在 Dataset 页编辑，Task 只读展示生效值。
 - [ ] Alert/Log/Audit 页面完整。
 
-### 3.5 前端验收
+### 4.5 前端验收
 
 - [ ] `npm run lint` 通过。
 - [ ] `npm run build` 通过。
@@ -213,23 +234,23 @@ Active Spec 语义收口
 
 ---
 
-## 4. 阶段 1 尚未完成的技术一致性工作
+## 5. 阶段 1 技术一致性 Review 顺序
 
-这些不需要重新讨论业务，只需继续技术核对：
+按用户确认顺序，一次只讨论一个：
 
-- [ ] 形成最终 P0 PostgreSQL 表清单及总数。
-- [ ] 建立完整 FK 矩阵：子列、父唯一键、ON DELETE、子索引。
-- [ ] 建立业务唯一性/并发唯一约束矩阵。
-- [ ] 统一全部状态/CHECK 枚举。
-- [ ] 建立删除行为矩阵。
-- [ ] 最终复核 Execution/Validation/Outbox Snapshot 字段最小充分性。
-- [ ] 完成 `PHASE1_FINAL_REVIEW.md`。
+1. [x] P0 PostgreSQL 最终表清单 + 数量。
+2. [ ] 全量 FK Matrix。
+3. [ ] Business/Concurrency Unique Matrix。
+4. [ ] Status / Enum / CHECK Matrix。
+5. [ ] Delete Behavior Matrix。
+6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-这些工作可以与前端推进并行做文档核对，但在用户要求“前端优先”的阶段不主动推进后端代码或数据库。
+下一项只讨论：**全量 FK Matrix**。
 
 ---
 
-## 5. 前端之后的后端阶段
+## 6. 前端之后的后端阶段
 
 1. 最终 P0 PostgreSQL/Flyway V1；
 2. Resource/Route/Task Java Entity/Repository；
@@ -242,11 +263,12 @@ Active Spec 语义收口
 
 ---
 
-## 6. 阶段 1 最终签字门槛
+## 7. 阶段 1 最终签字门槛
 
 - [x] Active Spec 不再把旧业务系统实例模型当有效设计。
 - [x] Active Spec 不再把 Task Version/独立 Validation Policy 当有效目标模型。
-- [ ] P0 表清单、FK、Unique、Status、Delete Behavior 最终矩阵一致。
+- [x] P0 PostgreSQL/Quartz 最终表清单和数量已冻结。
+- [ ] FK、Unique、Status、Delete Behavior 最终矩阵一致。
 - [ ] 前端产品模型与 Spec 一致。
 - [ ] `PHASE1_FINAL_REVIEW.md` 完成。
 - [ ] 用户明确确认：`目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。`
