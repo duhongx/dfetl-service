@@ -41,6 +41,12 @@ function parseSchedule(dataset: Dataset) {
   return { mode: "INHERIT" as const, interval: "", cron: "", timezone: "" };
 }
 
+function positiveInteger(value: string) {
+  if (!value.trim()) return false;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
 export function DatasetPolicyEditor({ dataset, onClose, onSave }: Props) {
   const initialSchedule = dataset ? parseSchedule(dataset) : { mode: "INHERIT" as const, interval: "", cron: "", timezone: "" };
   const supportsMessage = dataset ? messageDatasets.has(dataset.code) : false;
@@ -62,17 +68,21 @@ export function DatasetPolicyEditor({ dataset, onClose, onSave }: Props) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    setError("");
     if (validationOverride === "ROW_COUNT_CHECKSUM" && dataset.businessKeyCount === 0) return setError("无真实业务主键的数据集不能配置 ROW_COUNT_CHECKSUM。");
-    if (scheduleMode === "EVERY_N_HOURS" && (!scheduleIntervalHours || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760)) return setError("EVERY_N_HOURS 的间隔必须在 1..8760 小时。此处不保存最终错峰 Cron。");
+    if (scheduleMode === "EVERY_N_HOURS" && (!scheduleIntervalHours || !Number.isInteger(Number(scheduleIntervalHours)) || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760)) return setError("EVERY_N_HOURS 的间隔必须是 1..8760 的整数小时。此处不保存最终错峰 Cron。");
     if (scheduleMode === "CRON" && !scheduleCron.trim()) return setError("CRON 模式必须填写 Cron 表达式。");
+    if (["EVERY_N_HOURS", "CRON"].includes(scheduleMode) && !scheduleTimezone.trim()) return setError("EVERY_N_HOURS / CRON 必须填写 Timezone。");
     if (messageEnabled && !supportsMessage) return setError("P0 只有三个已确认 Dataset 允许开启消息发送。");
-    if (messageEnabled && (!sourceSystem.trim() || !tenantId.trim() || !topic.trim() || !keyTemplate.trim() || !pageSize.trim())) return setError("消息启用时必须填写完整 Dataset 级消息参数。");
+    if (messageEnabled && (!sourceSystem.trim() || !tenantId.trim() || !topic.trim() || !keyTemplate.trim() || !rateLimitPerSecond.trim() || !pageSize.trim())) return setError("消息启用时必须填写完整 Dataset 级消息参数。");
+    if (messageEnabled && !positiveInteger(rateLimitPerSecond)) return setError("Rate Limit / s 必须是正整数。");
+    if (messageEnabled && !positiveInteger(pageSize)) return setError("Page Size 必须是正整数。");
     onSave(dataset.code, {
       validationOverride,
       scheduleMode,
       scheduleIntervalHours: scheduleMode === "EVERY_N_HOURS" ? scheduleIntervalHours : "",
       scheduleCron: scheduleMode === "CRON" ? scheduleCron : "",
-      scheduleTimezone: ["EVERY_N_HOURS", "CRON"].includes(scheduleMode) ? scheduleTimezone || "Asia/Shanghai" : "",
+      scheduleTimezone: ["EVERY_N_HOURS", "CRON"].includes(scheduleMode) ? scheduleTimezone.trim() : "",
       messageEnabled,
       sourceSystem,
       tenantId,
@@ -95,10 +105,10 @@ export function DatasetPolicyEditor({ dataset, onClose, onSave }: Props) {
 
         <h3 className="editor-subtitle">Dataset Sync Default（仅创建 Task 时读取）</h3>
         <div className="editor-grid">
-          <label className="editor-field"><span>Schedule Mode</span><select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as DatasetPolicyValue["scheduleMode"])}><option value="INHERIT">INHERIT</option><option value="MANUAL">MANUAL</option><option value="EVERY_N_HOURS">EVERY_N_HOURS</option><option value="CRON">CRON</option></select></label>
+          <label className="editor-field"><span>Schedule Mode</span><select value={scheduleMode} onChange={(event) => { setScheduleMode(event.target.value as DatasetPolicyValue["scheduleMode"]); setError(""); }}><option value="INHERIT">INHERIT</option><option value="MANUAL">MANUAL</option><option value="EVERY_N_HOURS">EVERY_N_HOURS</option><option value="CRON">CRON</option></select></label>
           {scheduleMode === "EVERY_N_HOURS" && <label className="editor-field"><span>Interval Hours *</span><input value={scheduleIntervalHours} onChange={(event) => setScheduleIntervalHours(event.target.value)} /><small>Dataset Default 只保存 interval + timezone，不保存最终错峰 Cron。</small></label>}
           {scheduleMode === "CRON" && <label className="editor-field"><span>Cron *</span><input value={scheduleCron} onChange={(event) => setScheduleCron(event.target.value)} /></label>}
-          {["EVERY_N_HOURS", "CRON"].includes(scheduleMode) && <label className="editor-field"><span>Timezone</span><input value={scheduleTimezone} onChange={(event) => setScheduleTimezone(event.target.value)} /></label>}
+          {["EVERY_N_HOURS", "CRON"].includes(scheduleMode) && <label className="editor-field"><span>Timezone *</span><input value={scheduleTimezone} onChange={(event) => setScheduleTimezone(event.target.value)} /></label>}
         </div>
         <div className="editor-note">Dataset Default 变化不自动修改已有 Task。EVERY_N_HOURS 的最终错峰 Cron 只在 Task 创建/编辑时生成并固化。</div>
 
@@ -112,7 +122,7 @@ export function DatasetPolicyEditor({ dataset, onClose, onSave }: Props) {
             <label className="editor-field"><span>Tenant ID *</span><input value={tenantId} onChange={(event) => setTenantId(event.target.value)} /></label>
             <label className="editor-field"><span>Topic *</span><input value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
             <label className="editor-field"><span>Key Template *</span><input value={keyTemplate} onChange={(event) => setKeyTemplate(event.target.value)} /></label>
-            <label className="editor-field"><span>Rate Limit / s</span><input value={rateLimitPerSecond} onChange={(event) => setRateLimitPerSecond(event.target.value)} /></label>
+            <label className="editor-field"><span>Rate Limit / s *</span><input value={rateLimitPerSecond} onChange={(event) => setRateLimitPerSecond(event.target.value)} /></label>
             <label className="editor-field"><span>Page Size *</span><input value={pageSize} onChange={(event) => setPageSize(event.target.value)} /></label>
           </div>}
           <div className="editor-note">消息只存在 Dataset 级；Task 不提供 Override。FULL 发送全量全部数据，INCREMENTAL/Backfill 发送本次范围全部数据，不支持 SKIP / NOTIFY_ONLY。</div>
