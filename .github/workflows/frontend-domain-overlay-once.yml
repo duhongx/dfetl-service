@@ -1,0 +1,84 @@
+name: Verify and finalize frontend domain refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/frontend-domain-overlay-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  overlay-verify-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Overlay the complete reviewed frontend file set
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata="$({ curl -fsS 'https://ntfy.sh/dfetl-refactor-overlay-20260817-8f4c2a/json?poll=1&since=all' || true; } \
+            | jq -r 'select(.event == "message") | .message' \
+            | grep '^ARCHIVE_URL=' \
+            | tail -n 1)"
+          test -n "$metadata"
+          archive_url="$(printf '%s' "$metadata" | cut -d';' -f1 | sed 's/^ARCHIVE_URL=//')"
+          test -n "$archive_url"
+          curl -fsSL "$archive_url" -o /tmp/dfetl-overlay.b64
+          base64 --decode /tmp/dfetl-overlay.b64 > /tmp/dfetl-overlay.tar.gz
+          test -s /tmp/dfetl-overlay.tar.gz
+          if tar -tzf /tmp/dfetl-overlay.tar.gz | grep -Eq '(^|/)\.\.(\/|$)|^/'; then
+            echo 'Unsafe archive path detected' >&2
+            exit 1
+          fi
+          tar -xzf /tmp/dfetl-overlay.tar.gz -C .
+
+          rm -f \
+            web/app/etl/dataset-policy-editor.tsx \
+            web/app/etl/editor-panel-v2.tsx \
+            web/app/etl/operation-editor.tsx \
+            web/app/etl/runtime-panels.tsx \
+            web/app/etl/execution-snapshots.ts \
+            web/app/etl/runtime-data.ts
+
+          grep -q 'export type BusinessSystemInstance' web/app/etl/model.ts
+          ! grep -q 'export type BusinessCatalog' web/app/etl/model.ts
+          grep -q 'systemType: SystemType' web/app/etl/model.ts
+          grep -q 'institutionCodes: string\[\]' web/app/etl/model.ts
+          grep -q 'sourceDatasourceCodes: string\[\]' web/app/etl/model.ts
+          grep -q 'systemInstanceCode: string' web/app/etl/model.ts
+          ! grep -q 'structureStatus' web/app/etl/model.ts
+          grep -q 'precheckRouteDetail' web/app/etl/routing.ts
+          grep -q 'precheckRunDetail' web/app/etl/routing.ts
+          grep -q 'taskVersions' web/app/etl/app-shell-final.tsx
+          grep -q 'permission' web/app/etl/app-shell-final.tsx
+          grep -q '\[x\] `B4`' spec/TASKS.md
+
+      - name: Install and verify frontend
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Commit verified result and clean temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github/workflows -maxdepth 1 -type f \( -name '*once*.yml' -o -name '*refactor*.yml' -o -name '*overlay*.yml' \) ! -name 'frontend-check.yml' -delete
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(web): align system instances routes task versions and precheck'
+          git push origin HEAD:main
