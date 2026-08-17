@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：PostgreSQL Table + FK + Unique + Status/CHECK 已确认；进入 Delete Behavior Matrix Review  
+> 当前阶段：PostgreSQL Table + FK + Unique + Status/CHECK + Delete Behavior 已确认；进入 Snapshot 最小充分性 Review  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -13,21 +13,21 @@
 - 不修改正式 PostgreSQL 结构。
 - 新系统不认领老 `df_ygt/df_etl`。
 - 新旧 PostgreSQL/Quartz/Execution/Watermark/Validation/Message 完全隔离。
-- 前端产品模型仍优先完成；当前技术一致性 Review 只收敛 Spec。
+- 前端产品模型仍优先；当前技术一致性 Review 只收敛 Spec。
 
 ## 2. 已完成
 
-- [x] Java/Legacy SQL Audit。
-- [x] Dataset/Field Contract/Doris ODS-RAW Review。
+- [x] Java / Legacy SQL Audit。
+- [x] Dataset / Field Contract / Doris ODS-RAW Review。
 - [x] Resource + Single-Institution Route 收口。
 - [x] Mutable Task / Execution / Batch / Validation / Outbox / Delete / External API / Quartz Review。
-- [x] Business System Instance / Multi-Institution Route 旧模型清理。
+- [x] Business System Instance / Multi-Institution Route 清理。
 - [x] Task Version / Validation Policy 清理。
-- [x] PostgreSQL DFETL 表 39 + Quartz 11 = V1 50。
-- [x] `alert_rule_channel` 保留。
-- [x] 全量 FK Matrix。
+- [x] PostgreSQL DFETL 39 + Quartz 11 = V1 50。
+- [x] FK Matrix。
 - [x] Business / Concurrency Unique Matrix。
 - [x] Status / Enum / CHECK Matrix。
+- [x] Delete Behavior Matrix。
 
 ## 3. 当前主模型
 
@@ -61,28 +61,28 @@ Concurrency Partial Unique
 FK Support Unique
 ```
 
-- Dataset/Route 历史相同 Hash 复用原 Version。
-- External Client Name 可重复。
-- Delete Apply 成功后数据库层禁止再次真实 Apply。
-
 ### Status / CHECK
 
 ```text
-SUCCEEDED
-= 真正业务动作成功
-
-COMPLETED + result
-= 检查/分析技术完成，Result 单独表达
+SUCCEEDED = 真正业务动作成功
+COMPLETED + result = 检查/分析技术完成
 ```
 
-- Resource Test Status 与时间/错误组合固定。
-- Route `status` / `structure_status` 独立。
-- Dataset Sync Policy 不保存 EVERY_N_HOURS 最终 Cron；Task 保存最终 Cron。
-- Execution Trigger/Operation/Range/Terminal/Cancel CHECK 严格。
-- `sync_execution.validation_source = GLOBAL/DATASET/TASK/CONTRACT`。
-- `validation_run.validation_source` 额外允许 `FIXED`，且只用于 Delete Reconciliation。
-- Precheck/Validation/Delete Snapshot 使用 `COMPLETED + result`。
-- Outbox/Delete Apply/Audit/Alert/External Request 终态 CHECK 固定。
+### Delete Behavior
+
+```text
+Resource: 无引用可物理删，有引用只能停用
+Dataset/Version/Field/Contract: 永久定义历史，VOID/RETIRED 表达失效
+Route/Task: LOGICAL_DELETE
+Watermark: Task 删除不级联，仅显式 Clear 删除当前 Row
+Runtime/Audit/Request/Alert History: 永久 PostgreSQL 元数据
+Alert Rule/Channel: 可物理删，Snapshot + SET NULL 保历史
+User/External Client: 只停用
+System Setting: 无通用 DELETE
+External Nonce: 1 小时 TTL
+Doris RAW/Snapshot/Diff: 按生命周期清理，PostgreSQL Run 保留
+Quartz: 可重建投影
+```
 
 ## 5. Review 顺序
 
@@ -90,11 +90,11 @@ COMPLETED + result
 2. [x] 全量 FK Matrix。
 3. [x] Business / Concurrency Unique Matrix。
 4. [x] Status / Enum / CHECK Matrix。
-5. [ ] **Delete Behavior Matrix。**
-6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+5. [x] Delete Behavior Matrix。
+6. [ ] **Execution / Validation / Outbox Snapshot 最小充分性 Review。**
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-下一项只讨论 Delete Behavior Matrix。
+下一项只讨论 Snapshot 最小充分性 Review。
 
 ## 6. 前端仍为开发优先级
 
@@ -114,7 +114,7 @@ COMPLETED + result
 - [x] FK Matrix。
 - [x] Unique Matrix。
 - [x] Status/CHECK Matrix。
-- [ ] Delete Behavior Matrix。
+- [x] Delete Behavior Matrix。
 - [ ] Snapshot Review。
 - [ ] Frontend 与 Spec 一致。
 - [ ] `PHASE1_FINAL_REVIEW.md`。
