@@ -1,6 +1,6 @@
 # 阶段 1 剩余 Review 与后续实施规划
 
-> 状态：技术模型 Review 已通过；P-002 已确认；当前只剩 P-003、前端 100% 对齐与 G-001 最终签字  
+> 状态：技术模型 Review 已通过；P-002/P-003 已确认；当前只剩前端 100% 对齐与 G-001 最终签字  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Final Review：`spec/PHASE1_FINAL_REVIEW.md`
@@ -31,6 +31,7 @@ DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 - [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 - [x] `PHASE1_FINAL_REVIEW.md` 技术总验收。
 - [x] P-002 管理员账号管理入口：`系统设置 → 账号管理`。
+- [x] P-003 Help/Docs 入口：`顶部右侧 Help → /docs`。
 
 ## 3. 已冻结物理基线
 
@@ -57,8 +58,10 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 - [ ] 不出现 Business System Instance。
 - [ ] Task / Precheck / Validation / Operations 分工清晰。
 - [x] P-002 产品入口决策：`系统设置 → 账号管理`。
+- [x] P-003 产品入口决策：`顶部右侧 Help → /docs`。
 - [ ] 账号管理页面按该入口实际落页并验收。
-- [ ] P-003 Help/Docs 入口确认并落页。
+- [ ] 顶部右侧 Help 与 `/docs` 页面按该入口实际落页并验收。
+- [ ] 左侧业务导航不增加“使用文档”。
 
 ### 4.2 页面/交互
 
@@ -71,10 +74,11 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 - [ ] Watermark / Backfill / Recollect / Cancel 文案正确。
 - [ ] Alert / Log / Audit / System Settings 完整。
 - [ ] 账号管理：列表、新增、启停、重置密码；不建设 RBAC。
+- [ ] Help 点击后进入真实 `/docs`。
 
 ### 4.3 前端验收
 
-- [ ] 所有菜单真实 URL，可刷新/回退。
+- [ ] 所有菜单/入口真实 URL，可刷新/回退。
 - [ ] `npm run lint` 通过。
 - [ ] `npm run build` 通过。
 - [ ] 逐页核对原型、状态、空态、错误态、处理中和危险确认。
@@ -84,12 +88,12 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 
 ```text
 P-002: 已确认 → 系统设置 → 账号管理
-P-003: 待确认 → 当前建议：顶部右侧 Help → /docs
+P-003: 已确认 → 顶部右侧 Help → /docs
 ```
 
-P-002 的产品决策已经收口，但实际页面仍需完成。
+两个产品入口决策均已收口；当前没有未确认的 Phase 1 前端入口决策。
 
-当前唯一尚未确认的前端入口决策是 P-003。
+决策完成不等于页面开发完成，实际落页仍由前端 100% 验收跟踪。
 
 ## 6. 不阻塞当前技术模型冻结的事项
 
@@ -102,12 +106,13 @@ P-002 的产品决策已经收口，但实际页面仍需完成。
 
 ## 7. G-001 最终签字
 
-P-003 和前端全部完成后再次核对：
+前端全部完成后再次核对：
 
 ```text
 Frontend 与 Spec 100% 一致
-+ P-002 已按确认入口落页
-+ P-003 已确认并落页
++ 系统设置 → 账号管理 已落页
++ 顶部右侧 Help → /docs 已落页
++ 左侧无“使用文档”菜单
 + PHASE1_FINAL_REVIEW 仍无新增阻塞
 ```
 
