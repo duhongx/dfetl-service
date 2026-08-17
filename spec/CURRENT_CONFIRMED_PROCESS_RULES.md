@@ -41,7 +41,7 @@
 - 预检运行记录及字段级、规则级、机构级汇总作为审计和质量趋势依据长期保留。
 - 问题记录明细及用于还原问题上下文的原始预检数据按限期保留策略管理，不要求永久保存完整源数据。
 - 明细页面默认按敏感字段规则掩码；查看原值和导出问题明细使用独立权限并记录操作审计。
-- 问题明细的最终存储介质、默认保留期、最大保留期、同步或异步导出方式及大数据量限制，仍属于后续产品和物理模型 Review；确认前不得擅自固定为 PostgreSQL 明细表、固定 Doris 表或固定天数。
+- C1 物理 Review 已形成 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`：PostgreSQL 保存 Run/Summary/Manifest/Export Job，Doris 保存按数据集版本隔离的限期 RAW、问题记录和问题项，MinIO/S3 保存限期导出对象。该方案当前为 `CONFIRMED_FOR_SIGNOFF`，用户签字前不得创建表、固定生产参数或据此实施后端。
 - 明细到期清理后仍可查看长期汇总，但页面必须明确提示明细已清理以及清理时间。
 
 ### 2.4 与正式同步的边界
@@ -70,7 +70,7 @@
 - 旧文档中的 `FULL_ONLY + TRUNCATE + DUPLICATE_KEY` 仅作为历史术语；当前实现不得把它映射为整表 `TRUNCATE TABLE`、SeaTunnel `DROP_DATA` 或其他会清空共享表全部机构数据的操作。
 - 底层优先采用能够先完整装载和校验、再原子替换当前机构分区或范围的方案；无法原子替换时，必须单独 Review staging、失败恢复、查询空窗和机构隔离，不得简单“先删当前机构、再边读边逐批写入”。
 - 无论采用何种物理策略，都必须证明只影响当前任务所属机构，其他机构数据保持不变。
-- 具体 Doris 分区、临时分区、staging 或条件删除实现仍属于物理设计 Review；本规则只冻结业务语义，不授权立即修改 Doris DDL 或执行代码。
+- C2 物理 Review 已形成 `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`：一机构一正式 LIST 分区、Execution 临时分区、原子 `REPLACE PARTITION`、独立旧数据备份和失败回滚。该方案当前为 `CONFIRMED_FOR_SIGNOFF`；用户签字前仍不授权修改 Doris DDL 或执行代码。
 
 ## 4. 同步后校验
 
@@ -104,13 +104,13 @@
 
 - 当前阶段为“阶段 1：可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。
 - 已完成：可信 `spec/` 清理和优先级恢复、最新流程规则确认、Java 生产代码迁移与 JDK 21 编译、老库结构快照及历史 SQL 审计。
-- 正在进行：将问题记录级预检能力同步到产品基线、目标模型和任务清单；统一无主键任务的 `REPLACE_INSTITUTION_SCOPE` 语义；继续 P0 目标模型一致性 Review。
-- 尚未完成：预检明细物理载体、保留期、查询/导出和权限模型；P0 支撑对象；物理表字典、约束和索引最终签字；Flyway `V1`；独立 PostgreSQL 空库迁移、真实启动、前后端联调和端到端验收。
+- 已完成 Review、等待签字：C1 预检明细物理方案、C2 Doris 机构范围原子替换、C3 账号权限/审计/告警/External API/Quartz 支撑对象，以及核心文档一致性收口。
+- 尚未完成：用户对阶段 1 目标模型的明确签字和实施授权；OpenAPI 3.1、完整物理表字典/Flyway `V1`、独立 PostgreSQL 空库迁移、真实后端接口、Doris 能力探针、RabbitMQ/Quartz 集成、前后端联调和端到端验收。
 - 当前实施授权为 `NO`：目标模型最终签字前，不创建或固化 Flyway `V1__baseline.sql`，不依据 Review 草案批量改造数据库、后端或前端。
 - `CONFIRMED` 只表示业务语义已确认，不等于技术设计 `FROZEN`；`IMPLEMENTED` 也不等于真实环境 `VERIFIED`。
 
 ## 7. 变更控制
 
 - 本文件不授权创建或修改 Java、TypeScript、SQL、Flyway、数据库表、外键、状态机或前端信息架构。
-- 任何物理模型、API 合同和页面交互仍需以恢复后的可信基线继续 Review。
+- A1–A3 页面合同、REST API V1 和 C1–C3 物理方案已经形成；目标模型当前为 `READY_FOR_SIGNOFF`。在用户明确批准前，它们不得被解释为 `FROZEN` 或实施授权。
 - 后续新文档不得从错误规划稿反向推导“当前模型已冻结”“技术 Review 已通过”或“数据库/后端实施已授权”。

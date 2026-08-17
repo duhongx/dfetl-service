@@ -16,7 +16,7 @@
 4. 采集链路身份与不可变版本分离。链路版本只在源对象、目标 Doris、数据集版本、覆盖机构或字段解析快照等定义内容变化时生成；重复核对不生成版本。
 5. 同步任务身份与任务版本分离。未删除任务按机构和数据集唯一；任务没有重复的生命周期状态，当前版本由 `current_version_id` 唯一确定。
 6. 正式水位属于长期任务运行态。载入批次只记录单次执行进度和 Doris 最终状态，不提供跨执行断点续跑；普通失败后由人工从第 1 批重新采集。
-7. 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW。PostgreSQL 不登记 Doris 物理表或结构版本，直接读取 Doris 实际元数据并与数据集版本生成的期望合同核对。
+7. 每个标准数据集身份在一个逻辑 Doris 部署中固定共用一张 ODS；预检 RAW 按不可变 Dataset Version 建表。PostgreSQL 保存期望 Doris 合同和机构正式分区绑定，但不复制 Doris 实际列清单、分区运行态或业务数据；实际状态始终从 Doris 元数据实时核对。
 8. 预检每次扫描整条采集链路；运行记录及字段级/组合规则级汇总长期持久化，同时提供可定位具体记录和非法字段的限期问题明细。物理方案已冻结为 PostgreSQL 控制面、Doris 明细面和 S3 兼容导出面，详见 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`；不保留严重级别或平台内修复状态。
 9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
 10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户或机构层级预建扩展。C1–C3 已完成但尚未获得用户签字；签字前不创建 `V1__baseline.sql`、不生成后端实现。
@@ -56,9 +56,14 @@ erDiagram
     SYNC_EXECUTION ||--o| MESSAGE_OUTBOX : emits
     COLLECTION_ROUTE ||--o{ PRECHECK_RUN : prechecks
     PRECHECK_RUN ||--o{ PRECHECK_ISSUE_SUMMARY : summarizes
+    PRECHECK_RUN ||--|| PRECHECK_DETAIL_MANIFEST : locates
+    STANDARD_DATASET_VERSION ||--o{ DORIS_TABLE_CONTRACT : expects
+    DORIS_TABLE_CONTRACT ||--o{ DORIS_INSTITUTION_PARTITION : binds
+    SYNC_EXECUTION ||--o| DORIS_SCOPE_REPLACE_RUN : replaces
+    DORIS_SCOPE_REPLACE_RUN ||--o| DORIS_SCOPE_BACKUP_SNAPSHOT : backs_up
 ```
 
-图中省略策略、审计、告警、外部 API 和 Quartz 支撑表；它们不改变核心所有权关系。
+图中省略 RBAC、Session、审计、设置、导出、幂等、告警、External API、实例租约和 Quartz 表；完整支撑对象见 `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`。
 
 ## 4. 系统设置、机构、实例和数据源
 
@@ -104,16 +109,18 @@ erDiagram
 
 RabbitMQ 连接参数由部署配置提供。发布器按已确认契约使用持久化 Topic Exchange `YL`、持久化消息和 Publisher Confirm/Return，幂等声明 Exchange；数据库不保存可编辑 `exchange_name`。
 
-### 5.3 Doris 实际表与固定命名
+### 5.3 Doris 期望合同、实际元数据和固定命名
 
-不建立 `doris_table_contract`、Doris 表登记表或 Doris 结构版本表。
+建立最小的 `doris_table_contract` 和 `doris_institution_partition` 控制面对象，但它们只保存期望合同、Hash、固定命名和机构分区绑定，不成为 Doris 实际元数据的副本或事实来源。
 
-- 每个标准数据集在一个逻辑 Doris 部署中固定对应一张 `ods_` 正式表和一张 `raw_` 预检表，多家机构共享，通过标准机构编码隔离数据。
-- 数据库名来自目标数据源配置，表名由数据集编码和固定 `ods_`/`raw_` 命名规则确定；采集链路和任务不能自由填写目标表名。
-- 期望结构由不可变 `standard_dataset_version`、字段定义和字段转换合同生成。
-- 平台直接查询 Doris `information_schema.columns`，必要时读取 `SHOW CREATE TABLE`，展示并核对实际结构。
-- 普通执行只校验实际表，不自动建表、加字段或修改表结构。创建或重建 Doris 表只能由用户显式发起，并使用同一套 DDL 生成器。
-- RAW 业务列全部为字符串且允许 `NULL`，并包含预检运行和链路隔离列；PostgreSQL 不保存 Doris 原始预检行。
+- 每个标准数据集身份在一个逻辑 Doris 部署中固定对应一张 `ods_` 正式表，多家机构共享并通过标准机构编码隔离。
+- 预检 RAW 按不可变 Dataset Version 创建 `raw_precheck_<dataset_hash>_v<version>`；同一版本的 Route/Run 共用，避免不同字段合同写入同一物理表。
+- 问题记录和问题项使用内部共享明细表；Run 到物理载体的对应关系由 `precheck_detail_manifest` 表达。
+- 数据库名来自目标数据源配置，所有表名和分区名由固定生成器确定；采集链路和任务不能自由填写。
+- 期望结构由不可变 `standard_dataset_version`、字段定义和字段转换合同生成并保存 Hash；平台仍实时查询 Doris `information_schema`、分区元数据和 `SHOW CREATE TABLE` 判断 `MATCHED/MISMATCH/MISSING`。
+- 普通执行只校验实际表，不自动建表、加字段、维护分区或修改结构。建表、机构分区维护和重建只能由用户显式发起，并使用同一套 DDL 生成器。
+- RAW 业务列全部为字符串且允许 `NULL`；PostgreSQL 不保存 Doris 原始预检行、实际列清单或业务数据。
+- 无业务主键 ODS 的单机构 LIST 正式分区、临时分区切换和备份回滚以 `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md` 为准。
 
 ## 6. 采集链路和字段解析快照
 
