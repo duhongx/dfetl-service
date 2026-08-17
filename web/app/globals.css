@@ -173,3 +173,10 @@ td span small { color: #8995a7; font-size: 9px; }
   .details, .form-grid { grid-template-columns: 1fr; }
   .details > div:nth-child(odd) { border-right: 0; }
 }
+
+/* DFETL frontend domain refactor additions */
+.top-actions > select { min-height: 34px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--text); }
+.issue-item { padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
+.issue-item > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.issue-item > div:first-child span { color: var(--muted); font-size: 10px; }
+.issue-item > .btn { margin-top: 10px; }

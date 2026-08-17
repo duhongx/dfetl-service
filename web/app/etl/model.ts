@@ -1,15 +1,15 @@
 export type AppPage =
   | "dashboard"
   | "institutions"
-  | "businessCatalogs"
-  | "sourceDatasources"
-  | "targetDatasources"
+  | "systemInstances"
+  | "datasources"
   | "datasets"
   | "routes"
   | "tasks"
   | "taskDetail"
   | "precheck"
-  | "precheckDetail"
+  | "precheckRouteDetail"
+  | "precheckRunDetail"
   | "monitor"
   | "executionDetail"
   | "validationOverview"
@@ -19,13 +19,16 @@ export type AppPage =
   | "audit"
   | "globalSettings"
   | "registrySettings"
+  | "validationPolicy"
+  | "dorisTables"
   | "externalApi"
   | "mappingRules"
-  | "accounts"
+  | "security"
   | "docs";
 
 export type EnabledStatus = "ENABLED" | "DISABLED";
 export type TestStatus = "UNTESTED" | "SUCCESS" | "PARTIAL" | "FAILED";
+export type SystemType = "HIS" | "LIS" | "PACS" | "EMR" | "OTHER";
 
 export type Institution = {
   id: string;
@@ -38,22 +41,24 @@ export type Institution = {
   description: string;
 };
 
-export type BusinessCatalog = {
+export type BusinessSystemInstance = {
   id: string;
   code: string;
   name: string;
-  description: string;
+  systemType: SystemType;
+  vendor: string;
+  productVersion: string;
+  institutionIds: string[];
+  datasourceIds: string[];
   status: EnabledStatus;
+  description: string;
+  updatedAt: string;
 };
 
 export type SourceDataSource = {
   id: string;
   code: string;
   name: string;
-  institutionCode: string;
-  institutionName: string;
-  businessCatalogCode: string;
-  businessCatalogName: string;
   dbType: "POSTGRESQL" | "MYSQL" | "ORACLE" | "SQLSERVER";
   connectionMode: "HOST_PORT" | "JDBC_URL";
   host: string;
@@ -121,35 +126,34 @@ export type Dataset = {
 
 export type RouteRow = {
   id: string;
-  institutionCode: string;
-  institutionName: string;
   datasetCode: string;
   datasetName: string;
   datasetVersion: number;
+  systemInstanceId: string;
+  systemInstanceName: string;
+  sourceId: string;
   sourceCode: string;
   sourceName: string;
-  businessCatalog: string;
   schema: string;
   object: string;
   objectType: "TABLE" | "VIEW" | "MATERIALIZED_VIEW";
+  targetId: string;
   targetCode: string;
   targetName: string;
+  institutionIds: string[];
   version: number;
-  status: EnabledStatus;
-  structureStatus: "NOT_CHECKED" | "PASSED" | "FAILED" | "OUTDATED";
-  structureCheckedAt: string;
+  contractHash: string;
+  lastPrecheckRunId: string | null;
+  lastPrecheckResult: "PASS" | "ISSUES" | null;
+  deletedAt: string | null;
 };
 
-export type TaskRow = {
+export type TaskVersion = {
   id: string;
-  name: string;
-  institutionCode: string;
-  institutionName: string;
-  datasetCode: string;
-  datasetName: string;
-  datasetVersion: number;
+  versionNo: number;
   routeId: string;
   routeVersion: number;
+  datasetVersion: number;
   taskKind: "FULL_ONLY" | "FULL_THEN_INCREMENTAL";
   writeMode: "REPLACE_INSTITUTION_SCOPE" | "UPSERT";
   keyModel: "DUPLICATE_KEY" | "UNIQUE_KEY";
@@ -163,22 +167,39 @@ export type TaskRow = {
   scheduleTimezone: string;
   scheduleSource: "GLOBAL" | "DATASET" | "TASK";
   scheduleLabel: string;
-  scheduleEnabled: boolean;
   validationOverride: "INHERIT" | "ROW_COUNT" | "ROW_COUNT_CHECKSUM";
+  createdAt: string;
+  createdBy: string;
+  changeSummary: string;
+};
+
+export type TaskRow = {
+  id: string;
+  name: string;
+  institutionId: string;
+  institutionCode: string;
+  institutionName: string;
+  datasetCode: string;
+  datasetName: string;
+  currentVersionId: string;
+  versions: TaskVersion[];
+  scheduleEnabled: boolean;
   watermark: string | null;
-  state: "READY" | "RUNNING" | "FAILED" | "DISABLED";
+  deletedAt: string | null;
 };
 
 export type ExecutionRow = {
   id: string;
   taskId: string;
+  taskVersionId: string;
+  taskVersionNo: number;
   taskName: string;
   institutionName: string;
   datasetCode: string;
   operation: "NORMAL" | "RECOLLECT" | "BACKFILL";
   trigger: "SCHEDULED" | "MANUAL" | "EXTERNAL_API";
   scope: "FULL" | "INITIAL_FULL" | "INCREMENTAL" | "BACKFILL_TIME" | "BACKFILL_KEY";
-  status: "PENDING" | "RUNNING" | "LOADING" | "VALIDATING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  status: "PENDING" | "RUNNING" | "LOADING" | "VALIDATING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "STATE_UNKNOWN";
   range: string;
   sourceRows: number;
   loadedRows: number;
@@ -187,17 +208,71 @@ export type ExecutionRow = {
   finishedAt: string;
 };
 
-export type PrecheckRow = {
+export type PrecheckRun = {
   id: string;
   routeId: string;
-  institutionName: string;
-  datasetCode: string;
-  datasetName: string;
+  routeVersion: number;
+  datasetVersion: number;
   status: "PENDING" | "EXTRACTING" | "VALIDATING" | "COMPLETED" | "FAILED" | "CANCELLED";
   result: "PASS" | "ISSUES" | null;
-  issues: number;
+  extractedRows: number;
+  checkedRows: number;
+  problemRecordCount: number;
+  problemItemCount: number;
+  affectedInstitutionCount: number;
+  retentionStatus: "AVAILABLE" | "EXPIRING" | "CLEANING" | "EXPIRED" | "CLEAN_FAILED";
+  detailExpiresAt: string;
   startedAt: string;
   finishedAt: string;
+  startedBy: string;
+  failureReason: string;
+};
+
+export type PrecheckIssueSummary = {
+  id: string;
+  runId: string;
+  institutionId: string;
+  institutionCode: string;
+  institutionName: string;
+  scope: "STRUCTURE" | "FIELD" | "COMPOSITE";
+  fieldCode: string;
+  fieldName: string;
+  ruleCode: string;
+  ruleVersion: string;
+  checkedCount: number;
+  affectedRecordCount: number;
+  problemItemCount: number;
+  deviation: string;
+};
+
+export type PrecheckIssueItem = {
+  id: string;
+  scope: "FIELD" | "COMPOSITE";
+  fieldCodes: string[];
+  fieldNames: string[];
+  ruleCode: string;
+  ruleVersion: string;
+  maskedValue: string;
+  rawValue: string;
+  expected: string;
+  reason: string;
+  deviation: string;
+  sensitive: boolean;
+};
+
+export type PrecheckIssueRecord = {
+  id: string;
+  runId: string;
+  institutionId: string;
+  institutionCode: string;
+  institutionName: string;
+  locatorType: "BUSINESS_KEY" | "RUN_SCOPED";
+  locator: string;
+  problemFieldCount: number;
+  problemItemCount: number;
+  sensitive: boolean;
+  checkedAt: string;
+  items: PrecheckIssueItem[];
 };
 
 export type ValidationRow = {
@@ -231,9 +306,11 @@ export type AuditRow = {
   id: string;
   actor: string;
   source: "WEB" | "EXTERNAL_API" | "SCHEDULER" | "SYSTEM";
+  permissionCode: string;
   operation: string;
   target: string;
   result: "SUCCESS" | "FAILED";
+  detail: string;
   time: string;
 };
 
@@ -251,6 +328,16 @@ export type AccountRow = {
   username: string;
   displayName: string;
   enabled: boolean;
+  roleIds: string[];
   lastLoginAt: string;
   createdAt: string;
+};
+
+export type RoleRow = {
+  id: string;
+  code: string;
+  name: string;
+  permissions: string[];
+  accountCount: number;
+  builtIn: boolean;
 };
