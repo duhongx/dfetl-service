@@ -168,12 +168,22 @@ P0 保留：
 ```text
 alert_channel
 alert_rule
+alert_rule_channel
 alert_event
 alert_delivery
 ```
 
-固定语义：
+其中 `alert_rule_channel` 是 Alert Rule 与 Channel 的结构化多对多关系：
 
+```text
+alert_rule 1 ── N alert_rule_channel N ── 1 alert_channel
+```
+
+固定规则：
+
+- 一个 Rule 可选择一个或多个 Channel，不把 Channel ID 数组塞入 JSON。
+- `alert_rule_channel` 至少保存 `rule_id + channel_id + created_at/created_by`，以 `(rule_id,channel_id)` 为主键/唯一关系。
+- Rule 删除时关联行可 `CASCADE`；Channel 仍被规则引用时不得物理删除，具体删除行为在最终 Delete Matrix 冻结。
 - Rule 命中产生一条 `alert_event`。
 - 每个目标 Channel 产生一条 `alert_delivery`。
 - Event 保存 Rule/Severity/Source/业务关联对象/Title/Summary/Time Snapshot。
@@ -183,6 +193,8 @@ alert_delivery
 - 不建设逐次投递明细表。
 - Webhook URL/Secret 和敏感 Response 不进入 Event/Audit。
 - Alert 实现优先级最低，但仍属于最终交付范围。
+
+`alert_rule_channel` 是最终 P0 PostgreSQL 表清单的一部分，不属于可省略的实现细节。
 
 ## 6. External API
 
@@ -246,7 +258,25 @@ sync_task.current_version_id
 10. Quartz 官方表位于新独立 PostgreSQL `df_etl` Schema，显式 Table Prefix、独立 Pool、Clustered Mode。
 11. 老系统 Quartz Runtime 不迁移。
 
+Quartz 官方 PostgreSQL JobStore 表固定单独统计为 11 张：
+
+```text
+qrtz_job_details
+qrtz_triggers
+qrtz_simple_triggers
+qrtz_cron_triggers
+qrtz_simprop_triggers
+qrtz_blob_triggers
+qrtz_calendars
+qrtz_paused_trigger_grps
+qrtz_fired_triggers
+qrtz_scheduler_state
+qrtz_locks
+```
+
 ## 8. 当前支撑对象目标表
+
+DFETL 支撑对象：
 
 ```text
 app_user
@@ -255,6 +285,7 @@ system_setting
 
 alert_channel
 alert_rule
+alert_rule_channel
 alert_event
 alert_delivery
 
@@ -262,9 +293,9 @@ external_api_client
 external_api_client_institution
 external_api_request_nonce
 external_api_request
-
-Quartz 官方 PostgreSQL qrtz_* 表
 ```
+
+Quartz 官方 PostgreSQL `qrtz_*` 11 张表单独统计，不计入 DFETL 39 张领域/控制表。
 
 不建立：
 
@@ -286,10 +317,12 @@ Alert Workflow/Approval 表
 - [x] `system_setting` 收敛为 Registered Setting。
 - [x] Validation 全局默认改为 `validation.default_method`，不使用 Policy Table。
 - [x] Alert 最小 Event/Delivery History 确认。
+- [x] `alert_rule_channel` 作为 Rule↔Channel 多对多关系保留并计入最终 P0 表清单。
 - [x] External API 业务边界、Auth、Idempotency、Client Lifecycle 确认。
 - [x] External API 已去除 Task Version 当前语义。
 - [x] Quartz 已改为直接读取当前 `sync_task`，不读取 Task Version。
-- [ ] 最终全量 P0 表/FK/Unique/Enum/Delete Matrix 统一核对。
+- [x] Quartz 官方 PostgreSQL JobStore 表清单固定为 11 张。
+- [ ] 最终全量 FK/Unique/Enum/Delete Matrix 统一核对。
 - [ ] 阶段 1 Final Review。
 
 本文件只记录阶段 1 Review 结论，不创建 Flyway、不修改当前数据库。
