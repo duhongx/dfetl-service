@@ -2,7 +2,7 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：Spec 收口 + 前端优先  
+> 状态：Active Spec 语义收口完成 + 前端优先  
 > 最近更新：2026-08-17  
 > 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`
@@ -18,17 +18,18 @@
 5. 本任务清单；
 6. 老代码、老 SQL、历史/归档文档。
 
-当前开发顺序已经调整为：
+当前顺序：
 
 ```text
-Spec 收口
+Active Spec 语义收口
 → 前端页面/导航/交互/文案 100%
-→ API 合同
-→ 后端数据库和 Java 模型整改
-→ 联调和端到端验收
+→ API Contract
+→ 最终 P0 表/FK/枚举矩阵与 Flyway V1
+→ Java 后端整改
+→ 联调/端到端验收
 ```
 
-在前端产品模型未稳定前，不主动推进新的后端实现。
+当前不主动推进数据库/Java 实施。
 
 ---
 
@@ -36,174 +37,216 @@ Spec 收口
 
 ### 1.1 接入资源
 
-- [x] 一个部署只服务一个医共体，不建立租户表。
-- [x] 医疗机构为扁平集合。
-- [x] 保留全局轻量业务目录（HIS/LIS/PACS 等分类）。
-- [x] 源数据源直接绑定一家机构 + 一个业务目录。
-- [x] 源数据源支持 `HOST_PORT/JDBC_URL`，凭据与 URL 分离。
-- [x] 目标 Doris 为全局逻辑资源，可包含多个 FE，不管理 BE。
-- [x] 删除旧“系统实例 + 机构/数据源多对多”资源中间层。
-- [x] 前端不增加独立系统实例管理页。
+- [x] 一个部署服务一个医共体，不建立租户表。
+- [x] Institution 为扁平集合。
+- [x] 保留轻量 Business Catalog（HIS/LIS/PACS）。
+- [x] Source Datasource 直接绑定一家 Institution + 一个 Business Catalog。
+- [x] Source 支持 `HOST_PORT/JDBC_URL`，凭据与 URL 分离。
+- [x] Target Doris 为全局逻辑资源，可多个 FE，不管理 BE。
+- [x] 删除旧“业务系统实例 + 机构/数据源多对多”中间层。
+- [x] 前端不增加业务系统实例管理页。
 
 ### 1.2 标准 Dataset
 
-- [x] 标准 Dataset 只允许管理员从医共体规范库人工同步。
-- [x] 不允许手工新增，不自动同步。
-- [x] 只有规范化定义变化才生成新的不可变 Dataset version。
-- [x] 标准字段只允许大小写差异匹配，不支持字段重命名或标准任务 `CUSTOM_SQL`。
-- [x] 医疗字段合同统一服务 Doris DDL、Reader、预检和 Checksum。
+- [x] 只允许管理员从医共体规范库人工同步。
+- [x] 不手工新增，不自动同步。
+- [x] 规范化定义变化才生成不可变 `standard_dataset_version`。
+- [x] 标准字段和 Source 字段只允许大小写差异，不支持人工重命名。
+- [x] 标准 Task 不支持 `CUSTOM_SQL`。
+- [x] 医疗字段合同统一服务 Doris DDL、Reader、Precheck、Checksum。
+- [x] `standard_dataset.validation_method_override` 直接保存 Dataset Validation Override。
 
 ### 1.3 机构采集 Route
 
-- [x] Route 固定属于一家机构。
-- [x] Route 选择当前机构所属且启用的 Source datasource。
+- [x] Route 固定属于一家 Institution。
+- [x] Route 选择当前 Institution 所属且启用的 Source。
 - [x] Route 保存 Dataset、Source、Schema/Object、Target 和字段解析合同。
-- [x] 不再存在共享 Route 覆盖多机构模型。
-- [x] 不建立 Route 覆盖机构关系表/版本覆盖机构表。
-- [x] Route 状态与结构核对状态分离。
+- [x] 不存在共享 Route 覆盖多机构模型。
+- [x] 不建立 Route/Route Version 覆盖机构关系表。
+- [x] Route Status 与 Structure Status 分离。
 - [x] 配置变化生成不可变 `collection_route_version`。
+- [x] Route Version 提供 `id + institution + dataset + dataset_version` 四元父唯一键。
 
 ### 1.4 Task
 
-- [x] 一个 Task 固定属于一个机构 + 一个 Dataset。
-- [x] 同一机构 + Dataset 只能存在一个未删除 Task。
+- [x] 一个 Task 固定属于一个 Institution + Dataset。
+- [x] 同一 Institution + Dataset 最多一个未删除 Task。
 - [x] `institution_id/dataset_id` 创建后不可修改。
 - [x] Task 保存当前配置，不建立 `sync_task_version`。
-- [x] Task 可显式切换同一机构/同一 Dataset 的 Route version，不自动重置水位。
-- [x] 活动同步执行期间禁止编辑；活动独立校验期间允许普通编辑。
+- [x] Task 可显式切换同 Institution/同 Dataset 的 Route Version，不自动重置 Watermark。
+- [x] 活动同步 Execution 期间禁止编辑；活动独立 Validation 期间允许普通编辑。
 - [x] Execution/Validation 使用启动快照解释历史。
+- [x] Task Validation Override 使用 `sync_task.validation_method_override`，NULL=继承。
 
-### 1.5 三种标准任务
+### 1.5 三种标准 Task
 
-| Dataset 合同 | Task kind | 写入 | Doris Key |
+| Dataset 合同 | Task Kind | Write Mode | Doris Key |
 | --- | --- | --- | --- |
 | 无真实业务主键 | `FULL_ONLY` | `REPLACE_INSTITUTION_SCOPE` | `DUPLICATE_KEY` |
 | 有业务主键 + 增量字段 | `FULL_THEN_INCREMENTAL` | `UPSERT` | `UNIQUE_KEY` |
 | 有业务主键、无增量字段 | `FULL_ONLY` | `UPSERT` | `UNIQUE_KEY` |
 
 - [x] 不生成假主键。
-- [x] 无主键全量只清理当前机构范围。
+- [x] 无主键全量只清理当前 Institution Scope。
 - [x] Reader 第一阶段固定单并发，Fetch Size 可配置。
 
-### 1.6 Execution/Watermark
+### 1.6 Execution / Watermark
 
-- [x] 同一 Task 禁止并发执行。
-- [x] 活动执行期间到达的新计划触发跳过，不排队追赶。
-- [x] 失败不自动重试、不自动暂停 Task、不推进水位。
-- [x] 补采为独立执行，不修改正式水位。
-- [x] 重新采集从范围起点和第 1 批重新读取。
-- [x] 取消只取消当前执行，不改变调度开关。
-- [x] `task_watermark` 只保存当前正式水位，不保存 Task version。
+- [x] 同一 Task 禁止并发同步 Execution。
+- [x] 调度重叠触发跳过，不排队追赶。
+- [x] 失败不自动重试、不自动暂停、不推进 Watermark。
+- [x] Backfill 不改正式 Watermark。
+- [x] Recollect 创建新 Execution，从范围起点和 Batch 1 开始。
+- [x] Cancel 只影响当前 Execution。
+- [x] `task_watermark` 只保存当前值，不保存 Task Version/History。
+- [x] INITIAL_FULL 成功后 Watermark=T0；不在同次运行立即追加增量。
 
-### 1.7 Precheck/Validation/Message
+### 1.7 Precheck / Validation / Message
 
-- [x] Precheck 只能人工启动，同 Route 同时最多一个活动运行。
-- [x] Precheck 与正式同步严格分离，正式同步重新读取真实 Source。
+- [x] Precheck 只人工启动，同 Route 最多一个活动 Run。
+- [x] Precheck 与正式同步严格分离。
+- [x] 单机构 Route 的 Precheck Run 固定 Institution/Dataset/Route Version 快照。
+- [x] Precheck 只保存 STRUCTURE/FIELD/COMPOSITE 汇总，不保存行级问题。
 - [x] 正式同步最低严格 `ROW_COUNT`，不能关闭。
-- [x] 有真实业务主键时可选择 `ROW_COUNT_CHECKSUM`，无主键只能 ROW_COUNT。
-- [x] 数据集/Task 校验覆盖使用可空字段继承，不建立独立任务校验策略表。
-- [x] 消息只用 RabbitMQ，只存在数据集级，Task 不能覆盖。
-- [x] 阻断校验通过后才推进水位并创建消息 Outbox。
+- [x] 有真实业务主键可选 `ROW_COUNT_CHECKSUM`；无主键只能 ROW_COUNT。
+- [x] 全局/Dataset/Task Validation 不建立独立 Policy 表。
+- [x] Validation 存储：System Setting + Dataset Override + Task Override。
+- [x] RabbitMQ Only；Message Policy 只存在 Dataset 级。
+- [x] SYNC_GATE PASS 后才成功、推进 Watermark 和创建 Outbox。
 
 ---
 
-## 2. 本次 Spec 收口工作
+## 2. 2026-08-17 Active Spec 收口
 
-### 2.1 旧资源模型清理
+### 2.1 业务系统实例 / 多机构 Route 旧模型
 
-- [x] 重写 `PRODUCT_AND_BUSINESS_DECISIONS.md`。
-- [x] 重写 `TARGET_METADATA_MODEL.md`。
-- [x] 重写 `P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md`。
-- [x] 重写 `P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`。
-- [x] 更新 `P0_PHYSICAL_TABLE_DICTIONARY.md` 总索引。
-- [x] 更新阶段状态与实施计划。
-- [x] `PENDING_DECISIONS.md` 不再把旧系统实例作为待确认项。
+- [x] `PRODUCT_AND_BUSINESS_DECISIONS.md` 收口。
+- [x] `TARGET_METADATA_MODEL.md` 收口。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md` 收口。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md` 收口。
+- [x] `DATABASE_MIGRATION_BASELINE.md` 收口。
+- [x] `LEGACY_FUNCTION_ALIGNMENT.md` 收口。
+- [x] `JAVA_PRODUCTION_MIGRATION_REVIEW.md` 收口。
+- [x] 阶段状态/计划/Pending Decision 收口。
 
-### 2.2 仍需继续的文档一致性清理
+### 2.2 Task Version / Validation Policy 机械迁移
 
-以下属于已经明确的机械工作，不需要重新询问业务：
+按已确认顺序完成：
 
-- [ ] 清理 `P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md` 中已经被后续 Review 废止的独立 validation policy / task version 描述。
-- [ ] 清理其他早期专项 Review 中“多机构 Route”“Task version”等已经被后续 Review 修正的正文，或明确移入 `reference/legacy`。
-- [ ] 形成最终 P0 PostgreSQL 表清单和总数。
-- [ ] 核对全部复合 FK 的父唯一键与子索引。
-- [ ] 统一内部枚举名称。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md`：删除 Global/Dataset Validation Policy 表，合并 Dataset Override。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`：删除 Task Version 语义和旧 Route Institution FK。
+- [x] `EXTERNAL_API_REVIEW.md`：新 Task 直接创建 `sync_task`，不创建第一版 Task Version。
+- [x] `QUARTZ_JOBSTORE_REVIEW.md`：Quartz 直接读取当前 `sync_task.schedule_*`，不读取 Current Task Version。
+
+### 2.3 全 `spec/` 扫描发现并修正的结构残留
+
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`：补齐 Route Version 四元父唯一键。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`：Execution 改四元 Route FK；Precheck 清理多机构维度。
+- [x] `P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md`：Delete Snapshot 改四元 Route FK。
+- [x] `P0_PHYSICAL_TABLE_DICTIONARY.md`：更新总索引、Task Version 替代关系和 Validation 最终存储。
+- [x] `P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md`：记录扫描规则和完成情况。
+
+### 2.4 扫描验收原则
+
+旧词允许继续出现在：
+
+```text
+历史审计
+明确已废止
+明确不建立
+不得进入 V1
+机械清理映射
+```
+
+不要求 `sync_task_version/global_validation_policy/...` 字符串数量为 0；要求**没有 Active Spec 再把它们当当前目标对象或当前运行流程**。
 
 ---
 
 ## 3. 当前最高优先级：前端页面 100%
 
-目标：先把页面、路由、交互和文案完全确定，不推进新的后端改造。
+目标：先把页面、URL、交互、字段和文案完全确定，再进入后端实现。
 
-### 3.1 导航/信息架构
+### 3.1 导航 / 信息架构
 
 - [ ] 首页/工作台与最终导航一致。
-- [ ] 接入资源覆盖：机构、业务目录、源端数据源、目标端数据源、医共体标准。
-- [ ] 提供独立“机构采集路由”页面；以机构为上下文。
-- [ ] 不出现旧系统实例入口。
-- [ ] 任务中心、数据质量、运维管理、系统设置入口与原型一致。
-- [ ] 帮助/文档和账号管理入口待 `PENDING_DECISIONS.md` 对应事项确认。
+- [ ] 接入资源覆盖 Institution、Business Catalog、Source、Target、医共体标准。
+- [ ] 独立“机构采集路由”页面，以 Institution 为上下文。
+- [ ] 不出现业务系统实例入口。
+- [ ] Task Center、Data Quality、Operations、System Settings 与最终原型一致。
+- [ ] Help/Docs 和 Account Management 入口按 `PENDING_DECISIONS.md` 逐项确认。
 
 ### 3.2 接入资源页面
 
-- [ ] 机构 CRUD/启停/引用统计交互完整。
-- [ ] 业务目录 CRUD/启停/引用保护完整。
-- [ ] Source datasource 新增/编辑/测试/启停/删除引用保护完整。
-- [ ] Source datasource 明确显示所属机构 + 业务目录。
-- [ ] Target Doris 新增/编辑/FE 端点/测试/启停完整。
-- [ ] 医共体标准同步、列表、详情、字段合同、策略完整。
+- [ ] Institution CRUD/启停/引用统计。
+- [ ] Business Catalog CRUD/启停/引用保护。
+- [ ] Source CRUD/Test/启停/删除引用保护，显示所属 Institution + Business Catalog。
+- [ ] Target Doris CRUD/FE Endpoint/Test/启停。
+- [ ] 医共体标准同步、列表、详情、字段合同、同步默认、Validation Override、Message Policy。
 
-### 3.3 机构采集路由
+### 3.3 Institution Route
 
-- [ ] 页面先选择当前机构。
+- [ ] 页面先选择当前 Institution。
 - [ ] 新增 Route：Dataset → Source → Schema → Object → Target。
-- [ ] Source 只显示当前机构启用数据源，业务目录自动带出。
+- [ ] Source 只显示当前 Institution 启用数据源，Business Catalog 自动带出。
 - [ ] 实时读取 Schema/Object 元数据。
-- [ ] 字段/结构核对及结果展示完整。
-- [ ] Route 人工启用/停用完整。
-- [ ] Dataset 标准变化后的 OUTDATED 展示完整。
-- [ ] Route 详情可跳转 Precheck/Task，但不混入运行详情。
+- [ ] Structure Check 和结果完整。
+- [ ] Route 人工启用/停用。
+- [ ] Dataset 标准变化后 OUTDATED 展示。
+- [ ] Route 详情跳转 Precheck/Task，不混入运行详情。
 
-### 3.4 Task/Precheck/Validation/Operations
+### 3.4 Task / Precheck / Validation / Operations
 
-- [ ] Task 创建/编辑与 Route 当前模型一致。
-- [ ] Precheck 人工启动、结果汇总、再次预检交互完整。
-- [ ] 正式同步、重新采集、补采、取消、水位操作文案正确。
-- [ ] 校验总览/详情/重新校验交互正确。
-- [ ] 消息策略只在 Dataset 页可编辑，Task 只读展示生效值。
-- [ ] 告警、日志、操作审计页面完整。
+- [ ] Task 创建/编辑使用当前配置模型，不出现 Task Version UI。
+- [ ] Precheck 人工启动、汇总、再次 Precheck 交互完整。
+- [ ] 正式同步/Recollect/Backfill/Cancel/Watermark 文案正确。
+- [ ] Validation 总览/详情/重新校验交互正确。
+- [ ] Message Policy 只在 Dataset 页编辑，Task 只读展示生效值。
+- [ ] Alert/Log/Audit 页面完整。
 
 ### 3.5 前端验收
 
 - [ ] `npm run lint` 通过。
 - [ ] `npm run build` 通过。
-- [ ] 每个菜单都能直接通过 URL 访问并刷新不丢页面。
-- [ ] 逐页与最终原型核对字段、操作、状态、空态、危险确认和文案。
-- [ ] 前端模型确定后再定义最终 API contract。
+- [ ] 每个菜单有真实 URL，刷新不丢页。
+- [ ] 逐页核对字段、操作、状态、空态、错误态、处理中和危险确认。
+- [ ] 前端模型确定后再冻结最终 API Contract。
 
 ---
 
-## 4. 前端之后的后端阶段
+## 4. 阶段 1 尚未完成的技术一致性工作
 
-只有前端产品模型确定后再开始：
+这些不需要重新讨论业务，只需继续技术核对：
+
+- [ ] 形成最终 P0 PostgreSQL 表清单及总数。
+- [ ] 建立完整 FK 矩阵：子列、父唯一键、ON DELETE、子索引。
+- [ ] 建立业务唯一性/并发唯一约束矩阵。
+- [ ] 统一全部状态/CHECK 枚举。
+- [ ] 建立删除行为矩阵。
+- [ ] 最终复核 Execution/Validation/Outbox Snapshot 字段最小充分性。
+- [ ] 完成 `PHASE1_FINAL_REVIEW.md`。
+
+这些工作可以与前端推进并行做文档核对，但在用户要求“前端优先”的阶段不主动推进后端代码或数据库。
+
+---
+
+## 5. 前端之后的后端阶段
 
 1. 最终 P0 PostgreSQL/Flyway V1；
-2. Resource/Route/Task Java 实体和 Repository；
+2. Resource/Route/Task Java Entity/Repository；
 3. API DTO/Controller 与前端合同；
-4. PostgreSQL 和外部通道集成测试；
+4. PostgreSQL/外部通道 Integration Test；
 5. SeaTunnel/Doris/Quartz/RabbitMQ 执行链路；
-6. 配置 → Route → Precheck → Task → Execution → Validation → Watermark → Message 端到端联调；
-7. 多实例调度、通道可靠性和大批次流式处理；
-8. 权限、审计、告警和生产验收。
+6. Resource → Route → Precheck → Task → Execution → Validation → Watermark → Message E2E；
+7. 多实例调度、通道可靠性、大批次流式处理；
+8. 权限、Audit、Alert 和生产验收。
 
 ---
 
-## 5. 阶段 1 最终签字门槛
+## 6. 阶段 1 最终签字门槛
 
-在数据库实施前必须满足：
-
-- [ ] 所有当前 spec 不再把已废止资源模型当成有效设计；
-- [ ] P0 表清单、FK、唯一性、状态、删除行为一致；
-- [ ] 前端产品模型与 spec 一致；
-- [ ] `PHASE1_FINAL_REVIEW.md` 完成；
+- [x] Active Spec 不再把旧业务系统实例模型当有效设计。
+- [x] Active Spec 不再把 Task Version/独立 Validation Policy 当有效目标模型。
+- [ ] P0 表清单、FK、Unique、Status、Delete Behavior 最终矩阵一致。
+- [ ] 前端产品模型与 Spec 一致。
+- [ ] `PHASE1_FINAL_REVIEW.md` 完成。
 - [ ] 用户明确确认：`目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。`
