@@ -1,21 +1,28 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：PostgreSQL Table + FK + Unique + Status/CHECK + Delete + Snapshot 已确认；进入 Phase 1 Final Review  
+> 当前阶段：技术模型 Review 已通过；等待前端 100% 对齐与 G-001 最终签字  
 > 分支：`duhongx/dfetl-service/main`  
-> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
+> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> Final Review：`spec/PHASE1_FINAL_REVIEW.md`
 
-## 1. 阶段约束
+## 1. 当前状态
+
+```text
+TECHNICAL_MODEL_REVIEW = PASS
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
+DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
+```
 
 阶段 1 尚未最终签字：
 
-- 不创建/固化 Flyway `V1__baseline.sql`。
-- 不修改正式 PostgreSQL 结构。
-- 新系统不认领老 `df_ygt/df_etl`。
-- 新旧 PostgreSQL/Quartz/Execution/Watermark/Validation/Message 完全隔离。
-- 前端产品模型仍优先；当前技术一致性 Review 只收敛 Spec。
+- 不创建/固化 Flyway `V1__baseline.sql`；
+- 不按最终模型批量修改 Java Entity/Repository/Service；
+- 不修改正式 PostgreSQL 结构；
+- 新系统不认领老 `df_ygt/df_etl`；
+- 前端产品模型继续优先完成。
 
-## 2. 已完成
+## 2. 技术 Review 已完成
 
 - [x] Java / Legacy SQL Audit。
 - [x] Dataset / Field Contract / Doris ODS-RAW Review。
@@ -29,6 +36,7 @@
 - [x] Status / Enum / CHECK Matrix。
 - [x] Delete Behavior Matrix。
 - [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+- [x] `PHASE1_FINAL_REVIEW.md` 技术总验收。
 
 ## 3. 当前主模型
 
@@ -41,114 +49,62 @@ Institution + Business Catalog
 → Execution / Validation Runtime Snapshot
 ```
 
-## 4. 已冻结物理矩阵
+六项技术矩阵均已冻结，不再因普通实现问题继续新增 Table/FK/Unique/Status/Delete/Snapshot 设计问题。
 
-### FK
+## 4. 当前唯一阻塞
 
-```text
-最强复合 FK
-历史 RESTRICT
-纯配置 CASCADE
-普通审计 User SET NULL
-运行责任 User RESTRICT
-FK 子列索引
-```
-
-### Unique
+G-001 最终签字前必须完成：
 
 ```text
-Business Unique
-Concurrency Partial Unique
-FK Support Unique
+Frontend 与已冻结 Spec 100% 对齐
++ P-002 管理员账号管理入口收口
++ P-003 Help/Docs 入口收口
 ```
 
-### Status / CHECK
+前端仍需完成：
 
-```text
-SUCCEEDED = 真正业务动作成功
-COMPLETED + result = 检查/分析技术完成
-```
-
-### Delete Behavior
-
-```text
-Resource: 无引用可物理删，有引用只能停用
-Definition History: 永久保留，VOID/RETIRED 表达失效
-Route/Task: LOGICAL_DELETE
-Watermark: 仅显式 Clear 删除当前 Row
-Runtime/Audit/Request/Alert History: 永久 PostgreSQL 元数据
-Nonce: 1 小时 TTL
-Doris RAW/Snapshot/Diff: 清理大数据，保留 PostgreSQL Run
-Quartz: 可重建投影
-```
-
-### Snapshot
-
-```text
-不可变定义只引用
-可变运行事实才快照
-Secret 永不快照
-```
-
-Execution：
-
-```text
-新增 source_runtime_snapshot / target_runtime_snapshot
-删除 precheck_fact_snapshot
-Checksum Protocol 仅 ROW_COUNT_CHECKSUM 保存
-```
-
-Validation：
-
-```text
-SYNC_GATE / MANUAL_RECHECK → 只使用父 Execution Context
-普通独立 Validation → 最小 Context/Range
-DELETE_RECONCILIATION → 只使用 Snapshot Run FK
-```
-
-Outbox：
-
-```text
-显式 Message Policy Snapshot + 最小 Range
-不重复身份/operationType
-不复制 Target Runtime Endpoint
-人工重发读取当前 Doris
-```
-
-所有 Runtime Snapshot 禁止 Secret。
-
-## 5. Review 顺序
-
-1. [x] P0 PostgreSQL 最终表清单 + 数量。
-2. [x] 全量 FK Matrix。
-3. [x] Business / Concurrency Unique Matrix。
-4. [x] Status / Enum / CHECK Matrix。
-5. [x] Delete Behavior Matrix。
-6. [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
-7. [ ] **`PHASE1_FINAL_REVIEW.md`。**
-
-下一项只进行 Phase 1 Final Review。
-
-## 6. 前端仍为开发优先级
-
-- [ ] Navigation/IA。
+- [ ] Navigation / Information Architecture。
 - [ ] Resource Pages。
 - [ ] Institution Route Pages。
-- [ ] Task/Precheck/Validation/Operations。
-- [ ] Alert/Log/Audit/System Settings。
-- [ ] lint/build/URL/逐页原型验收。
+- [ ] Task Current Config UI，不出现 Task Version。
+- [ ] Precheck / Validation / Operations。
+- [ ] Alert / Log / Audit / System Settings。
+- [ ] 所有菜单真实 URL。
+- [ ] lint / build。
+- [ ] 逐页原型、状态、空态、错误态、危险确认验收。
+- [ ] P-002。
+- [ ] P-003。
 
-前端确认后再冻结最终 API Contract 和进入后端实施。
+## 5. 不阻塞技术模型冻结的 Pending Decisions
 
-## 7. 最终门槛
+```text
+P-004 Delete Apply Safety Threshold → 实现前确认
+P-005 First Admin Bootstrap          → 后端实施期确认
+P-006 Old/New Cutover & Watermark    → 上线切换期确认
+P-007 GraalVM Native Image           → 暂缓
+```
 
-- [x] Active Spec 业务语义收口。
-- [x] PostgreSQL/Quartz 表清单。
-- [x] FK Matrix。
-- [x] Unique Matrix。
-- [x] Status/CHECK Matrix。
-- [x] Delete Behavior Matrix。
-- [x] Snapshot Review。
-- [ ] Frontend 与 Spec 一致。
-- [ ] `PHASE1_FINAL_REVIEW.md`。
-- [ ] 用户明确签字后才进入数据库/后端实施。
+这些事项不得反向新增 P0 表或恢复已废止模型，除非出现新的明确业务需求并重新进入专项 Review。
+
+## 6. G-001 最终签字
+
+当前：
+
+```text
+G-001 = PENDING_FINAL_SIGNOFF
+```
+
+只有前端收口完成后，用户明确确认：
+
+```text
+目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
+```
+
+或等价明确授权，才能进入：
+
+```text
+PHASE1_OVERALL = PASS
+DATABASE_BACKEND_IMPLEMENTATION = AUTHORIZED
+```
+
+在此之前继续保持数据库/后端实施未授权。
