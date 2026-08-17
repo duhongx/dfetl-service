@@ -31,20 +31,20 @@ export const businessCatalogSeed: BusinessCatalog[] = [
 ];
 
 export const sourceSeed: SourceDataSource[] = [
-  { id: "S01", code: "SRC_RMYY_HIS", name: "县人民医院 HIS 主库", institutionCode: "330106001", institutionName: "县人民医院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "POSTGRESQL", connectionMode: "HOST_PORT", host: "192.168.1.154", port: "5432", database: "df_his", defaultSchema: "df_zhushuju", jdbcUrl: "", username: "df_reader", status: "ENABLED", testStatus: "SUCCESS", lastTestedAt: "2026-08-17 09:12" },
-  { id: "S02", code: "SRC_ZYY_HIS", name: "县中医院 HIS 主库", institutionCode: "330106002", institutionName: "县中医院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "ORACLE", connectionMode: "HOST_PORT", host: "192.168.1.20", port: "1521", database: "HIS", defaultSchema: "HIS_ZYY", jdbcUrl: "", username: "DFETL", status: "ENABLED", testStatus: "FAILED", lastTestedAt: "2026-08-17 09:04" },
-  { id: "S03", code: "SRC_RMYY_LIS", name: "县人民医院 LIS", institutionCode: "330106001", institutionName: "县人民医院", businessCatalogCode: "LIS", businessCatalogName: "检验信息系统", dbType: "MYSQL", connectionMode: "JDBC_URL", host: "", port: "", database: "", defaultSchema: "lis", jdbcUrl: "jdbc:mysql://192.168.1.160:3306/lis", username: "df_reader", status: "ENABLED", testStatus: "SUCCESS", lastTestedAt: "2026-08-17 08:58" },
-  { id: "S04", code: "SRC_FY_HIS", name: "县妇幼保健院 HIS", institutionCode: "330106003", institutionName: "县妇幼保健院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "SQLSERVER", connectionMode: "HOST_PORT", host: "192.168.1.30", port: "1433", database: "his_fy", defaultSchema: "dbo", jdbcUrl: "", username: "df_reader", status: "DISABLED", testStatus: "UNTESTED", lastTestedAt: "—" },
+  { id: "S01", code: "SRC_RMYY_HIS", name: "县人民医院 HIS 主库", institutionCode: "330106001", institutionName: "县人民医院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "POSTGRESQL", connectionMode: "HOST_PORT", host: "192.168.1.154", port: "5432", database: "df_his", defaultSchema: "df_zhushuju", jdbcUrl: "", username: "df_reader", sslEnabled: false, readOnly: true, queryTimeoutSeconds: 60, connectTimeoutSeconds: 10, socketTimeoutSeconds: 60, poolMaxSize: 4, status: "ENABLED", testStatus: "SUCCESS", lastTestedAt: "2026-08-17 09:12", lastTestError: "", description: "人民医院 HIS 生产只读连接" },
+  { id: "S02", code: "SRC_ZYY_HIS", name: "县中医院 HIS 主库", institutionCode: "330106002", institutionName: "县中医院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "ORACLE", connectionMode: "HOST_PORT", host: "192.168.1.20", port: "1521", database: "HIS", defaultSchema: "HIS_ZYY", jdbcUrl: "", username: "DFETL", sslEnabled: false, readOnly: true, queryTimeoutSeconds: 60, connectTimeoutSeconds: 10, socketTimeoutSeconds: 60, poolMaxSize: 4, status: "ENABLED", testStatus: "FAILED", lastTestedAt: "2026-08-17 09:04", lastTestError: "连接超时：192.168.1.20:1521", description: "中医院 HIS 生产只读连接" },
+  { id: "S03", code: "SRC_RMYY_LIS", name: "县人民医院 LIS", institutionCode: "330106001", institutionName: "县人民医院", businessCatalogCode: "LIS", businessCatalogName: "检验信息系统", dbType: "MYSQL", connectionMode: "JDBC_URL", host: "", port: "", database: "", defaultSchema: "lis", jdbcUrl: "jdbc:mysql://192.168.1.160:3306/lis", username: "df_reader", sslEnabled: false, readOnly: true, queryTimeoutSeconds: 60, connectTimeoutSeconds: 10, socketTimeoutSeconds: 60, poolMaxSize: 4, status: "ENABLED", testStatus: "SUCCESS", lastTestedAt: "2026-08-17 08:58", lastTestError: "", description: "人民医院 LIS 生产只读连接" },
+  { id: "S04", code: "SRC_FY_HIS", name: "县妇幼保健院 HIS", institutionCode: "330106003", institutionName: "县妇幼保健院", businessCatalogCode: "HIS", businessCatalogName: "医院信息系统", dbType: "SQLSERVER", connectionMode: "HOST_PORT", host: "192.168.1.30", port: "1433", database: "his_fy", defaultSchema: "dbo", jdbcUrl: "", username: "df_reader", sslEnabled: false, readOnly: true, queryTimeoutSeconds: 60, connectTimeoutSeconds: 10, socketTimeoutSeconds: 60, poolMaxSize: 4, status: "DISABLED", testStatus: "UNTESTED", lastTestedAt: "—", lastTestError: "", description: "妇幼 HIS 只读连接" },
 ];
 
 export const targetSeed: TargetDataSource[] = [
-  { id: "T01", code: "DORIS_PROD", name: "医共体 Doris 生产集群", database: "df_ygt", username: "df_load", status: "ENABLED", testStatus: "SUCCESS", description: "生产 ODS/RAW 目标", endpoints: [
-    { id: "FE01", host: "192.168.1.41", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 1, testStatus: "SUCCESS" },
-    { id: "FE02", host: "192.168.1.42", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 2, testStatus: "SUCCESS" },
+  { id: "T01", code: "DORIS_PROD", name: "医共体 Doris 生产集群", database: "df_ygt", username: "df_load", status: "ENABLED", testStatus: "SUCCESS", lastTestedAt: "2026-08-17 09:18", lastTestError: "", description: "生产 ODS/RAW 目标", endpoints: [
+    { id: "FE01", host: "192.168.1.41", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 1, testStatus: "SUCCESS", lastTestedAt: "2026-08-17 09:18", lastTestError: "" },
+    { id: "FE02", host: "192.168.1.42", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 2, testStatus: "SUCCESS", lastTestedAt: "2026-08-17 09:18", lastTestError: "" },
   ] },
-  { id: "T02", code: "DORIS_DR", name: "Doris 灾备集群", database: "df_ygt", username: "df_load", status: "DISABLED", testStatus: "PARTIAL", description: "灾备演练使用", endpoints: [
-    { id: "FE03", host: "192.168.2.41", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 1, testStatus: "SUCCESS" },
-    { id: "FE04", host: "192.168.2.42", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 2, testStatus: "FAILED" },
+  { id: "T02", code: "DORIS_DR", name: "Doris 灾备集群", database: "df_ygt", username: "df_load", status: "DISABLED", testStatus: "PARTIAL", lastTestedAt: "2026-08-16 14:22", lastTestError: "FE #2 连接失败：192.168.2.42:9030", description: "灾备演练使用", endpoints: [
+    { id: "FE03", host: "192.168.2.41", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 1, testStatus: "SUCCESS", lastTestedAt: "2026-08-16 14:22", lastTestError: "" },
+    { id: "FE04", host: "192.168.2.42", queryPort: "9030", httpPort: "8030", enabled: true, ordinal: 2, testStatus: "FAILED", lastTestedAt: "2026-08-16 14:22", lastTestError: "连接超时" },
   ] },
 ];
 
@@ -102,7 +102,7 @@ export const auditSeed: AuditRow[] = [
 ];
 
 export const externalClientSeed: ExternalClient[] = [
-  { id: "EC01", clientId: "partner-his", clientName: "HIS 自动化接入", authorizationMode: "SELECTED", institutions: ["县人民医院", "县中医院"], enabled: true },
+  { id: "EC01", clientId: "partner-his", clientName: "HIS 自动化接入", authorizationMode: "SELECTED", institutions: ["330106001", "330106002"], enabled: true },
   { id: "EC02", clientId: "ops-console", clientName: "运维自动化平台", authorizationMode: "ALL", institutions: [], enabled: true },
 ];
 
