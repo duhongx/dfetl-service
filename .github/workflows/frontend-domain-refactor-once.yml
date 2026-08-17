@@ -1,0 +1,108 @@
+name: One-time frontend domain refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/frontend-domain-refactor-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Assemble and verify refactor payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/frontend-refactor-payload/part-*.b64 > /tmp/dfetl-frontend-refactor.b64
+          test "$(wc -c < /tmp/dfetl-frontend-refactor.b64)" -eq 56596
+          base64 --decode /tmp/dfetl-frontend-refactor.b64 > /tmp/dfetl-frontend-refactor.tar.gz
+          echo "63f7b843b3ebf84f026c1939fd4a81c52fba410b84b40aa4f2ec7d0528263a29  /tmp/dfetl-frontend-refactor.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/dfetl-frontend-refactor.tar.gz
+
+      - name: Align Next.js route wrappers and styles
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            web/app/access-resources/business-catalogs \
+            web/app/access-resources/source-datasources \
+            web/app/access-resources/target-datasources \
+            web/app/settings/accounts
+
+          mkdir -p \
+            web/app/access-resources/system-instances \
+            web/app/access-resources/datasources \
+            web/app/settings/validation-policy \
+            web/app/settings/doris-tables \
+            web/app/settings/security \
+            'web/app/tasks/precheck/[id]/runs/[runId]'
+
+          printf '%s\n' 'export { default } from "../../etl/app-shell-final";' > web/app/access-resources/system-instances/page.tsx
+          printf '%s\n' 'export { default } from "../../etl/app-shell-final";' > web/app/access-resources/datasources/page.tsx
+          printf '%s\n' 'export { default } from "../../etl/app-shell-final";' > web/app/settings/validation-policy/page.tsx
+          printf '%s\n' 'export { default } from "../../etl/app-shell-final";' > web/app/settings/doris-tables/page.tsx
+          printf '%s\n' 'export { default } from "../../etl/app-shell-final";' > web/app/settings/security/page.tsx
+          printf '%s\n' 'export { default } from "../../../../../etl/app-shell-final";' > 'web/app/tasks/precheck/[id]/runs/[runId]/page.tsx'
+
+          if ! grep -q 'DFETL frontend domain refactor additions' web/app/globals.css; then
+            cat >> web/app/globals.css <<'CSS'
+
+          /* DFETL frontend domain refactor additions */
+          .top-actions > select { min-height: 34px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--text); }
+          .issue-item { padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
+          .issue-item > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+          .issue-item > div:first-child span { color: var(--muted); font-size: 10px; }
+          .issue-item > .btn { margin-top: 10px; }
+          CSS
+          fi
+
+          test -f web/app/etl/permissions.ts
+          test ! -e web/app/access-resources/business-catalogs
+          test ! -e web/app/access-resources/source-datasources
+          test ! -e web/app/access-resources/target-datasources
+          grep -q 'BusinessSystemInstance' web/app/etl/model.ts
+          grep -q 'precheckRunDetail' web/app/etl/routing.ts
+          grep -q 'TaskVersion' web/app/etl/model.ts
+          ! grep -Rqs 'businessCatalogCode' web/app/etl
+          ! grep -Rqs 'structureStatus' web/app/etl
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Production build
+        working-directory: web
+        run: npm run build
+
+      - name: Commit verified frontend refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -r .github/frontend-refactor-payload
+          git rm .github/workflows/frontend-domain-refactor-once.yml
+          git add -A
+          git commit -m "feat(web): align system instances routes task versions and permissions"
+          git push origin HEAD:main
