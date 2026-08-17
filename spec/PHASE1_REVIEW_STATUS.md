@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：技术模型 Review 已通过；P-002 已确认；等待 P-003、前端 100% 对齐与 G-001 最终签字  
+> 当前阶段：技术模型 Review 已通过；P-002/P-003 已确认；等待前端 100% 对齐与 G-001 最终签字  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Final Review：`spec/PHASE1_FINAL_REVIEW.md`
@@ -37,6 +37,8 @@ DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 - [x] Delete Behavior Matrix。
 - [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 - [x] `PHASE1_FINAL_REVIEW.md` 技术总验收。
+- [x] P-002 产品入口决策：`系统设置 → 账号管理`。
+- [x] P-003 产品入口决策：`顶部右侧 Help → /docs`。
 
 ## 3. 当前主模型
 
@@ -51,22 +53,22 @@ Institution + Business Catalog
 
 六项技术矩阵均已冻结，不再因普通实现问题继续新增 Table/FK/Unique/Status/Delete/Snapshot 设计问题。
 
-## 4. 当前阻塞项
+## 4. 当前唯一阻塞项
 
-G-001 最终签字前必须完成：
+G-001 最终签字前只剩：
 
 ```text
 Frontend 与已冻结 Spec 100% 对齐
-+ P-003 Help/Docs 入口收口
 ```
 
-P-002 已确认：
+产品入口决策已全部完成，前端必须实际落地：
 
 ```text
 系统设置 → 账号管理
+顶部右侧 Help → /docs
 ```
 
-但账号管理页面仍必须在前端验收中实际落页。
+并且左侧业务导航不增加“使用文档”。
 
 前端仍需完成：
 
@@ -77,11 +79,10 @@ P-002 已确认：
 - [ ] Precheck / Validation / Operations。
 - [ ] Alert / Log / Audit / System Settings。
 - [ ] 账号管理页面实际位于 `系统设置 → 账号管理`。
+- [ ] 顶部右侧 Help 实际进入 `/docs`，且左侧不增加“使用文档”。
 - [ ] 所有菜单真实 URL。
 - [ ] lint / build。
 - [ ] 逐页原型、状态、空态、错误态、危险确认验收。
-- [x] P-002 产品入口决策。
-- [ ] P-003 产品入口决策。
 
 ## 5. 不阻塞技术模型冻结的 Pending Decisions
 
@@ -102,7 +103,7 @@ P-007 GraalVM Native Image           → 暂缓
 G-001 = PENDING_FINAL_SIGNOFF
 ```
 
-只有 P-003 与前端收口完成后，用户明确确认：
+只有前端 100% 收口完成后，用户明确确认：
 
 ```text
 目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
