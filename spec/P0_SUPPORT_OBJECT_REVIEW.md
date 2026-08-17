@@ -1,17 +1,15 @@
 # P0 支撑对象 Review
 
-> 状态：阶段 1 FK + Unique + Status/Enum/CHECK Matrix 已确认并收口  
+> 状态：阶段 1 FK + Unique + Status/CHECK + Delete Behavior Matrix 已确认并收口  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 目标模型：`spec/TARGET_METADATA_MODEL.md`  
-> FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
-> Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
-> Status/CHECK 基线：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
+> FK：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Unique：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
+> Status/CHECK：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
+> Delete Behavior：`spec/P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md`  
 > Quartz：`spec/QUARTZ_JOBSTORE_REVIEW.md`
 
 ## 1. 范围
-
-P0 支撑对象：
 
 ```text
 app_user
@@ -33,301 +31,181 @@ Quartz 官方 JobStore
 
 ## 2. `app_user`
 
-少量同权限管理员，通常 1～3 人；不建设 RBAC。
+少量同权限管理员，不建设 RBAC。
 
 ```text
-UNIQUE INDEX uk_app_user_username_ci
-ON app_user(lower(username))
+UNIQUE INDEX uk_app_user_username_ci ON app_user(lower(username))
 ```
 
-- 账号不物理删除，只启用/停用。
-- 当前用户不能停用自己。
-- 最后一个启用账号不能停用。
-- 停用/重置密码使 Refresh Token 失效。
-- 初始化 SQL 不写固定管理员密码或 Hash。
-
-## 3. User FK
-
-普通审计：
+删除行为：
 
 ```text
-created_by/updated_by/deleted_by/imported_by/retired_by
-→ app_user(id) ON DELETE SET NULL
+STATE_ONLY
+→ enabled=false
 ```
 
-运行责任：
+不提供物理 DELETE，不增加 `deleted_at`；当前用户不能停用自己，最后一个启用账号不能停用。停用/重置密码使 Refresh Token 失效。
+
+普通审计 User FK 可 `SET NULL`，运行责任 User FK 使用 `RESTRICT`，但这不改变产品上账号不可删除的规则。
+
+## 3. `audit_log`
+
+追加写业务审计：
 
 ```text
-requested_by/requested_by_user_id/confirmed_by/triggered_by/cancel_requested_by
-→ app_user(id) ON DELETE RESTRICT
+actor_type: LOCAL_USER / EXTERNAL_CLIENT / SCHEDULER / SYSTEM
+source: WEB / EXTERNAL_API / SCHEDULER / SYSTEM
+result: SUCCESS / FAILED
 ```
 
-## 4. `audit_log`
+保存 Actor Name Snapshot；Actor FK 可 SET NULL。
 
-枚举：
+删除：
 
 ```text
-actor_type:
-LOCAL_USER
-EXTERNAL_CLIENT
-SCHEDULER
-SYSTEM
-
-source:
-WEB
-EXTERNAL_API
-SCHEDULER
-SYSTEM
-
-result:
-SUCCESS
-FAILED
+PERMANENT_HISTORY
 ```
 
-Actor/Source 固定一一对应：
+不提供 Update/Delete API，不做自动 PostgreSQL retention。
+
+## 4. `system_setting`
+
+只保存应用注册 Key；`setting_key` 是 PK。
+
+删除行为：
+
+- 不提供通用 `DELETE /settings/{key}`。
+- 页面只提供读取、修改、恢复默认。
+- “恢复默认”由 Setting Registry 计算并通过受控 UPDATE/UPSERT 表达，不用删除数据库行作为产品操作。
+- 数据库没有可选 Setting Row 时仍可使用注册默认，但正常维护不暴露自由 Row Delete。
+
+Validation 全局默认仍为：
 
 ```text
-LOCAL_USER      ↔ WEB
-EXTERNAL_CLIENT ↔ EXTERNAL_API
-SCHEDULER       ↔ SCHEDULER
-SYSTEM          ↔ SYSTEM
+validation.default_method = ROW_COUNT / ROW_COUNT_CHECKSUM
 ```
 
-Actor FK 组合：
+## 5. Alert
+
+### 5.1 `alert_rule`
+
+允许物理删除，不增加 `deleted_at`。
 
 ```text
-LOCAL_USER
-→ actor_user_id 非空
-→ actor_client_id 为空
-
-EXTERNAL_CLIENT
-→ actor_client_id 非空
-→ actor_user_id 为空
-
-SCHEDULER/SYSTEM
-→ actor_user_id/actor_client_id 均为空
+alert_rule_channel.rule_id → CASCADE
+alert_event.rule_id → SET NULL
 ```
 
-Result：
+Event 已保存 Rule Name/Metric/Rule Snapshot/Severity，因此 Rule 删除不破坏历史。
+
+### 5.2 `alert_channel`
+
+允许物理删除，但当前仍被 Rule 使用时：
 
 ```text
-SUCCESS → error_code/error_message 均为空
-FAILED  → error_code 非空
+alert_rule_channel.channel_id → RESTRICT
 ```
 
-FK：
+流程：
 
 ```text
-actor_user_id   → app_user(id) SET NULL
-actor_client_id → external_api_client(id) SET NULL
+先从所有当前 Rule 移除 Channel
+→ 再删除 Channel
 ```
 
-Audit 保存 Actor Name Snapshot，追加写，不提供普通 Update/Delete；不设置业务 Unique。
-
-## 5. `system_setting`
-
-`setting_key` 是 PK，只允许应用注册 Key；Value 类型、默认值、范围和敏感性由 Setting Registry 定义。
-
-Validation 全局默认：
+历史 Delivery：
 
 ```text
-validation.default_method
-= ROW_COUNT / ROW_COUNT_CHECKSUM
-默认 ROW_COUNT
+alert_delivery.channel_id → SET NULL
 ```
 
-不恢复独立 Validation Policy Table、Enable/Tolerance/Lookback/Auto Revalidate 等旧配置。
+并保留 Channel Name/Type Snapshot。
 
-## 6. Alert
+### 5.3 `alert_rule_channel`
 
-### 6.1 Channel
-
-```text
-channel_type:
-DINGTALK
-WECOM
-
-message_format:
-TEXT
-MARKDOWN
-
-last_test_status:
-UNTESTED
-SUCCESS
-FAILED
-```
-
-Channel Test 使用 Resource 单点测试相同组合：
-
-```text
-UNTESTED → last_tested_at/error 均为空
-SUCCESS  → last_tested_at 非空，error 为空
-FAILED   → last_tested_at 非空，error 非空
-```
-
-Business Unique：
-
-```text
-UNIQUE INDEX uk_alert_channel_name_ci
-ON alert_channel(lower(name))
-```
-
-### 6.2 Rule
-
-```text
-condition_op:
-EQ / NE / GT / GTE / LT / LTE
-
-severity:
-INFO / WARNING / CRITICAL
-
-scope_type:
-ALL / TASK
-```
-
-```text
-ALL  → scope_task_id IS NULL
-TASK → scope_task_id IS NOT NULL
-```
-
-Business Unique：
-
-```text
-UNIQUE INDEX uk_alert_rule_name_ci
-ON alert_rule(lower(name))
-```
-
-### 6.3 Rule ↔ Channel
+纯当前关系配置：新增/删除关系行就是 Rule Channel 编辑。
 
 ```text
 PRIMARY KEY(rule_id,channel_id)
-rule_id → alert_rule(id) CASCADE
-channel_id → alert_channel(id) RESTRICT
 ```
 
-### 6.4 Event
+### 5.4 `alert_event` / `alert_delivery`
 
 ```text
-UNIQUE(event_uuid)
-severity = INFO/WARNING/CRITICAL
+PERMANENT_HISTORY
 ```
 
-`source_type` 与对应业务来源 FK 必须通过 CHECK 一一匹配；`SYSTEM` 允许全部来源 FK 为空。
+不提供删除/自动 retention。虽然 `alert_delivery.event_id → alert_event ON DELETE CASCADE` 仍保留为 FK 结构行为，但 P0 正常业务不物理删除 Event，因此不会触发历史级联清理。
 
-### 6.5 Delivery
+## 6. External API
 
-```text
-status:
-PENDING
-SENDING
-SUCCEEDED
-FAILED
-```
+### 6.1 `external_api_client`
 
-```text
-PENDING
-→ delivered_at IS NULL
-
-SENDING
-→ last_attempt_at IS NOT NULL
-→ delivered_at IS NULL
-
-SUCCEEDED
-→ delivered_at IS NOT NULL
-→ last_error_code/last_error IS NULL
-
-FAILED
-→ delivered_at IS NULL
-→ last_error_code IS NOT NULL
-```
-
-Business Unique：
-
-```text
-UNIQUE(event_id,channel_id)
-```
-
-Alert 不建设确认/认领/工单/审批/逐次投递明细。
-
-## 7. External API
-
-### 7.1 Client
-
-```text
-authorization_mode:
-ALL
-SELECTED
-```
-
-唯一程序身份：
+稳定程序身份：
 
 ```text
 UNIQUE(client_id)
+client_name 可重复
 ```
 
-`client_name` 只是可编辑显示名称，可重复，不建立 Name Unique。
-
-Client 不物理删除，只启停；Secret Reset 后旧 Secret 立即失效，不保存双 Key。
-
-### 7.2 Institution Scope
+删除行为：
 
 ```text
-PRIMARY KEY(client_id,institution_id)
+STATE_ONLY
+→ enabled=false
 ```
 
-`ALL/SELECTED` 与关联行数量由服务事务检查，不引入状态表。
+不提供物理 DELETE，不增加 `deleted_at`。Secret Reset 后旧 Secret 立即失效。
 
-### 7.3 Nonce
+### 6.2 `external_api_client_institution`
+
+纯当前授权关系，可物理增删。
+
+```text
+SELECTED → ALL
+```
+
+时清空 Institution 关系；授权变更历史由 Audit 解释。
+
+### 6.3 `external_api_request_nonce`
+
+```text
+TTL_CLEANUP
+```
+
+固定：
 
 ```text
 UNIQUE(client_id,nonce)
-expires_at > created_at
+expires_at = created_at + 1 hour
+expires_at < now() → 小批量 DELETE
 ```
 
-Nonce 保留 1 小时。
+Nonce 清理失败只告警。
 
-### 7.4 `external_api_request`
+### 6.4 `external_api_request`
 
-```text
-operation_code:
-TASK_ENSURE
-TASK_RUN
-TASK_DELETE
-MESSAGE_RETRY
-
-status:
-PROCESSING
-SUCCEEDED
-FAILED
-```
-
-Business Unique：
+承担长期幂等：
 
 ```text
 UNIQUE(client_id,request_id)
 ```
 
-状态 CHECK：
-
 ```text
-PROCESSING
-→ completed_at IS NULL
-
-SUCCEEDED
-→ completed_at IS NOT NULL
-→ response_body IS NOT NULL
-→ error_code/error_message IS NULL
-
-FAILED
-→ completed_at IS NOT NULL
-→ error_code IS NOT NULL
+PERMANENT_HISTORY
 ```
 
-不增加 `RECOVERING/RETRYING` 状态；超时恢复继续操作原 `PROCESSING` 行并核对真实副作用。
+不自动删除或复用历史 Request ID；长期追溯与 Audit 共同承担。
 
-## 8. Quartz
+## 7. Quartz
 
-Quartz 只作为当前 Task 调度配置的可重建投影。
+Quartz 是当前 Task 调度配置的：
+
+```text
+REBUILDABLE_PROJECTION
+```
+
+业务事实：
 
 ```text
 sync_task.deleted_at IS NULL
@@ -336,25 +214,60 @@ AND schedule_mode<>'MANUAL'
 AND schedule_cron 有效
 ```
 
-Quartz 11 张官方 PostgreSQL 表按项目锁定版本的官方 DDL 建立，不参与 DFETL 自定义 FK/Unique/Status CHECK Review。
-
-## 9. 明确不建立
+因此：
 
 ```text
-RBAC
-Global/Dataset/Task Validation Policy
-Scheduler Reconciliation
-External API Rate Limit/Quota
-Secret History/Dual Key
-Alert Workflow/Approval
-External Client Name Unique
+Task pause / MANUAL / logical delete
+→ 删除对应 Quartz Job/Trigger
+
+Task resume / 调度重新有效
+→ 从当前 sync_task 重建
 ```
+
+Quartz Runtime 不作为业务历史，也不迁移老系统 Quartz Runtime。
+
+## 8. User FK 统一规则
+
+普通审计：
+
+```text
+created_by/updated_by/deleted_by/imported_by/retired_by
+→ app_user SET NULL
+```
+
+运行责任：
+
+```text
+requested_by/requested_by_user_id/confirmed_by/triggered_by/cancel_requested_by
+→ app_user RESTRICT
+```
+
+这只是数据库删除完整性规则，不代表 `app_user` 提供物理删除入口。
+
+## 9. 支撑对象删除模式总览
+
+| 表 | 删除模式 |
+| --- | --- |
+| `app_user` | 只停用 |
+| `audit_log` | 永久历史 |
+| `system_setting` | 无通用 DELETE |
+| `alert_channel` | 可物理删除；当前 Rule 引用时 RESTRICT |
+| `alert_rule` | 可物理删除；Event Snapshot 保历史 |
+| `alert_rule_channel` | 当前关系可物理删除 |
+| `alert_event` | 永久历史 |
+| `alert_delivery` | 永久历史 |
+| `external_api_client` | 只停用 |
+| `external_api_client_institution` | 当前关系可物理删除 |
+| `external_api_request_nonce` | 1 小时 TTL |
+| `external_api_request` | 永久历史 |
 
 ## 10. 验收
 
-- Audit Actor/Source/Result 组合无歧义。
-- Alert Channel 测试状态与时间/错误字段一致。
-- Alert Delivery 终态时间/错误组合一致。
-- External Request `PROCESSING/SUCCEEDED/FAILED` 组合严格。
-- External Client Name 不唯一，只保证 Client ID。
-- Support Object 所有状态/CHECK 与 `P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md` 一致。
+- User/External Client 无删除入口，只启停。
+- System Setting 无自由 DELETE。
+- Alert Rule/Channel 可物理删且 Snapshot 保持历史可解释。
+- Event/Delivery 永久保留。
+- External Client Institution 是当前授权关系，可增删。
+- Nonce 1 小时 TTL 自动清理。
+- External Request 长期保留幂等。
+- Quartz Job/Trigger 随 Task 当前调度状态删除/重建。
