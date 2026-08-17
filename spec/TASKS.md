@@ -2,9 +2,10 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：P0 Table/FK/Unique/Status/Delete/Snapshot 技术矩阵已冻结；前端优先  
+> 状态：P0 技术模型 Review 已通过；Phase 1 总体等待前端验收与 G-001 最终签字  
 > 最近更新：2026-08-17  
-> 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
+> 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> Final Review：`spec/PHASE1_FINAL_REVIEW.md`
 
 ## 1. 当前核心模型
 
@@ -34,7 +35,9 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 - [x] Quartz 使用 11 张官方表。
 - [x] `flyway_schema_history` 不计入 50。
 
-## 3. FK Matrix：完成
+## 3. 六项技术矩阵：全部完成
+
+### FK
 
 权威：`P0_FOREIGN_KEY_MATRIX_REVIEW.md`。
 
@@ -45,46 +48,37 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 - [x] 运行责任 User RESTRICT。
 - [x] FK 子列索引。
 
-## 4. Business / Concurrency Unique Matrix：完成
+### Business / Concurrency Unique
 
 权威：`P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`。
 
 - [x] Business / Concurrency / FK Support Unique 分离。
-- [x] Stable Code/ID、Parent Version No、Content Hash、Business Pair 使用 Business Unique。
 - [x] Dataset/Route 相同历史 Hash 复用旧 Version。
 - [x] External Client Name 可重复。
 - [x] Delete Apply Safety Partial Unique。
 
-## 5. Status / Enum / CHECK Matrix：完成
+### Status / Enum / CHECK
 
 权威：`P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`。
 
 - [x] `SUCCEEDED` 与 `COMPLETED + result` 分离。
-- [x] Resource Test、Route 双状态、Dataset/Task Schedule、Execution、Validation、Outbox/Delete Apply/Audit/Alert/External Request CHECK 收口。
+- [x] Resource/Route/Schedule/Execution/Validation/Outbox/Delete/Audit/Alert/External Request CHECK 收口。
 - [x] `validation_run.validation_source=FIXED` 只用于 Delete Reconciliation。
 
-## 6. Delete Behavior Matrix：完成
+### Delete Behavior
 
 权威：`P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md`。
 
-- [x] Resource：无引用可物理删除，有引用只能停用，不增加逻辑删除。
-- [x] Dataset/Version/Field/Contract 历史永久保留；Dataset 用 VOID，Contract 用 RETIRED。
-- [x] Route/Task 使用逻辑删除。
-- [x] Task 删除不级联 Watermark；只有显式“清除水位”才 DELETE 当前 Watermark Row。
+- [x] Resource 无引用可物理删除，有引用只能停用。
+- [x] Dataset/Version/Field/Contract 历史永久保留；Dataset=VOID，Contract=RETIRED。
+- [x] Route/Task 逻辑删除；Watermark 仅显式 Clear。
 - [x] Runtime/Audit/External Request/Alert History 无普通 DELETE/自动 PostgreSQL retention。
-- [x] FE Endpoint、Rule-Channel、Client-Institution、Generic JDBC Mapping 等当前配置可物理删除。
-- [x] Alert Rule/Channel 可物理删除，历史依赖 Snapshot + SET NULL。
-- [x] App User/External Client 只停用。
-- [x] System Setting 无通用 DELETE。
-- [x] External Nonce 1 小时 TTL。
-- [x] Doris RAW/Snapshot/Diff 按生命周期清理但保留 PostgreSQL Run。
-- [x] Quartz Job/Trigger 是可重建投影。
+- [x] App User/External Client 只停用；System Setting 无通用 DELETE；External Nonce 1 小时 TTL。
+- [x] Doris RAW/Snapshot/Diff 按生命周期清理，Quartz 为可重建投影。
 
-## 7. Execution / Validation / Outbox Snapshot 最小充分性：完成
+### Snapshot 最小充分性
 
 权威：`P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md`。
-
-统一原则：
 
 ```text
 不可变定义只引用
@@ -92,35 +86,31 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 Secret 永不快照
 ```
 
-已确认：
-
-- [x] Execution 只通过 Dataset Version / Route Version 引用永久不可变定义，不复制字段列表/合同 Hash/完整 JSON。
-- [x] Execution 保留实际 Task 参数、运行原因/范围、最终 Validation、Message Policy Snapshot。
-- [x] Execution 新增非 Secret `source_runtime_snapshot/target_runtime_snapshot`。
+- [x] Execution 保存非 Secret Source/Target Runtime Snapshot。
 - [x] 删除 `precheck_fact_snapshot`。
-- [x] Checksum Protocol 只在 `ROW_COUNT_CHECKSUM` 时保存。
-- [x] SYNC_GATE/MANUAL_RECHECK 完全使用父 Execution Context，`context_snapshot/range_snapshot=NULL`。
+- [x] SYNC_GATE/MANUAL_RECHECK 只使用父 Execution Context。
 - [x] 普通独立 Validation 才保存最小 Context/Range。
-- [x] Delete Reconciliation 只使用 Baseline/Current Snapshot Run FK。
-- [x] Outbox 保留显式 Message Policy Snapshot + 最小 Range，不重复显式身份/`operation_type`。
-- [x] Outbox 不复制原 Target Runtime Endpoint；人工重发读取当前 Doris。
-- [x] Snapshot 严禁 DB/RabbitMQ/API/Webhook/JWT/Master Key/Authorization/HMAC Secret。
+- [x] Delete Reconciliation 只使用 Snapshot Run FK。
+- [x] Outbox 保留 Message Policy Snapshot + 最小 Range。
+- [x] Checksum Protocol 只在 ROW_COUNT_CHECKSUM 时保存。
 
-## 8. 阶段 1 技术一致性 Review 顺序
+## 4. PHASE1_FINAL_REVIEW：已完成
 
-严格一次讨论一个：
+权威：`spec/PHASE1_FINAL_REVIEW.md`。
 
-1. [x] P0 PostgreSQL 最终表清单 + 数量。
-2. [x] 全量 FK Matrix。
-3. [x] Business / Concurrency Unique Matrix。
-4. [x] Status / Enum / CHECK Matrix。
-5. [x] Delete Behavior Matrix。
-6. [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
-7. [ ] **`PHASE1_FINAL_REVIEW.md`。**
+当前三态：
 
-下一项只进行 Phase 1 Final Review；不直接创建 Flyway V1 或修改 Java 后端。
+```text
+TECHNICAL_MODEL_REVIEW = PASS
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
+DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
+```
 
-## 9. 当前最高开发优先级：前端 100%
+技术模型不再继续新增 Table/FK/Unique/Status/Delete/Snapshot 设计问题。
+
+## 5. 当前最高优先级：前端 100%
+
+G-001 最终签字前必须完成：
 
 - [ ] Navigation 与最新产品模型一致。
 - [ ] Resource 页面完整。
@@ -132,21 +122,12 @@ Secret 永不快照
 - [ ] Alert/Log/Audit/System Settings 完整。
 - [ ] 所有菜单真实 URL。
 - [ ] lint/build/逐页原型验收。
+- [ ] P-002 管理员账号管理入口确认并落页。
+- [ ] P-003 Help/Docs 入口确认并落页。
 
-前端模型确认后再冻结最终 API Contract。
+前端必须与已冻结 Spec 100% 对齐。
 
-## 10. 前端之后
-
-1. API Contract；
-2. Final P0 Flyway V1；
-3. Java Entity/Repository/Service；
-4. PostgreSQL/External Integration Test；
-5. SeaTunnel/Doris/Quartz/RabbitMQ；
-6. E2E；
-7. Multi-instance/Large Batch Reliability；
-8. Production Acceptance/Cutover。
-
-## 11. 阶段 1 最终签字门槛
+## 6. 阶段 1 最终签字门槛
 
 - [x] Active Spec 业务语义收口。
 - [x] PostgreSQL/Quartz 表清单。
@@ -155,6 +136,37 @@ Secret 永不快照
 - [x] Status/Enum/CHECK Matrix。
 - [x] Delete Behavior Matrix。
 - [x] Snapshot 最小充分性 Review。
-- [ ] Frontend 与 Spec 一致。
-- [ ] `PHASE1_FINAL_REVIEW.md` 完成。
-- [ ] 用户明确签字后才进入数据库/后端实施。
+- [x] `PHASE1_FINAL_REVIEW.md` 完成。
+- [ ] Frontend 与 Spec 100% 一致。
+- [ ] P-002 / P-003 收口。
+- [ ] 用户 G-001 最终签字。
+
+最终授权语句：
+
+```text
+目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
+```
+
+在用户明确授权前，不创建/固化 Flyway V1，不按最终模型推进 Java 后端整改。
+
+## 7. 不阻塞当前技术模型冻结的后续事项
+
+- P-004：Delete Apply 安全阈值，在实现前确认；
+- P-005：首个管理员初始化方式，后端实施期确认；
+- P-006：新旧系统配置/水位/切换策略，上线期确认；
+- P-007：GraalVM Native Image，已暂缓。
+
+上述事项不得反向新增 P0 表或恢复已废止模型，除非出现新的明确业务需求并重新进入专项 Review。
+
+## 8. G-001 之后的实施顺序
+
+只有最终签字后才进入：
+
+1. API Contract 最终冻结；
+2. Final P0 Flyway V1；
+3. Java Entity/Repository/Service；
+4. PostgreSQL/External Integration Test；
+5. SeaTunnel/Doris/Quartz/RabbitMQ；
+6. E2E；
+7. Multi-instance/Large Batch Reliability；
+8. Production Acceptance/Cutover。
