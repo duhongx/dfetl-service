@@ -61,7 +61,6 @@ export const loadBatchSeed: LoadBatchRow[] = [
 
 export const messageOutboxSeed: MessageOutboxRow[] = [
   { id: "OUT-001", eventId: "EVT-20260817-001", executionId: "EXE-260817-002", taskId: "TASK-1001", publishScope: "INCREMENTAL", status: "PUBLISHED", routingKey: "YL.HUANZHEJBXX", attemptCount: 1, maxAttempts: 5, publishedAt: "2026-08-17 08:18:22", lastError: "" },
-  { id: "OUT-002", eventId: "EVT-20260816-007", executionId: "EXE-260816-007", taskId: "TASK-1002", publishScope: "INCREMENTAL", status: "DEAD_LETTER", routingKey: "YL.JIANCHASQD", attemptCount: 5, maxAttempts: 5, publishedAt: "—", lastError: "RabbitMQ publish timeout" },
 ];
 
 export const deleteSnapshotSeed: DeleteSnapshotRow[] = [
