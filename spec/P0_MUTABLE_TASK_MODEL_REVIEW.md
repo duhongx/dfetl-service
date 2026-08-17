@@ -1,81 +1,57 @@
 # P0 可变任务配置模型 Review
 
-> 状态：阶段 1 工作包 3 一致性 Review 已确认  
-> 日期：2026-08-15  
+> 状态：阶段 1 Snapshot 最小充分性已确认并收口  
+> 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 任务字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
-> 校验字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
-> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
+> Task：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
+> Validation：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
+> Snapshot：`spec/P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md`  
+> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`。
 
-## 1. 任务采用“固定身份 + 当前配置覆盖”模型
-
-同步任务只保存当前有效配置：
+## 1. Task = 固定身份 + 当前配置
 
 ```text
 sync_task
-= 固定业务身份 + 当前执行配置
+= 固定 Institution + Dataset 身份
++ 当前可编辑执行配置
 ```
 
-任务业务身份固定为：
+同一 Institution + Dataset 一个未删除 Task。普通编辑直接更新当前 `sync_task`，不创建 Task Version。
 
-```text
-一个医疗机构 + 一个标准数据集
-```
-
-同一机构、同一数据集只能存在一个未删除任务。
-
-用户编辑任务时直接更新原 `sync_task` 的当前配置，不为每次修改创建不可变任务版本。
-
-目标模型明确删除：
+明确不建立：
 
 ```text
 sync_task_version
 sync_task.current_version_id
 version_no
 task contract_hash
-任务版本发布、切换和回退流程
+Task 发布/切换/回退状态机
 ```
 
-## 2. 任务业务身份创建后不可修改
-
-以下字段是任务业务身份：
+## 2. Task 身份不可修改
 
 ```text
 institution_id
 dataset_id
 ```
 
-任务创建成功后，编辑接口不得修改这两个字段。
-
-确实需要更换机构或数据集时，固定流程为：
+创建后不可修改。需要更换身份时：
 
 ```text
-确认旧任务没有活动同步执行
-→ 逻辑删除旧任务
-→ 创建新的任务
+确认无活动 Sync Execution
+→ 逻辑删除旧 Task
+→ 创建新 Task
 ```
 
-旧任务的水位、执行、批次、校验、Outbox 和审计历史继续保留在旧任务 ID 下，不迁移到新任务。
+旧 Watermark、Execution、Batch、Validation、Outbox、Delete/Audit 历史全部继续归属旧 `task_id`，不迁移。
 
-不建设：
+## 3. 当前配置
 
-```text
-任务身份迁移
-历史记录拆分或搬迁
-水位自动迁移
-删除快照基线自动迁移
-同一任务 ID 先后代表不同机构或数据集
-```
-
-这样可以保证一个 `task_id` 在整个生命周期内始终表示同一“机构 + 数据集”同步管道。
-
-## 3. 当前任务配置
-
-`sync_task` 直接保存：
+`sync_task` 当前保存：
 
 ```text
-institution_id                 # 固定身份，创建后不可修改
-dataset_id                     # 固定身份，创建后不可修改
+institution_id
+dataset_id
 dataset_version_id
 route_version_id
 name
@@ -97,78 +73,40 @@ validation_method_override
 revision
 ```
 
-用户可以修改：
+用户可修改 Route/Dataset Version、名称、读取参数、调度和 Validation Override；活动 Sync Execution 期间禁止编辑。
+
+平台不因编辑自动：
 
 ```text
-当前采集链路和数据集合同版本
-任务名称
-读取参数
-调度配置
-任务级校验方式覆盖
-```
-
-但存在活动 `sync_execution` 时禁止修改，避免同步写入过程中改变正在使用的数据来源、范围、水位或写入合同。
-
-系统不替用户判断更换链路后是否需要：
-
-```text
-重置水位
+重置 Watermark
 重新全量
-数据补采
-重新建立删除快照基线
+补采
+迁移 Delete Snapshot Baseline
 ```
 
-平台只提供相应操作并保证各次运行结果可解释，不替使用者决定操作时机和后续处理，不建设任务配置迁移、双链路、双水位、自动回退、待生效配置或配置发布状态机。
+## 4. Validation Override
 
-## 4. 删除独立 `task_validation_policy`
-
-任务级校验覆盖最终只剩一个可选值，没有独立生命周期，因此不建立一对一策略表。
-
-删除：
+Task 只保存：
 
 ```text
-task_validation_policy
-override_mode
-策略表独立 revision
-策略表独立 created_at/updated_at
+validation_method_override = NULL / ROW_COUNT / ROW_COUNT_CHECKSUM
 ```
 
-在 `sync_task` 增加：
+NULL 即继承，不建立 `task_validation_policy/override_mode`。
+
+最终解析：
 
 ```text
-validation_method_override varchar(32) NULL
-```
-
-语义：
-
-| 值 | 含义 |
-| --- | --- |
-| `NULL` | 任务不覆盖，继续读取数据集覆盖；数据集也未覆盖时使用全局默认。 |
-| `ROW_COUNT` | 任务明确使用严格行数校验。 |
-| `ROW_COUNT_CHECKSUM` | 任务明确使用严格行数和内容 Checksum。 |
-
-固定规则：
-
-- 不再使用额外 `override_mode`；`NULL` 本身就是 `INHERIT`。
-- 正式同步校验不能关闭。
-- 不允许保存容差、校验回看、自动复检或失败动作。
-- 无真实业务主键的数据集不得保存 `ROW_COUNT_CHECKSUM`。
-- 任务字段与其他任务配置共用 `sync_task.revision`、更新时间和修改审计。
-- 活动同步执行期间不允许修改该字段。
-
-最终解析顺序：
-
-```text
-sync_task.validation_method_override
-→ standard_dataset.validation_method_override
+Task Override
+→ Dataset Override
 → system_setting[validation.default_method]
-→ 注册默认值 ROW_COUNT
-→ 数据集合同能力强制
+→ Registered Default ROW_COUNT
+→ Dataset Contract Capability
 ```
 
-## 5. 活动同步执行期间禁止编辑
+## 5. 活动 Sync Execution 期间禁止编辑
 
-任务存在以下任一活动 `sync_execution` 状态时：
+活动状态：
 
 ```text
 PENDING
@@ -177,133 +115,189 @@ LOADING
 VALIDATING
 ```
 
-禁止修改全部当前任务配置，包括 `validation_method_override`。
-
-处理流程：
+编辑固定流程：
 
 ```text
-编辑任务
-→ 锁定 sync_task
-→ 查询活动 sync_execution
-→ 存在则拒绝保存
-→ 返回 TASK_EXECUTION_ACTIVE
+锁定 sync_task
+→ 检查活动 sync_execution
+→ 有则返回 TASK_EXECUTION_ACTIVE
+→ 无则按 revision 更新当前配置
 ```
 
-错误响应必须包含当前执行 ID、状态和明确建议：等待执行结束，或者先受控取消执行。
+Execution 启动与 Task 编辑使用同一 Task 行锁或等效事务串行化。
 
-执行启动与任务编辑使用同一任务行锁或等效事务串行化，避免同步启动和任务修改同时穿透。
+## 6. 独立 Validation 期间允许编辑
 
-## 6. 独立校验期间允许编辑任务配置
-
-活动独立校验是：
+普通独立 Validation：
 
 ```text
-trigger_type IN ('MANUAL','MANUAL_RECHECK','SCHEDULED')
+trigger_type IN ('MANUAL','SCHEDULED')
 AND status IN ('PENDING','RUNNING')
 ```
 
-它不阻止任务普通配置编辑。
+不阻止 Task 普通编辑。
 
-原因是独立校验启动时已经把本次实际使用的以下内容固定到 `validation_run`：
+原因是独立 Validation 启动时已经冻结最小上下文：
 
 ```text
-任务和机构身份
-数据集及数据集版本
-链路版本
-校验范围
-校验方法及来源
-必要的源目标和字段合同快照
+task_id + task_revision
+routeVersionId
+sourceRuntimeSnapshot
+targetRuntimeSnapshot
+range_snapshot
+最终 Validation Method/Source
 ```
 
-后续修改任务时：
+不可变 Dataset/Route/Field Contract 不复制，通过永久定义引用解释。
 
-- 当前独立校验继续使用启动时快照；
-- 不热更新本次校验；
-- 不修改本次校验结果；
-- 修改后的任务配置供后续新的同步或校验使用；
-- 任务机构和数据集身份仍然不可修改。
+任务编辑与独立 Validation 启动同时发生时，通过锁定同一 `sync_task` 确定“旧配置快照”或“新配置快照”的清晰边界，不形成混合快照。
 
-任务编辑与独立校验启动同时发生时，可以使用同一 `sync_task` 行锁确定清晰的快照边界：
+MANUAL_RECHECK 不属于“新独立上下文”：它关联原 `sync_execution`，完全复用原 Execution 上下文。
+
+## 7. Snapshot 总原则
+
+已确认：
 
 ```text
-校验先取得锁
-→ 校验保存旧配置快照
-→ 编辑随后成功
-
-编辑先取得锁
-→ 编辑提交新配置
-→ 校验随后保存新配置快照
+不可变定义只引用
+可变运行事实才快照
+Secret 永不快照
 ```
 
-两种结果都明确，不需要因独立校验正在运行而禁止用户编辑，也不建立待生效配置。
-
-## 7. 历史执行和校验追溯
-
-任务配置可以被覆盖，但已经接受的运行必须固定本次上下文。
-
-创建 `sync_execution` 时复制至少以下内容：
+永久不可变定义：
 
 ```text
-task_id
-institution_id / institution_code
-dataset_id / dataset_version_id
+standard_dataset_version
+standard_dataset_field
+field_conversion_contract / field_conversion_rule
+collection_route_version
+route_field_resolution
+```
+
+这些对象不在 Runtime JSON 中复制第二份完整事实。
+
+## 8. `sync_execution` 最小充分 Snapshot
+
+Execution 创建时固定：
+
+### 稳定身份/定义引用
+
+```text
+task_id + task_revision
+institution_id/institution_code
+dataset_id/dataset_version_id
 route_version_id
-task_kind / write_mode / doris_key_model
+```
+
+### 本次实际 Task 执行参数
+
+```text
+task_kind/write_mode/doris_key_model
 incremental_field_code
-fetch_size / upper_bound_delay_minutes / lookback_seconds
-本次时间或主键范围
-最终校验方法、来源和来源 revision
-消息策略快照
-必要的源目标及字段合同引用
+fetch_size/upper_bound_delay_minutes/lookback_seconds
 ```
 
-创建独立 `validation_run` 时保存本次校验范围、任务配置引用和校验方法快照。
-
-之后任务修改只影响后续新运行。历史执行和历史校验详情始终读取各自启动快照，不使用当前任务值覆盖历史。
-
-任务修改前后摘要、操作者和时间写入 `audit_log`。
-
-## 8. 对相关表的影响
-
-### `sync_execution`
-
-删除：
+### 非 Secret Runtime Endpoint
 
 ```text
-sync_execution.task_version_id
+source_runtime_snapshot
+target_runtime_snapshot
 ```
 
-保留 `task_id`，并保存本次实际执行身份和配置快照。
+这两份 JSON 冻结本次实际 Source/Target 可编辑连接资源中的非 Secret Endpoint/Revision/运行参数；不保存 Password/Credential。
 
-### `validation_run`
-
-删除：
+### 本次运行原因/范围
 
 ```text
-validation_run.task_version_id
+operation_type/trigger_type/execution_scope/target_prepare_mode
+window_lower/window_upper
+key_lower/key_upper
+watermark_before/watermark_commit_expected
+schedule_fire_time/external request/requested user
 ```
 
-同步门禁和人工重新校验通过 `execution_id` 使用原执行快照；独立治理校验通过 `task_id`、范围快照和策略快照固定上下文。
-
-### `message_outbox`
-
-删除：
+### 最终 Validation
 
 ```text
-message_outbox.task_version_id
+validation_method
+validation_source
+validation_source_revision
+validation_contract_forced
+checksum_protocol_version（仅 ROW_COUNT_CHECKSUM 非空）
 ```
 
-Outbox 通过 `execution_id` 关联原执行，并保存消息发布所需的小型策略和范围快照。
-
-### `task_watermark`
-
-删除：
+### Message Policy
 
 ```text
-task_watermark.task_version_id
+message_policy_snapshot
 ```
 
-水位只属于任务：
+只保存 Dataset Message Policy 本次生效值，不保存 RabbitMQ Connection Secret。
+
+明确不保存：
+
+```text
+完整 Dataset/Route/Field Contract JSON
+Task Name/Schedule Config Snapshot
+Validation Override 链完整 JSON
+precheck_fact_snapshot
+Secret/Credential
+```
+
+## 9. `validation_run` 上下文边界
+
+### SYNC_GATE / MANUAL_RECHECK
+
+```text
+execution_id NOT NULL
+context_snapshot NULL
+range_snapshot NULL
+```
+
+所有上下文从父 Execution 读取，不复制第二份。
+
+### 普通独立 Validation
+
+```text
+execution_id NULL
+context_snapshot NOT NULL
+range_snapshot NOT NULL
+```
+
+最小 Context 只保存：
+
+```text
+routeVersionId
+sourceRuntimeSnapshot
+targetRuntimeSnapshot
+```
+
+### DELETE_RECONCILIATION
+
+```text
+execution_id NULL
+context_snapshot NULL
+range_snapshot NULL
+baseline/current delete_snapshot_run FK 非空
+```
+
+上下文唯一来自 Snapshot Run。
+
+## 10. `message_outbox`
+
+删除 `task_version_id`；Outbox 通过父 Execution 复合 FK 固定身份，并保存：
+
+```text
+显式 Message Policy Snapshot 字段
+publish_scope
+最小 range_snapshot
+```
+
+Range JSON 不重复 Execution/Task/Dataset/Institution ID 或 `operation_type`。
+
+Outbox 不复制父 Execution Target Runtime Endpoint；人工重发按已确认语义重新读取当前 Doris。
+
+## 11. Watermark
 
 ```text
 task_id
@@ -311,80 +305,53 @@ watermark_value
 source_execution_id
 ```
 
-任务配置变化不自动修改水位。
+不保存 Task Version。Task 配置变化不自动修改 Watermark；显式“清除水位”可物理删除当前 Watermark Row。
 
-## 9. 仍保留的不可变版本
-
-以下版本对象继续保留：
-
-```text
-standard_dataset_version
-collection_route_version
-field_conversion_contract / rule version
-```
-
-它们表示数据定义、源对象解析和字段转换合同，不是任务日常编辑历史。
-
-`sync_task` 直接引用当前选择的 `dataset_version_id` 和 `route_version_id`。
-
-## 10. 数据库与应用边界
+## 12. 数据库与应用边界
 
 数据库负责：
 
-- 未删除任务按机构 + 数据集唯一；
-- `institution_id/dataset_id` 构成稳定任务身份；
-- 当前机构、数据集版本、链路版本关系有效；
-- 三种标准任务组合合法；
-- 调度字段组合合法；
-- `validation_method_override` 仅允许 `NULL/ROW_COUNT/ROW_COUNT_CHECKSUM`；
-- 乐观锁 `revision` 防止并发静默覆盖；
-- 同一任务只能存在一个活动同步执行；
-- 同一任务只能存在一个活动独立校验。
+- 未删除 Task Institution + Dataset 唯一；
+- Route/Dataset/Institution 强 FK 一致；
+- 三种标准 Task 组合；
+- 调度字段组合；
+- Validation Override 受控值；
+- 同 Task 活动 Sync/Independent Validation 并发兜底；
+- Runtime Snapshot JSON 类型和各运行类型 NULL/非 NULL CHECK。
 
 应用负责：
 
-- 编辑 DTO 不提供机构和数据集修改能力；
-- 收到身份字段变更请求时明确拒绝；
-- 编辑前锁定任务，只把活动 `sync_execution` 作为编辑阻塞条件；
-- 独立校验启动时锁定任务并形成快照，但运行中的独立校验不阻止编辑；
-- 读取当前任务形成执行或校验快照；
-- 记录任务修改审计；
-- 同步 Quartz 投影；
-- 无业务主键时拒绝 Checksum 覆盖；
-- 展示当前任务配置以及历史执行、校验快照。
+- Task Identity 不提供修改入口；
+- 启动时在同一 Task 锁边界读取完整当前配置；
+- 生成 Execution/Independent Validation 最小 Snapshot；
+- Runtime Snapshot 严格剔除 Secret；
+- 记录 Task 修改 Audit；
+- 同步 Quartz Projection；
+- 展示当前 Task 与历史 Runtime Snapshot，不用当前 Task 值覆盖历史。
 
-## 11. 被废止的旧描述
+## 13. 废止旧描述
 
-以下内容不得进入 Flyway V1、Java 实体、Repository、OpenAPI 或 Vue 类型：
+不得进入 V1/API/Entity：
 
 ```text
-sync_task_version
-sync_task.current_version_id
-task_validation_policy
-task validation override_mode
-sync_execution.task_version_id
-validation_run.task_version_id
-message_outbox.task_version_id
-task_watermark.task_version_id
-任务版本发布、迁移和回退接口
-待生效任务配置
-任务创建后修改 institution_id 或 dataset_id
-任务身份迁移和历史自动搬迁
-独立校验运行期间禁止编辑普通任务配置
+sync_task_version/current_version_id/task_version_id
+task_validation_policy/override_mode
+Task 发布/迁移/回退
+待生效配置
+Task Identity 修改/历史搬迁
+独立 Validation 运行期间禁止编辑普通 Task 配置
+Execution/Validation 复制完整不可变定义 JSON
+precheck_fact_snapshot
+Credential History
 ```
 
-## 12. 验收
+## 14. 验收
 
-- P0 PostgreSQL 表清单中不存在 `sync_task_version` 和 `task_validation_policy`。
-- `sync_task` 保存固定任务身份、当前完整配置和可空 `validation_method_override`。
-- `institution_id/dataset_id` 创建后不可修改。
-- 更换机构或数据集时必须逻辑删除旧任务并创建新任务。
-- 旧任务全部运行历史继续归属旧 `task_id`。
-- `NULL` 校验覆盖明确表示继承，不再保存 `override_mode`。
-- 无活动同步执行时可以更新普通任务配置并增加 `revision`。
-- 活动同步执行期间任务配置和校验方式覆盖均不可修改。
-- 活动独立校验期间允许修改普通任务配置，当前校验继续使用启动快照。
-- 独立校验启动与任务编辑并发时具有明确快照边界。
-- 历史执行和历史校验不因任务后续修改而变化。
-- 任务修改历史通过 `audit_log` 查询。
-- 不建立任务配置版本、策略一对一表、身份迁移、待生效配置或双版本状态机。
+- Task 保存固定身份 + 当前配置，不版本化。
+- 活动 Sync 期间不可编辑，普通独立 Validation 期间可编辑。
+- Execution 能解释本次实际 Task 参数、Runtime Endpoint、范围、Validation 和 Message Policy。
+- Dataset/Route/Field Contract 只通过不可变引用解释。
+- Execution-bound Validation 不复制父 Execution Context。
+- 独立 Validation 有最小充分非 Secret Context。
+- Outbox 是小型自包含发布指令，不是 Payload Replay。
+- 所有历史不因 Task 后续修改而变化。
