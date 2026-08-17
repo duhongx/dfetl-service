@@ -1,6 +1,6 @@
 # 阶段 1 剩余 Review 与后续实施规划
 
-> 状态：Table + FK + Unique + Status/CHECK 已确认；前端优先 + Delete Behavior 待 Review  
+> 状态：Table + FK + Unique + Status/CHECK + Delete Behavior 已确认；前端优先 + Snapshot 最小充分性待 Review  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -8,7 +8,7 @@
 
 1. 已确认业务规则不重复讨论；旧残留机械清理。
 2. 主线：Resource + Single-Institution Route + Current Task + Runtime Snapshot。
-3. 前端页面/交互仍优先完成；技术一致性 Review 只收 Spec。
+3. 前端页面/交互仍优先；技术一致性 Review 只收 Spec。
 4. 阶段 1 最终签字前不创建 Flyway V1、不修改正式数据库。
 5. 新系统只使用独立 PostgreSQL。
 
@@ -24,39 +24,29 @@
 - [x] 全量 FK Matrix。
 - [x] Business / Concurrency Unique Matrix。
 - [x] Status / Enum / CHECK Matrix。
+- [x] Delete Behavior Matrix。
 
 ## 3. 已冻结物理基线
 
-### FK
-
-`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`
-
-### Unique
-
-`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`
-
-### Status / Enum / CHECK
-
-`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`
-
-关键状态语义：
-
 ```text
-SUCCEEDED
-= 同步/批次/投递/删除应用真正成功
-
-COMPLETED + result
-= Precheck/Validation/Delete Snapshot 技术完成，Result 单独表达
+FK            → P0_FOREIGN_KEY_MATRIX_REVIEW.md
+Unique        → P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md
+Status/CHECK  → P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md
+Delete        → P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md
 ```
 
-关键修正：
+删除行为关键规则：
 
-- Resource Test Status + 时间/错误组合统一。
-- Route Business Status 与 Structure Status 独立。
-- Dataset EVERY_N_HOURS Default 不保存最终 Cron；Task 保存最终错峰 Cron。
-- Execution Trigger/Operation/Range/Terminal/Cancel CHECK 严格。
-- `validation_run.validation_source` 新增 `FIXED`，只用于 Delete Reconciliation。
-- Outbox/Delete Apply/Audit/Alert/External Request 终态组合固定。
+- Resource 无引用可物理删，有引用只能停用。
+- Dataset/Version/Field/Contract 永久定义历史，使用 VOID/RETIRED 表达失效。
+- Route/Task 逻辑删除。
+- Watermark 仅显式 Clear 删除当前 Row，Task 删除不级联。
+- Runtime/Audit/External Request/Alert History 永久保留 PostgreSQL 元数据。
+- Alert Rule/Channel 可物理删，历史靠 Snapshot + SET NULL。
+- User/External Client 只停用；Setting 无通用 DELETE。
+- External Nonce 1 小时 TTL。
+- Doris RAW/Snapshot/Diff 清理不删除 PostgreSQL Run。
+- Quartz Job/Trigger 为可重建投影。
 
 ## 4. 最终物理一致性 Review 顺序
 
@@ -66,11 +56,11 @@ COMPLETED + result
 2. [x] 全量 FK Matrix。
 3. [x] Business / Concurrency Unique Matrix。
 4. [x] Status / Enum / CHECK Matrix。
-5. [ ] **Delete Behavior Matrix。**
-6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+5. [x] Delete Behavior Matrix。
+6. [ ] **Execution / Validation / Outbox Snapshot 最小充分性 Review。**
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-下一项只处理 Delete Behavior Matrix。
+下一项只处理 Snapshot 最小充分性 Review。
 
 ## 5. 前端产品完成 100%
 
