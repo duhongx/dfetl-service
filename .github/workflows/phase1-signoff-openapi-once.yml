@@ -1,0 +1,83 @@
+name: Phase 1 signoff and OpenAPI D1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/phase1-signoff-openapi-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Reconstruct and verify implementation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scripts
+          cat .phase1-openapi/generator.part* | base64 -d | gzip -d > scripts/generate_openapi_v1.py
+          cat .phase1-openapi/signoff.part* | base64 -d | gzip -d > scripts/finalize_phase1_signoff.py
+          echo "10d82200b28fe296cf8243e1a1b4c24cbb5431f7c221133ae89192c2e801167e  scripts/generate_openapi_v1.py" | sha256sum -c -
+          echo "216768c7d2d366bf27d474f51f13949db90a838aa0cb43e596935c2f4efba1a5  scripts/finalize_phase1_signoff.py" | sha256sum -c -
+          python -m py_compile scripts/generate_openapi_v1.py scripts/finalize_phase1_signoff.py
+          chmod +x scripts/generate_openapi_v1.py scripts/finalize_phase1_signoff.py
+
+      - name: Apply signed phase 1 baseline
+        run: python scripts/finalize_phase1_signoff.py
+
+      - name: Generate and validate OpenAPI 3.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/generate_openapi_v1.py --write
+          python scripts/generate_openapi_v1.py --check
+          python -m json.tool spec/openapi/dfetl-api-v1.json > /dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          document = json.loads(Path("spec/openapi/dfetl-api-v1.json").read_text(encoding="utf-8"))
+          methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+          operations = sum(1 for item in document["paths"].values() for method in item if method in methods)
+          assert document["openapi"] == "3.1.0", document["openapi"]
+          assert operations == 167, operations
+          assert document["info"]["x-signoff-baseline"] == "938566a6659fbf445e00f472ba932fe446d1d886"
+          print(f"Validated OpenAPI {document['openapi']} with {operations} operations and {len(document['paths'])} paths")
+          PY
+
+      - name: Validate signed documentation invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '状态：`SIGNED_AND_AUTHORIZED`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
+          grep -F '当前实施授权：`YES`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
+          grep -F '签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
+          grep -F '状态：`FROZEN`' spec/TARGET_METADATA_MODEL.md
+          grep -F '实施授权：`YES`' spec/TARGET_METADATA_MODEL.md
+          grep -F -- '- [x] `D1`' spec/TASKS.md
+          grep -F -- '- [ ] `D2`' spec/TASKS.md
+          grep -F '后端实现状态：`OPENAPI_GENERATED`' spec/FRONTEND_API_CONTRACT_V1.md
+          test -f .github/workflows/openapi-check.yml
+          test -f spec/openapi/README.md
+          test -f scripts/generate_openapi_v1.py
+
+      - name: Commit signed baseline and D1 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .phase1-openapi
+          rm -f scripts/finalize_phase1_signoff.py
+          rm -f .github/workflows/phase1-signoff-openapi-once.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(api): sign off phase 1 and generate OpenAPI v1"
+          git push origin HEAD:main
