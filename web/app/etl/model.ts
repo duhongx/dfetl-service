@@ -1,117 +1,236 @@
-export type Panel = "basic" | "fields" | "validation" | "message" | "collection" | "sync";
-export type AppPage = "dashboard" | "institutions" | "datasources" | "datasets" | "precheck" | "precheckDetail" | "tasks" | "taskDetail" | "monitor" | "validationOverview" | "validationWorkbench" | "alerts" | "logs" | "audit" | "globalSettings" | "registrySettings" | "validationSettings" | "dorisSettings" | "externalApi" | "mappingRules" | "docs";
-export type DataSourceTab = "source" | "target";
-export type TaskDetailTab = "basic" | "extract" | "mapping" | "runs" | "validation" | "messageConfig" | "messageLogs";
-export type ValidationMode = "full" | "modify" | "delete";
-export type ValidationView = "result" | "history";
-export type PrecheckDetailTab = "overview" | "sample" | "runs" | "issues";
-export type ProfileTab = "account" | "password" | "alerts";
+export type AppPage =
+  | "dashboard"
+  | "institutions"
+  | "businessCatalogs"
+  | "sourceDatasources"
+  | "targetDatasources"
+  | "datasets"
+  | "routes"
+  | "tasks"
+  | "taskDetail"
+  | "precheck"
+  | "precheckDetail"
+  | "monitor"
+  | "validationOverview"
+  | "validationWorkbench"
+  | "alerts"
+  | "logs"
+  | "audit"
+  | "globalSettings"
+  | "registrySettings"
+  | "externalApi"
+  | "mappingRules"
+  | "accounts"
+  | "docs";
 
-export type Dataset = {
-  name: string;
-  code: string;
-  category: string;
-  fields: number;
-  primaryKeys: number;
-  strategy: string;
-  schedule: string;
-  scope: string;
-  messageEnabled: boolean;
-  rules: number;
-  passed: number;
-  exceptions: number;
-  syncState: "正常" | "待配置" | "异常";
-  updated: string;
-};
-
-export type DataLink = {
-  id: string;
-  name: string;
-  vendor: string;
-  source: string;
-  sourceType: string;
-  institutions: string[];
-  schedule: string;
-  state: "正常" | "异常" | "未启用";
-  lastRun: string;
-  mappedFields?: number;
-};
+export type EnabledStatus = "ENABLED" | "DISABLED";
+export type TestStatus = "UNTESTED" | "SUCCESS" | "PARTIAL" | "FAILED";
 
 export type Institution = {
-  name: string;
+  id: string;
   code: string;
+  name: string;
   type: string;
   level: string;
-  parent: string;
-  division: string;
-  system: string;
-  source: string;
-  enabled: boolean;
+  region: string;
+  status: EnabledStatus;
+  description: string;
+};
+
+export type BusinessCatalog = {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  status: EnabledStatus;
 };
 
 export type SourceDataSource = {
+  id: string;
+  code: string;
   name: string;
-  type: string;
+  institutionCode: string;
+  institutionName: string;
+  businessCatalogCode: string;
+  businessCatalogName: string;
+  dbType: "POSTGRESQL" | "MYSQL" | "ORACLE" | "SQLSERVER";
+  connectionMode: "HOST_PORT" | "JDBC_URL";
   host: string;
+  port: string;
   database: string;
-  schema: string;
+  defaultSchema: string;
+  jdbcUrl: string;
   username: string;
-  password: string;
-  institutions: string[];
+  status: EnabledStatus;
+  testStatus: Exclude<TestStatus, "PARTIAL">;
+  lastTestedAt: string;
+};
+
+export type TargetEndpoint = {
+  id: string;
+  host: string;
+  queryPort: string;
+  httpPort: string;
   enabled: boolean;
+  ordinal: number;
+  testStatus: Exclude<TestStatus, "PARTIAL">;
 };
 
 export type TargetDataSource = {
+  id: string;
+  code: string;
   name: string;
-  host: string;
-  fePort: string;
-  httpPort: string;
-  streamLoadPort: string;
   database: string;
-  writeDb: string;
   username: string;
-  password: string;
-  batchSize: string;
-  writeConcurrency: string;
-  poolSize: string;
-  ssl: boolean;
+  status: EnabledStatus;
+  testStatus: TestStatus;
+  endpoints: TargetEndpoint[];
   description: string;
-  enabled: boolean;
+};
+
+export type Dataset = {
+  id: string;
+  externalId: string;
+  code: string;
+  name: string;
+  category: string;
+  status: "ACTIVE" | "VOID";
+  version: number;
+  fieldCount: number;
+  businessKeyCount: number;
+  incrementalField: string | null;
+  validationOverride: "INHERIT" | "ROW_COUNT" | "ROW_COUNT_CHECKSUM";
+  scheduleDefault: string;
+  messageEnabled: boolean;
+  lastSyncResult: "CREATED" | "UPDATED" | "UNCHANGED" | "REACTIVATED" | "VOIDED" | "FAILED";
+  lastSyncedAt: string;
+};
+
+export type RouteRow = {
+  id: string;
+  institutionCode: string;
+  institutionName: string;
+  datasetCode: string;
+  datasetName: string;
+  datasetVersion: number;
+  sourceCode: string;
+  sourceName: string;
+  businessCatalog: string;
+  schema: string;
+  object: string;
+  objectType: "TABLE" | "VIEW" | "MATERIALIZED_VIEW";
+  targetCode: string;
+  targetName: string;
+  version: number;
+  status: EnabledStatus;
+  structureStatus: "NOT_CHECKED" | "PASSED" | "FAILED" | "OUTDATED";
+  structureCheckedAt: string;
 };
 
 export type TaskRow = {
   id: string;
   name: string;
-  dataset: Dataset;
-  link: DataLink;
-  view: string;
-  state: "运行中" | "失败" | "已停止";
-  recent: string;
-  successRate: string;
+  institutionCode: string;
+  institutionName: string;
+  datasetCode: string;
+  datasetName: string;
+  datasetVersion: number;
+  routeId: string;
+  routeVersion: number;
+  taskKind: "FULL_ONLY" | "FULL_THEN_INCREMENTAL";
+  writeMode: "REPLACE_INSTITUTION_SCOPE" | "UPSERT";
+  keyModel: "DUPLICATE_KEY" | "UNIQUE_KEY";
+  incrementalField: string | null;
+  scheduleMode: "MANUAL" | "EVERY_N_HOURS" | "CRON";
+  scheduleLabel: string;
+  scheduleEnabled: boolean;
+  validationOverride: "INHERIT" | "ROW_COUNT" | "ROW_COUNT_CHECKSUM";
+  watermark: string | null;
+  state: "READY" | "RUNNING" | "FAILED" | "DISABLED";
 };
 
-export type MonitorRow = {
+export type ExecutionRow = {
   id: string;
   taskId: string;
-  name: string;
-  batch: string;
-  start: string;
-  duration: string;
-  read: string;
-  written: string;
-  speed: string;
-  status: "运行中" | "已完成" | "失败" | "需核对";
+  taskName: string;
+  institutionName: string;
+  datasetCode: string;
+  operation: "NORMAL" | "RECOLLECT" | "BACKFILL";
+  trigger: "SCHEDULED" | "MANUAL" | "EXTERNAL_API";
+  scope: "FULL" | "INITIAL_FULL" | "INCREMENTAL" | "BACKFILL_TIME" | "BACKFILL_KEY";
+  status: "PENDING" | "RUNNING" | "LOADING" | "VALIDATING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  range: string;
+  sourceRows: number;
+  loadedRows: number;
+  rejectedRows: number;
+  startedAt: string;
+  finishedAt: string;
+};
+
+export type PrecheckRow = {
+  id: string;
+  routeId: string;
+  institutionName: string;
+  datasetCode: string;
+  datasetName: string;
+  status: "PENDING" | "EXTRACTING" | "VALIDATING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  result: "PASS" | "ISSUES" | null;
+  issues: number;
+  startedAt: string;
+  finishedAt: string;
 };
 
 export type ValidationRow = {
   id: string;
   taskId: string;
-  name: string;
-  task: string;
-  method: string;
-  result: "数据一致" | "发现差异";
-  differences: number;
-  duration: string;
+  executionId: string | null;
+  institutionName: string;
+  datasetCode: string;
+  scope: "SYNC_WINDOW" | "FULL_DATASET" | "CHANGE_WINDOW" | "DELETE_RECONCILIATION";
+  trigger: "SYNC_GATE" | "MANUAL" | "MANUAL_RECHECK" | "SCHEDULED";
+  method: "ROW_COUNT" | "ROW_COUNT_CHECKSUM" | "DELETE_KEY_DIFF";
+  source: "GLOBAL" | "DATASET" | "TASK" | "CONTRACT" | "FIXED";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  result: "PASS" | "MISMATCH" | null;
+  sourceRows: number | null;
+  targetRows: number | null;
+  differenceCount: number | null;
+  startedAt: string;
 };
 
-export type PageState = { page: number; pageSize: number };
+export type AlertEvent = {
+  id: string;
+  severity: "INFO" | "WARNING" | "CRITICAL";
+  title: string;
+  source: string;
+  status: "PENDING" | "SENDING" | "SUCCEEDED" | "FAILED";
+  time: string;
+};
+
+export type AuditRow = {
+  id: string;
+  actor: string;
+  source: "WEB" | "EXTERNAL_API" | "SCHEDULER" | "SYSTEM";
+  operation: string;
+  target: string;
+  result: "SUCCESS" | "FAILED";
+  time: string;
+};
+
+export type ExternalClient = {
+  id: string;
+  clientId: string;
+  clientName: string;
+  authorizationMode: "ALL" | "SELECTED";
+  institutions: string[];
+  enabled: boolean;
+};
+
+export type AccountRow = {
+  id: string;
+  username: string;
+  displayName: string;
+  enabled: boolean;
+  lastLoginAt: string;
+  createdAt: string;
+};
