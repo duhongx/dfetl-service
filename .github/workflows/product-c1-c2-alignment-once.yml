@@ -1,0 +1,45 @@
+name: Finalize product C1-C2 alignment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/product-c1-c2-alignment-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply final product alignment
+        run: python scripts/finalize_product_c1_c2_alignment.py
+
+      - name: Validate product invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -F '完成物理 Review 后决定' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          ! grep -F '一张 ODS 和一张 RAW' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          ! grep -F '不建立 PostgreSQL 表登记或结构版本表' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          ! grep -F '按后续确认的限期保留策略' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          grep -F 'PostgreSQL 保存 Run/Summary/Manifest/Export Job' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          grep -F '一机构一正式 LIST 分区' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+
+      - name: Commit and remove temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/finalize_product_c1_c2_alignment.py
+          rm -f .github/workflows/product-c1-c2-alignment-once.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(spec): complete product alignment with C1-C2"
+          git push origin HEAD:main
