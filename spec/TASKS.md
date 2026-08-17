@@ -2,7 +2,7 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：P0 Table + FK + Unique + Status/CHECK + Delete Behavior 已冻结；前端优先  
+> 状态：P0 Table/FK/Unique/Status/Delete/Snapshot 技术矩阵已冻结；前端优先  
 > 最近更新：2026-08-17  
 > 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -11,10 +11,10 @@
 ```text
 Institution + Business Catalog
 → Source / Target
-→ Standard Dataset + Dataset Version
-→ Single-Institution Route + Route Version
+→ Standard Dataset + Immutable Dataset Version
+→ Single-Institution Route + Immutable Route Version
 → Sync Task Current Config
-→ Execution / Validation Startup Snapshot
+→ Execution / Validation Runtime Snapshot
 ```
 
 - [x] 不建设 Business System Instance。
@@ -71,7 +71,7 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 - [x] Dataset/Version/Field/Contract 历史永久保留；Dataset 用 VOID，Contract 用 RETIRED。
 - [x] Route/Task 使用逻辑删除。
 - [x] Task 删除不级联 Watermark；只有显式“清除水位”才 DELETE 当前 Watermark Row。
-- [x] Execution/Batch/Precheck/Validation/Outbox/Delete/Audit/External Request/Alert History 无普通 DELETE/自动 PostgreSQL retention。
+- [x] Runtime/Audit/External Request/Alert History 无普通 DELETE/自动 PostgreSQL retention。
 - [x] FE Endpoint、Rule-Channel、Client-Institution、Generic JDBC Mapping 等当前配置可物理删除。
 - [x] Alert Rule/Channel 可物理删除，历史依赖 Snapshot + SET NULL。
 - [x] App User/External Client 只停用。
@@ -80,7 +80,33 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 - [x] Doris RAW/Snapshot/Diff 按生命周期清理但保留 PostgreSQL Run。
 - [x] Quartz Job/Trigger 是可重建投影。
 
-## 7. 阶段 1 技术一致性 Review 顺序
+## 7. Execution / Validation / Outbox Snapshot 最小充分性：完成
+
+权威：`P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md`。
+
+统一原则：
+
+```text
+不可变定义只引用
+可变运行事实才快照
+Secret 永不快照
+```
+
+已确认：
+
+- [x] Execution 只通过 Dataset Version / Route Version 引用永久不可变定义，不复制字段列表/合同 Hash/完整 JSON。
+- [x] Execution 保留实际 Task 参数、运行原因/范围、最终 Validation、Message Policy Snapshot。
+- [x] Execution 新增非 Secret `source_runtime_snapshot/target_runtime_snapshot`。
+- [x] 删除 `precheck_fact_snapshot`。
+- [x] Checksum Protocol 只在 `ROW_COUNT_CHECKSUM` 时保存。
+- [x] SYNC_GATE/MANUAL_RECHECK 完全使用父 Execution Context，`context_snapshot/range_snapshot=NULL`。
+- [x] 普通独立 Validation 才保存最小 Context/Range。
+- [x] Delete Reconciliation 只使用 Baseline/Current Snapshot Run FK。
+- [x] Outbox 保留显式 Message Policy Snapshot + 最小 Range，不重复显式身份/`operation_type`。
+- [x] Outbox 不复制原 Target Runtime Endpoint；人工重发读取当前 Doris。
+- [x] Snapshot 严禁 DB/RabbitMQ/API/Webhook/JWT/Master Key/Authorization/HMAC Secret。
+
+## 8. 阶段 1 技术一致性 Review 顺序
 
 严格一次讨论一个：
 
@@ -89,12 +115,12 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 3. [x] Business / Concurrency Unique Matrix。
 4. [x] Status / Enum / CHECK Matrix。
 5. [x] Delete Behavior Matrix。
-6. [ ] **Execution / Validation / Outbox Snapshot 最小充分性 Review。**
-7. [ ] `PHASE1_FINAL_REVIEW.md`。
+6. [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+7. [ ] **`PHASE1_FINAL_REVIEW.md`。**
 
-下一项只讨论 Snapshot 最小充分性 Review。
+下一项只进行 Phase 1 Final Review；不直接创建 Flyway V1 或修改 Java 后端。
 
-## 8. 当前最高开发优先级：前端 100%
+## 9. 当前最高开发优先级：前端 100%
 
 - [ ] Navigation 与最新产品模型一致。
 - [ ] Resource 页面完整。
@@ -109,10 +135,10 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 
 前端模型确认后再冻结最终 API Contract。
 
-## 9. 前端之后
+## 10. 前端之后
 
 1. API Contract；
-2. Flyway V1；
+2. Final P0 Flyway V1；
 3. Java Entity/Repository/Service；
 4. PostgreSQL/External Integration Test；
 5. SeaTunnel/Doris/Quartz/RabbitMQ；
@@ -120,7 +146,7 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 7. Multi-instance/Large Batch Reliability；
 8. Production Acceptance/Cutover。
 
-## 10. 阶段 1 最终签字门槛
+## 11. 阶段 1 最终签字门槛
 
 - [x] Active Spec 业务语义收口。
 - [x] PostgreSQL/Quartz 表清单。
@@ -128,7 +154,7 @@ DFETL 39 + Quartz 11 = V1 创建 50 张
 - [x] Unique Matrix。
 - [x] Status/Enum/CHECK Matrix。
 - [x] Delete Behavior Matrix。
-- [ ] Snapshot 最小充分性 Review。
+- [x] Snapshot 最小充分性 Review。
 - [ ] Frontend 与 Spec 一致。
-- [ ] `PHASE1_FINAL_REVIEW.md`。
-- [ ] 用户最终签字后才进入数据库/后端实施。
+- [ ] `PHASE1_FINAL_REVIEW.md` 完成。
+- [ ] 用户明确签字后才进入数据库/后端实施。
