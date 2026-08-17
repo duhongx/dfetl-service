@@ -142,7 +142,14 @@ export type TaskRow = {
   writeMode: "REPLACE_INSTITUTION_SCOPE" | "UPSERT";
   keyModel: "DUPLICATE_KEY" | "UNIQUE_KEY";
   incrementalField: string | null;
+  fetchSize: number;
+  upperBoundDelayMinutes: number;
+  lookbackSeconds: number;
   scheduleMode: "MANUAL" | "EVERY_N_HOURS" | "CRON";
+  scheduleIntervalHours: number | null;
+  scheduleCron: string | null;
+  scheduleTimezone: string;
+  scheduleSource: "GLOBAL" | "DATASET" | "TASK";
   scheduleLabel: string;
   scheduleEnabled: boolean;
   validationOverride: "INHERIT" | "ROW_COUNT" | "ROW_COUNT_CHECKSUM";
