@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   AlertOutlined,
   ApartmentOutlined,
@@ -152,9 +153,11 @@ function Metric({ label, value, hint, icon }: { label: string; value: number | s
 }
 
 export default function Home() {
-  const initial = typeof window === "undefined" ? { page: "dashboard" as AppPage } : parseLocation(window.location.pathname);
-  const [page, setPage] = useState<AppPage>(initial.page);
-  const [currentId, setCurrentId] = useState<string | undefined>(initial.id);
+  const pathname = usePathname();
+  const router = useRouter();
+  const location = parseLocation(pathname);
+  const page = location.page;
+  const currentId = location.id;
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -169,26 +172,13 @@ export default function Home() {
   const [alertTab, setAlertTab] = useState<"events" | "rules" | "channels">("events");
 
   useEffect(() => {
-    const onPopState = () => {
-      const location = parseLocation(window.location.pathname);
-      setPage(location.page);
-      setCurrentId(location.id);
-      setQuery("");
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
   const navigate = (nextPage: AppPage, id?: string) => {
-    window.history.pushState({}, "", pathFor(nextPage, id));
-    setPage(nextPage);
-    setCurrentId(id);
+    router.push(pathFor(nextPage, id));
     setQuery("");
   };
 
