@@ -1,13 +1,11 @@
 # P0 物理模型一致性 Review
 
-> 状态：2026-08-17 Active Spec 语义扫描完成；进入最终表/FK/Enum/Delete Matrix Review  
+> 状态：P0 PostgreSQL 最终表清单已确认；进入全量 FK Matrix Review  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`
 
-## 1. 本轮收口目标
-
-本轮连续完成两类旧模型迁移：
+## 1. 已完成的模型收口
 
 ### Resource / Route
 
@@ -28,7 +26,7 @@
 新：System Setting + Dataset Override + Task Override + Execution Validation Snapshot
 ```
 
-## 2. 当前唯一主模型
+当前唯一主线：
 
 ```text
 Institution + Business Catalog
@@ -48,6 +46,114 @@ field_conversion_contract / field_conversion_rule
 ```
 
 不建立 Task Version。
+
+## 2. P0 PostgreSQL 最终表清单：已确认
+
+### 2.1 DFETL 领域/控制表：39 张
+
+#### 接入资源：5
+
+```text
+institution
+business_catalog
+source_datasource
+target_datasource
+target_datasource_fe_endpoint
+```
+
+#### Dataset / 字段合同 / Dataset 配置：8
+
+```text
+standard_dataset
+standard_dataset_version
+standard_dataset_field
+field_conversion_contract
+field_conversion_rule
+generic_jdbc_type_mapping
+dataset_sync_policy
+dataset_message_policy
+```
+
+#### Route / Task / Watermark：5
+
+```text
+collection_route
+collection_route_version
+route_field_resolution
+sync_task
+task_watermark
+```
+
+#### Execution / Precheck / Validation / Message：6
+
+```text
+sync_execution
+load_batch
+precheck_run
+precheck_issue_summary
+validation_run
+message_outbox
+```
+
+#### 删除识别：3
+
+```text
+delete_snapshot_run
+task_delete_snapshot_state
+delete_apply_run
+```
+
+`DELETE_RECONCILIATION` 复用统一 `validation_run`。
+
+#### 账号 / Audit / Setting / Alert / External API：12
+
+```text
+app_user
+audit_log
+system_setting
+
+alert_channel
+alert_rule
+alert_rule_channel
+alert_event
+alert_delivery
+
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
+```
+
+`alert_rule_channel` 已确认保留，用于 Alert Rule 与 Channel 的结构化多对多关系。
+
+### 2.2 Quartz JDBC JobStore：11 张
+
+```text
+qrtz_job_details
+qrtz_triggers
+qrtz_simple_triggers
+qrtz_cron_triggers
+qrtz_simprop_triggers
+qrtz_blob_triggers
+qrtz_calendars
+qrtz_paused_trigger_grps
+qrtz_fired_triggers
+qrtz_scheduler_state
+qrtz_locks
+```
+
+Quartz 11 张官方表单独统计，不计入 DFETL 39 张领域/控制表。
+
+### 2.3 冻结数量口径
+
+```text
+DFETL P0 领域/控制表       39
+Quartz JDBC JobStore       11
+--------------------------------
+Flyway V1 负责创建         50
+```
+
+`flyway_schema_history` 由 Flyway 自身创建和管理，不计入 P0 39、Quartz 11 或 V1 自己定义的 50 张表。
 
 ## 3. 当前明确废止对象
 
@@ -71,9 +177,9 @@ task_validation_policy
 override_mode
 ```
 
-同样不恢复：Validation Disable、Tolerance、Validation Lookback、Auto Revalidate/Fail Block、Task-level Message Policy。
+同样不恢复：Validation Disable、Tolerance、Validation Lookback、Auto Revalidate/Fail Block、Task-level Message Policy、RBAC、Scheduler Reconciliation、External API Rate Limit/Quota 表。
 
-## 4. 当前关键 FK 身份
+## 4. 当前关键身份约束
 
 ### Source → Route
 
@@ -173,46 +279,9 @@ COMPOSITE
 
 父 Run 已唯一确定 Institution，所以 Issue Summary 不重复 Institution 维度，也不存在多机构 Route 下钻语义；不保存行级问题。
 
-## 7. 本轮 Active Spec 修改范围
+## 7. Active Spec 语义扫描结果
 
-### 第一阶段：Resource / Route
-
-- [x] `PRODUCT_AND_BUSINESS_DECISIONS.md`
-- [x] `TARGET_METADATA_MODEL.md`
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md`
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`
-- [x] `DATABASE_MIGRATION_BASELINE.md`
-- [x] `LEGACY_FUNCTION_ALIGNMENT.md`
-- [x] `JAVA_PRODUCTION_MIGRATION_REVIEW.md`
-- [x] Phase/TASKS/Pending Decision 入口文档
-
-### 第二阶段：Task Version / Validation Policy
-
-按用户确认顺序：
-
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_DATASETS.md`
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`
-- [x] `EXTERNAL_API_REVIEW.md`
-- [x] `QUARTZ_JOBSTORE_REVIEW.md`
-
-### Full Spec Scan 额外发现并修正
-
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`：Route Version 四元父 Unique。
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md`：Execution 四元 Route FK、Precheck 单机构、Execution→Outbox Composite Identity。
-- [x] `P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md`：Delete Snapshot 四元 Route FK。
-- [x] `P0_SUPPORT_OBJECT_REVIEW.md`：删除旧 `global_validation_policy` Current Semantics 和 Quartz Current Task Version。
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY.md`：总索引/替代关系更新。
-- [x] `P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md`：清理状态更新。
-- [x] `P0_GLOBAL_VALIDATION_SETTING_REVIEW.md`：清理状态更新。
-- [x] `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`：标记旧 Policy Table 清理完成。
-- [x] `P0_INITIAL_FULL_INCREMENTAL_EXECUTION_REVIEW.md`：旧 Immediate Supplemental Increment 清理状态更新。
-- [x] `TASKS.md` / `PHASE1_REVIEW_STATUS.md` / `PHASE1_REMAINING_AND_IMPLEMENTATION_PLAN.md` 同步完成状态。
-
-## 8. Full Spec Scan 判断规则
-
-目标不是旧字符串出现次数为 0。
-
-以下属于**合法引用**：
+以下属于合法旧词引用：
 
 ```text
 历史审计
@@ -223,7 +292,7 @@ COMPOSITE
 机械迁移映射
 ```
 
-以下属于**非法残留**，本轮已经清理主要 Active Spec：
+以下非法残留已经完成主要清理：
 
 ```text
 Active Object List 仍包含旧表
@@ -236,30 +305,24 @@ Current Flow 仍要求 Publish/Switch/Rollback Task Version
 
 历史/Legacy Audit 文件可以保留旧对象名称，但不得被当成目标模型输入。
 
-## 9. 当前尚未完成
+## 8. 当前 Review 顺序
 
-这些是**技术一致性 Review**，不是新的业务问题：
+用户已确认按以下顺序逐项讨论并完成：
 
-- [ ] 最终 P0 PostgreSQL Table List + Count。
-- [ ] Quartz Official Table List。
-- [ ] Doris ODS/RAW/Technical Table List。
-- [ ] 全量 FK Matrix：Child Columns / Parent Unique / ON DELETE / Child Index。
-- [ ] 全量 Business Unique / Concurrency Unique Matrix。
-- [ ] Status / Enum / CHECK Matrix。
-- [ ] Delete Behavior Matrix。
-- [ ] Sensitive Field / Secret Boundary Final Check。
-- [ ] Execution/Validation/Outbox Snapshot 最小充分性 Final Review。
-- [ ] `PHASE1_FINAL_REVIEW.md`。
+1. [x] P0 PostgreSQL 最终表清单 + 数量。
+2. [ ] 全量 FK Matrix。
+3. [ ] Business/Concurrency Unique Matrix。
+4. [ ] Status / Enum / CHECK Matrix。
+5. [ ] Delete Behavior Matrix。
+6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-## 10. 当前结论
+Doris ODS/RAW/Technical Table List、Sensitive Field/Secret Boundary 等内容在对应最终物理 Review 中同步核对，但不改变上述讨论顺序。
 
-截至本轮收口，Active Spec 的**业务语义层**已经不再依赖：
+## 9. 第 1 项结论
 
-```text
-Business System Instance
-Multi-Institution Route
-Task Version
-Independent Validation Policy Tables
-```
+第 1 项已经由用户明确确认并冻结：
 
-后续若再次出现这些概念，必须先证明是合法历史/废止引用；不得从旧 Review 或历史 SQL 恢复到目标模型。
+> P0 PostgreSQL DFETL 业务/控制表冻结为 39 张，其中保留 `alert_rule_channel` 作为 Alert Rule 与 Channel 的多对多关系表。Quartz JDBC JobStore 11 张官方表单独统计。因此 Flyway V1 负责创建 50 张表；`flyway_schema_history` 由 Flyway 自身创建，不计入 P0/V1 业务表数量。
+
+后续不得在没有新的明确业务需求和 Review 的情况下随意新增 P0 PostgreSQL 表。若技术实现需要额外持久化对象，必须先证明现有 39 张 DFETL 表和 11 张 Quartz 表无法表达该事实，再进入 Review。
