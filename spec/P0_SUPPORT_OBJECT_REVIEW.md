@@ -1,10 +1,11 @@
 # P0 支撑对象 Review
 
-> 状态：阶段 1 FK Matrix 已确认并收口  
+> 状态：阶段 1 FK + Unique Matrix 已确认并收口  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 目标模型：`spec/TARGET_METADATA_MODEL.md`  
 > FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
 > Quartz：`spec/QUARTZ_JOBSTORE_REVIEW.md`
 
 ## 1. 范围
@@ -34,6 +35,15 @@ P0 使用少量同权限管理员：
 - 初始化 SQL 不写固定管理员密码/Hash。
 
 账号管理：列表、新增、启停、重置密码。
+
+Business Unique：
+
+```text
+UNIQUE INDEX uk_app_user_username_ci
+ON app_user(lower(username))
+```
+
+Username 是稳定登录身份；不增加显示名称类唯一约束。
 
 ## 3. User FK 统一规则
 
@@ -69,7 +79,7 @@ cancel_requested_by
 → app_user(id) ON DELETE RESTRICT
 ```
 
-虽然 `app_user` 产品上不提供物理删除，但数据库仍显式区分“普通审计引用”和“运行责任引用”。
+虽然 `app_user` 产品上不提供物理删除，但数据库仍显式区分普通审计引用和运行责任引用。
 
 ## 4. `audit_log`
 
@@ -101,10 +111,13 @@ Audit 已保存 Actor Name Snapshot，因此主体引用允许为空。
 
 不记录 Password/Hash、DB/RabbitMQ Credential、API Secret、HMAC Signature、完整 Authorization Header。Audit 追加写，不提供普通 Update/Delete。
 
+`audit_log` 不设置业务 Unique；同一业务动作的多次成功/失败审计都是独立事实。
+
 ## 5. `system_setting`
 
 `system_setting` 只保存应用已注册 Key。
 
+- `setting_key` 是 PK，也是 Business Unique。
 - 类型、默认值、范围、敏感性由统一 Setting Registry 定义。
 - `revision` 乐观锁。
 - 规范库 Password 可保存密文并掩码返回。
@@ -143,6 +156,16 @@ alert_event
 alert_delivery
 ```
 
+Alert Channel / Rule 没有独立稳定 Code，管理端同名会产生直接歧义，因此保留：
+
+```text
+UNIQUE INDEX uk_alert_channel_name_ci
+ON alert_channel(lower(name))
+
+UNIQUE INDEX uk_alert_rule_name_ci
+ON alert_rule(lower(name))
+```
+
 ### 6.1 Rule ↔ Channel
 
 ```text
@@ -157,7 +180,13 @@ channel_id → alert_channel(id) ON DELETE RESTRICT
 created_by → app_user(id)      ON DELETE SET NULL
 ```
 
-`PRIMARY KEY(rule_id,channel_id)`；反向索引 `(channel_id,rule_id)`。
+Business Pair：
+
+```text
+PRIMARY KEY(rule_id,channel_id)
+```
+
+反向索引 `(channel_id,rule_id)`。
 
 ### 6.2 `alert_rule`
 
@@ -168,6 +197,10 @@ scope_task_id → sync_task(id) ON DELETE RESTRICT
 ```
 
 ### 6.3 `alert_event`
+
+```text
+UNIQUE(event_uuid)
+```
 
 Rule 配置可删除，但 Event 保存完整 Rule Snapshot：
 
@@ -195,7 +228,13 @@ event_id   → alert_event(id)   ON DELETE CASCADE
 channel_id → alert_channel(id) ON DELETE SET NULL
 ```
 
-Delivery 保存 Channel Name/Type Snapshot，因此历史 Channel 引用允许为空。
+Business Unique：
+
+```text
+UNIQUE(event_id,channel_id)
+```
+
+Delivery 保存 Channel Name/Type Snapshot，因此历史 Channel 引用允许为空。PostgreSQL Unique 对 NULL 的语义不会阻止多个历史已删 Channel 的 Delivery 行保留。
 
 Alert 不建设确认、认领、工单、审批、逐次投递明细。
 
@@ -212,7 +251,26 @@ external_api_request
 
 Client 不物理删除，只启停；Secret 重置后旧值立即失效，不支持双 Secret。
 
-### 7.1 Institution Scope
+### 7.1 Client Identity
+
+唯一程序身份只使用：
+
+```text
+UNIQUE(external_api_client.client_id)
+```
+
+固定规则：
+
+```text
+client_id   = 稳定、大小写敏感、不可复用的程序身份
+client_name = 可编辑展示名称，可重复
+```
+
+**不建立 `UNIQUE(lower(client_name))`。**
+
+生产 Client、灾备 Client 或不同接入实例可以使用同一展示名称，只要 `client_id` 不同。
+
+### 7.2 Institution Scope
 
 ```text
 external_api_client_institution.client_id
@@ -225,18 +283,28 @@ created_by
 → app_user(id) ON DELETE SET NULL
 ```
 
-PK `(client_id,institution_id)`；反向索引 `(institution_id,client_id)`。
+Business Pair：
 
-### 7.2 Nonce
+```text
+PRIMARY KEY(client_id,institution_id)
+```
+
+反向索引 `(institution_id,client_id)`。
+
+### 7.3 Nonce
 
 ```text
 external_api_request_nonce.client_id
 → external_api_client(id) ON DELETE RESTRICT
 ```
 
-`UNIQUE(client_id,nonce)` 覆盖 FK 子列；Nonce 保留 1 小时。
+```text
+UNIQUE(client_id,nonce)
+```
 
-### 7.3 Idempotency Request
+Nonce 保留 1 小时。
+
+### 7.4 Idempotency Request
 
 ```text
 external_api_request.client_id
@@ -249,7 +317,7 @@ external_api_request.client_id
 UNIQUE(client_id,request_id)
 ```
 
-这不仅承担 External API 幂等，也作为：
+这既承担 External API 幂等，也作为：
 
 ```text
 sync_execution(external_client_id,external_request_id)
@@ -291,7 +359,7 @@ qrtz_scheduler_state
 qrtz_locks
 ```
 
-使用项目锁定 Quartz 版本官方 DDL，不自行重设计其 FK。
+使用项目锁定 Quartz 版本官方 DDL，不自行重设计其 FK/Unique。
 
 ## 9. 支撑对象清单
 
@@ -323,6 +391,7 @@ Scheduler Reconciliation 表
 External API Rate Limit/Quota 表
 Secret History/Dual Key 表
 Alert Workflow/Approval 表
+External Client Name Unique
 ```
 
 ## 11. 当前状态
@@ -332,8 +401,10 @@ Alert Workflow/Approval 表
 - [x] 普通审计用户 SET NULL / 运行责任用户 RESTRICT 已确认。
 - [x] Alert/External API FK 纳入最终 FK Matrix。
 - [x] External Request `(client_id,request_id)` 同时作为 Execution 外部请求来源父键。
-- [x] Quartz 官方表固定 11 张并排除自定义 FK Review。
-- [ ] Business/Concurrency Unique Matrix。
+- [x] Business/Concurrency Unique Matrix 已确认。
+- [x] External Client 只保证 `client_id` 唯一，`client_name` 可重复。
+- [x] Alert Channel/Rule Name 继续大小写不敏感唯一。
+- [x] Quartz 官方表固定 11 张并排除自定义 FK/Unique Review。
 - [ ] Status/Enum/CHECK Matrix。
 - [ ] Delete Behavior Matrix。
 - [ ] Phase 1 Final Review。
