@@ -1,497 +1,314 @@
-# Phase 1 前端页面 / 导航 / 交互 / 文案验收 Review
+# Phase 1 前端产品验收 Review
 
-> 状态：源码级产品整改已完成；运行级 lint/build 仍待真实执行  
-> 日期：2026-08-17  
+> 状态日期：2026-08-17  
 > 分支：`duhongx/dfetl-service/main`  
-> 技术模型：`spec/PHASE1_FINAL_REVIEW.md`  
-> 限制：本文只验收前端产品模型；不授权 Flyway V1 / Java 后端实施。
+> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> Final Review：`spec/PHASE1_FINAL_REVIEW.md`
 
-## 1. 验收结论
-
-当前分两层结论：
+## 1. 当前验收状态
 
 ```text
-FRONTEND_PRODUCT_SOURCE_REVIEW = PASS
+FRONTEND_PRODUCT_SOURCE_REVIEW = IN_PROGRESS
 FRONTEND_RUNTIME_BUILD_VERIFICATION = BLOCKED_BY_GITHUB_ACTIONS_BUDGET
-PHASE1_OVERALL = BLOCKED_BY_FRONTEND_RUNTIME_VERIFICATION
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
 DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 ```
 
-`FRONTEND_PRODUCT_SOURCE_REVIEW = PASS` 表示：
+当前不能把“页面已经可见”解释为前端 100% 验收完成，也不能把 GitHub Actions 因预算无法启动解释为 lint/build 通过。
 
-- 当前激活前端的导航、URL、页面对象、交互入口和文案已经按冻结 Spec 收口；
-- 不再把旧 Business System Instance / 多机构 Route / Task Version / Validation Policy 等废弃模型作为 Current UI；
-- P-002 / P-003 已实际落到当前前端信息架构；
-- 核心危险操作有明确确认边界；
-- 运行历史展示使用 Execution Snapshot 语义，不以当前 Task 配置覆盖历史。
+## 2. 路由与信息架构
 
-它**不等于** `npm run lint` / `npm run build` 已通过。
-
-## 2. 当前前端信息架构
-
-左侧导航固定：
+当前现行前端只保留：
 
 ```text
-运行概览
-
-接入资源
-├── 医疗机构
-├── 业务目录
-├── 源端数据源
-├── 目标端数据源
-└── 医共体标准
-
-采集关系
-└── 机构采集路由
-
-任务中心
-├── 同步任务
-├── 数据预检
-└── 执行监控
-
-数据校验
-├── 校验总览
-└── 校验工作台
-
-运维管理
-├── 告警通知
-├── 日志中心
-└── 操作审计
-
-系统设置
-├── 全局参数
-├── 规范库配置
-├── 外部授权
-├── 类型映射
-└── 账号管理
+web/app/etl/app-shell-final.tsx
+web/app/etl/editor-panel-v2.tsx
+web/app/etl/dataset-policy-editor.tsx
+web/app/etl/operation-editor.tsx
+web/app/etl/runtime-panels.tsx
 ```
 
-顶部右侧：
+已删除旧的：
 
 ```text
-Help → /docs
-当前用户 → 个人中心
+app-shell.tsx
+app-shell-v2.tsx
+editor-panel.tsx
 ```
 
-左侧导航**不增加“使用文档”**。
+从而不再保留第二套旧菜单/旧模型实现。
 
-## 3. 真实 URL
+路由规则：
 
-当前路由：
+- `/` 显式 redirect 到 `/dashboard`；
+- 现行业务 URL 使用显式 Next.js App Router Route，支持直接刷新/回退；
+- 未定义的顶层路径由 Catch-all Route `notFound()`，不再静默回 Dashboard；
+- Task / Execution / Precheck Detail 使用显式动态 Route；
+- P-002 固定：`系统设置 → 账号管理`；
+- P-003 固定：`顶部右侧 Help → /docs`；
+- 左侧业务导航不增加“使用文档”。
 
-```text
-/dashboard
-/access-resources/institutions
-/access-resources/business-catalogs
-/access-resources/source-datasources
-/access-resources/target-datasources
-/access-resources/datasets
-/routes
-/tasks/sync
-/tasks/sync/:taskId
-/tasks/precheck
-/tasks/precheck/:runId
-/tasks/executions
-/tasks/executions/:executionId
-/validation/overview
-/validation/workbench
-/operations/alerts
-/operations/logs
-/operations/audit
-/settings/global
-/settings/medical-registry
-/settings/external-api
-/settings/type-mapping
-/settings/accounts
-/docs
-```
+## 3. 已完成的产品模型清理
 
-导航使用 Next App Router `usePathname + useRouter`，不再手工维护 `window.history.pushState`；Catch-all Route 用于直接刷新业务 URL。
-
-## 4. 接入资源页面
-
-### 4.1 医疗机构
-
-已收口：
-
-- 扁平机构；
-- 稳定 Code；
-- 新增/编辑/启停；
-- 无引用可物理删除；
-- 有 Source / Route / Task 引用时提示只能停用；
-- 不显示父机构、业务系统实例或 Source 列。
-
-### 4.2 业务目录
-
-已收口：
-
-- HIS / LIS / PACS / EMR 轻量分类；
-- 新增/编辑/启停；
-- Source 引用保护；
-- 不表示真实业务系统部署实例。
-
-### 4.3 Source Datasource
-
-已收口：
-
-- 一个 Source 唯一归属一家机构；
-- 一个 Source 唯一归属一个 Business Catalog；
-- `HOST_PORT / JDBC_URL` 条件表单；
-- DB Type / Credential / Test / Enable 独立；
-- 已被 Route 引用后 Institution / Business Catalog 在编辑器中锁定；若需改变归属应新建 Source；
-- Password 不回显明文。
-
-### 4.4 Target Datasource
-
-已收口：
-
-- 全局 Doris Target；
-- 多 FE Endpoint；
-- Endpoint/Target Test；
-- Test Result 与业务启停独立；
-- Password 不回显明文；
-- 被历史引用时删除保护。
-
-## 5. Dataset / Doris
-
-`医共体标准` 页面已收口：
-
-- 无普通“新增 Dataset”；
-- 只允许“从规范库同步”；
-- 展示当前 Version、字段数、业务键数、增量字段、Validation Override、Schedule Default、Message Enabled；
-- 相同历史 Definition Hash 的复用语义在文案中明确；
-- 普通同步**不自动创建/重建 Doris**；
-- 提供明确的 `检查/创建 Doris ODS/RAW` 用户触发入口；
-- 提供明确的 `重建 Doris ODS/RAW` 危险操作入口及确认。
-
-## 6. Institution Route
-
-已收口：
-
-- 独立 Route 页面；
-- 固定单机构；
-- Dataset + Source + Schema/Object + Target；
-- Business Catalog 由 Source 只读继承；
-- Source 下拉只显示当前 Institution 所属 Source；
-- Route `status` 与 `structure_status` 独立；
-- Structure Check 不自动 Enable；
-- 即使业务状态 ENABLED、结构 OUTDATED/FAILED，UI 仍可表达该事实；Task Gate 才拒绝不可用 Route；
-- Route 配置编辑后生成/复用不可变 Route Version 的语义明确，并要求重新结构核对；
-- Route 逻辑删除从 Current 列表移除，不把历史 Version/Execution/Precheck 当作级联删除对象。
-
-## 7. Sync Task / Watermark / Operations
-
-已收口：
-
-- Task 固定业务身份 = Institution + Dataset；
-- 无 Task Version / 发布 / 回退 / 机构组；
-- 创建/编辑只允许选择同 Institution + Dataset 且 `ENABLED + PASSED` 的 Route；
-- Task Kind / Write Mode / Doris Key Model / Incremental Field 由 Dataset 合同推导，只读展示；
-- `MANUAL / EVERY_N_HOURS / CRON` 条件调度表单；
-- `schedule_enabled` 与 `MANUAL` 保持独立；
-- 无真实业务主键时前端阻止 `ROW_COUNT_CHECKSUM`；
-- 活动 `sync_execution` 时阻止 Task 当前配置编辑、再次运行和逻辑删除；
-- Pause 只改变 Schedule，不取消当前 Execution；
-- Watermark 展示；
-- Clear Watermark 有危险确认；
-- Backfill 明确不推进正式 Watermark；
-- Recollect 明确创建新的 Execution，从范围起点 / Batch 1 重读。
-
-## 8. Execution / Batch / Snapshot
-
-已新增真实 Execution Detail URL：
-
-```text
-/tasks/executions/:executionId
-```
-
-详情已展示：
-
-- Execution Operation / Trigger / Scope / Range；
-- Source / Loaded / Rejected Count；
-- Load Batch；
-- Doris Label；
-- Doris Raw State；
-- `COMMITTED != SUCCEEDED`；
-- 只有 `VISIBLE + rejected=0` 才视为 Batch 成功；
-- SYNC_GATE；
-- Message Outbox；
-- Task Revision / Dataset Version / Route Version；
-- Validation Method / Source / Checksum Protocol；
-- 非 Secret Source Runtime Snapshot；
-- 非 Secret Target Runtime Snapshot；
-- Message Policy Snapshot。
-
-历史 Execution 详情不通过当前 Task 重算历史配置。
-
-## 9. Precheck
-
-已收口：
-
-- 仅人工入口；
-- 不出现自动调度；
-- 同一 Route 只能一个活动 Run 的文案/交互边界明确；
-- Precheck Run 独立于正式 Sync；
-- 修复 Source 数据后重新创建新的 Precheck；
-- Detail 只展示 `STRUCTURE / FIELD / COMPOSITE` Summary；
-- 不展示/保存行号、业务键、原始值、修复值或样例；
-- RAW 1 天清理、PostgreSQL Run/Summary 保留的文案明确。
-
-## 10. Validation
-
-已收口：
-
-- Overview / Workbench 分离；
-- `SYNC_GATE / MANUAL / MANUAL_RECHECK / SCHEDULED`；
-- `ROW_COUNT / ROW_COUNT_CHECKSUM / DELETE_KEY_DIFF`；
-- `DELETE_KEY_DIFF` 来源 FIXED；
-- MISMATCH 为完成结果而非技术 FAILED；
-- 无 Validation Disable；
-- 无容差；
-- 无 Validation Lookback；
-- 无 Auto Revalidate / Auto Repair / Fail Block / Override Mode；
-- Manual Recheck 明确使用原 Execution Context；
-- Delete Reconciliation 有独立显示，并进入 Task 删除治理。
-
-## 11. Message Outbox
-
-Task Detail 已提供：
-
-- Event ID；
-- Execution；
-- FULL / INCREMENTAL；
-- Routing Key；
-- Attempt；
-- Published / Dead Letter 等状态；
-- PUBLISHED / DEAD_LETTER 的人工重发入口。
-
-人工重发固定：
-
-```text
-沿用 Event ID
-→ 重置本轮 Attempt
-→ 重新读取当前 Doris
-→ 不修改 Execution
-→ 不修改 Watermark
-→ 不修改 Task Schedule
-```
-
-UI 不保存业务 Payload / 分页进度 / Attempt 明细。
-
-## 12. Delete Snapshot / Reconciliation / Apply
-
-Task Detail 已提供删除治理区域：
-
-- 创建 Delete Snapshot；
-- 显示 Baseline / Candidate / Difference；
-- Delete Reconciliation 由 Validation Workbench 可追入 Task；
-- Dry Run；
-- Real Apply；
-- Apply History。
-
-真实 Apply 前端 Gate：
-
-```text
-DELETE_RECONCILIATION = COMPLETED + MISMATCH
-AND difference_count > 0
-AND 当前 Validation 已成功完成至少一次 Dry Run
-AND 不存在同 Validation 的 PENDING/RUNNING/SUCCEEDED Real Apply
-→ 第一次风险确认
-→ 第二次最终确认
-→ 才允许 Real Apply
-```
-
-P-004 的具体风险阈值尚未确认，因此前端明确提示“实现前确认”，不虚构默认阈值。
-
-## 13. Alert / Log / Audit
-
-### Alert
-
-- Event / Rule / Channel 三个 Tab；
-- Rule 支持 ALL / TASK Scope；
-- Condition Operator；
-- Severity；
-- Rule ↔ Channel 多选；
-- DINGTALK / WECOM；
-- TEXT / MARKDOWN；
-- Channel Test；
-- Rule 可物理删除；
-- Channel 被 Rule 引用时前端阻止删除；
-- 历史 Event/Delivery 的 Snapshot 语义保留。
-
-### Log
-
-明确不记录：
-
-```text
-DB / RabbitMQ / API Secret
-Authorization Header
-HMAC Signature
-未脱敏连接信息
-```
-
-### Audit
-
-展示 Actor / Source / Operation / Target / Result / Time，和 `LOCAL_USER/EXTERNAL_CLIENT/SCHEDULER/SYSTEM` 产品语义一致。
-
-## 14. System Settings
-
-### Global Settings
-
-只保留：
-
-- 调度默认；
-- `validation.default_method`；
-- Precheck 全局并发。
-
-不恢复旧 Validation Policy、Enable、Tolerance、Lookback、Auto Revalidate。
-
-### Registry
-
-- Registry Connection；
-- Test；
-- Manual Dataset Sync；
-- Password Mask。
-
-### External API
-
-- Stable `client_id`；
-- 可重复 `client_name`；
-- ALL / SELECTED；
-- SELECTED Institution 多选；
-- Enable/Disable；
-- Secret Reset；
-- 不建设应用层 Rate Limit/Quota UI。
-
-### Generic JDBC Mapping
-
-- Profile / Version / Rule Code；
-- Source DB / Type Pattern；
-- Doris 建议类型；
-- PASS/WARN/REJECT；
-- 明确只用于诊断，不覆盖医疗 Field Contract。
-
-## 15. P-002 Account / Profile
-
-最终前端入口：
-
-```text
-系统设置 → 账号管理
-```
-
-账号管理已有：
-
-- 列表；
-- 新增；
-- 启用/停用；
-- 重置密码；
-- 当前登录账号禁止停用自己；
-- 最后一个启用账号禁止停用；
-- 不提供物理删除；
-- 不建设 RBAC / Role / Permission / Institution Data Permission。
-
-顶部当前用户进入“个人中心”：
-
-- 只维护当前账号 Display Name；
-- 可修改当前账号密码；
-- 修改密码要求 Current Password + New Password + Confirm；
-- 修改密码成功后既有 Refresh Token 必须失效；
-- 个人中心不替代系统级账号管理。
-
-## 16. P-003 Help / Docs
-
-最终入口：
-
-```text
-顶部右侧 Help → /docs
-```
-
-已满足：
-
-- `/docs` 是真实 Route；
-- 左侧无“使用文档”；
-- Docs 汇总配置主线、运行边界和危险操作；
-- 危险操作包括 Clear Watermark / Delete Apply / Doris Rebuild / Secret Reset。
-
-## 17. 废弃模型防回归
-
-Current UI 不得重新引入：
+当前前端不再出现：
 
 ```text
 Business System Instance
-Business System Instance ↔ Institution/DataSource
 Multi-Institution Route
-Institution Group
 Task Version
-Task Release / Rollback
-Global/Dataset/Task Validation Policy Table
-Validation Disable
-Validation Tolerance
-Validation Lookback
+Global/Dataset/Task Validation Policy 表述
+Validation Disable / Tolerance / Lookback / Override Mode
 Task-level Message Policy
 Redis Stream
-Standard Task CUSTOM_SQL
 RBAC
+Standard Task CUSTOM_SQL
+Institution Tree
 ```
 
-源码中如果出现这些词，只能是“明确说明不支持/不再出现”的负向产品说明，不得作为可编辑字段、菜单、Page State 或当前数据模型。
+主线固定为：
 
-## 18. 构建与运行验证
+```text
+Institution + Business Catalog
+→ Source / Target
+→ Standard Dataset + Immutable Dataset Version
+→ Single-Institution Route + Immutable Route Version
+→ Sync Task Current Config
+→ Execution / Validation Runtime Snapshot
+```
 
-已增加：
+## 4. Resource 页面整改状态
+
+### 4.1 Institution / Business Catalog
+
+已完成：
+
+- 扁平 Institution；
+- Stable Code；
+- CRUD/启停；
+- 未引用可物理删除，有引用时提示只能停用；
+- Business Catalog 只是 HIS/LIS/PACS/EMR 轻量分类。
+
+### 4.2 Source Datasource
+
+已完成：
+
+- 一个 Source 固定归属一家 Institution + 一个 Business Catalog；
+- 被 Route 引用后归属机构/业务目录在编辑器中锁定；
+- HOST_PORT / JDBC_URL 跨字段校验；
+- Port `1..65535`；
+- SSL / Read Only；
+- Query / Connect / Socket Timeout；
+- Pool Max Size；
+- Password 不回显明文；
+- Source Test Status 与业务 ENABLED/DISABLED 独立；
+- 测试时间/错误摘要展示；
+- 编辑连接配置后 Test Status 回到 UNTESTED；
+- Route Source 不能跨 Institution。
+
+### 4.3 Target Datasource / FE
+
+已完成：
+
+- Target 为全局资源；
+- FE 不是固定两个输入，而是可动态新增/移除；
+- 同 Target 下 `(host,query_port)` 前端唯一校验；
+- Query / HTTP Port `1..65535`；
+- FE 可独立启停；
+- FE 单点 Test；
+- Target 聚合 Test；
+- Endpoint/Target 测试时间与错误摘要；
+- Target/FE 启停与 Test Result 保持独立；
+- 未引用 Target 可物理删除，有引用时只能停用。
+
+## 5. Dataset / Route / Task
+
+### 5.1 Dataset
+
+已完成：
+
+- Dataset 不提供手工新增；
+- 只保留“从规范库同步”；
+- Doris ODS/RAW 检查/创建和重建为显式入口；
+- 普通同步不会自动建表/重建；
+- Validation Override 只有 `INHERIT/ROW_COUNT/ROW_COUNT_CHECKSUM`；
+- Dataset Message Policy 仅 Dataset 级；
+- Message Routing Key 使用冻结的下划线值；
+- Dataset Policy Editor 已校验 Schedule/Timezone/Message Rate/Page Size 的合法性。
+
+仍需收口：
+
+```text
+Dataset Sync Policy / Message Policy 的完整当前值
+→ 保存后重新打开必须保持
+→ 新建 Task 必须真正读取其 fetch/delay/lookback/schedule 默认
+```
+
+当前不能因为页面能编辑就把该项判定为完成。
+
+### 5.2 Route
+
+已完成：
+
+- 固定 `Institution + Dataset` 单机构 Route；
+- Source 只允许当前 Institution；
+- Business Catalog 由 Source 只读带出；
+- Source/Schema/Object/Target 可编辑；
+- 编辑后结构状态变 OUTDATED；
+- Structure Status 与 Business Status 独立；
+- Task 只允许使用当前 `ENABLED + PASSED` Route；
+- 逻辑删除保留历史语义。
+
+### 5.3 Task Current Config
+
+已完成：
+
+- Task 固定身份为 Institution + Dataset；
+- 无 Task Version；
+- Fetch Size / Upper Bound Delay / Lookback 已成为真实当前配置；
+- Schedule Mode / Interval / 最终 Cron / Timezone / Source 已成为真实当前配置；
+- EVERY_N_HOURS 生成并固化确定性的错峰 Cron；
+- Task Detail 展示实际当前参数，不再只显示一条 Schedule Label；
+- Task 编辑存在活动 Execution 时拒绝；
+- Task 手动运行同时拒绝活动 Execution 和活动独立 Validation；
+- Task Run Gate 检查 Dataset/Route/Source/Target/启用 FE；
+- Backfill 不推进正式 Watermark；
+- Recollect 创建新 Execution；
+- 清除 Watermark 有危险确认；
+- Task 逻辑删除不级联历史。
+
+## 6. Precheck / Validation / Execution
+
+### Precheck
+
+已完成：
+
+- 只人工启动；
+- 同 Route 活动 Precheck 互斥；
+- STRUCTURE/FIELD/COMPOSITE Summary；
+- 不展示行级业务键/样例/原始值；
+- 正式同步仍重新读取真实 Source；
+- RAW 1 天清理文案明确。
+
+### Validation
+
+已完成：
+
+- `COMPLETED + PASS/MISMATCH` 与技术 FAILED 分开；
+- SYNC_GATE / MANUAL_RECHECK / 独立 Validation / DELETE_RECONCILIATION 分开；
+- 独立 Validation 与同步启动互斥；
+- 独立 Validation 之间互斥；
+- 无真实业务主键时禁用 ROW_COUNT_CHECKSUM；
+- DELETE_RECONCILIATION 固定 DELETE_KEY_DIFF / FIXED；
+- 不出现关闭/容差/Validation Lookback 等旧配置。
+
+### Execution Snapshot
+
+已完成：
+
+- 历史详情不回读当前 Task 冒充快照；
+- 展示 Task Revision / Institution / Dataset Version / Route Version；
+- 展示本次实际 Task Kind / Write Mode / Key Model / Incremental Field；
+- 展示本次 Fetch Size / Delay / Lookback；
+- Source Runtime Snapshot 展示 DB/Connection Mode/Endpoint/Username/SSL/ReadOnly/Timeout；
+- Target Runtime Snapshot 展示结构化 FE Endpoint；
+- Message Policy Snapshot 展示本次生效的 Source/Tenant/Routing Key/Topic/Key Template/Rate/Page Size；
+- 不展示数据库/RabbitMQ/API Secret；
+- Checksum Protocol 只在 ROW_COUNT_CHECKSUM 时存在。
+
+## 7. Outbox / Delete Governance
+
+已完成：
+
+- Outbox 不保存业务 Payload/分页进度；
+- FULL / INCREMENTAL 发布范围映射；
+- 人工重发沿用 Event ID；
+- 重发重新读取当前 Doris；
+- 重发不改原 Execution/Watermark/Task 调度；
+- Delete Snapshot 活动互斥；
+- DELETE_RECONCILIATION 发现差异不自动删 ODS；
+- Dry Run 可重复；
+- 真实 Delete Apply 必须先成功 Dry Run；
+- 二次危险确认；
+- 已有 PENDING/RUNNING/SUCCEEDED 的真实 Apply 禁止重复发起；
+- P-004 风险阈值没有在前端虚构默认值。
+
+## 8. Support / Settings
+
+已完成：
+
+- Alert Rule ↔ Channel 使用稳定 Channel ID，不依赖可编辑展示名称；
+- Alert Channel 当前仍被 Rule 引用时阻止删除；
+- External Client SELECTED 内部使用 Institution Code/ID，不依赖展示名称；
+- Generic JDBC Mapping 可物理删除；
+- Account 入口/能力与 P-002 一致；
+- 当前账号不能停用自己；
+- 最后一个启用账号不能停用；
+- Secret/Password Reset 有危险确认；
+- `/docs` 与 P-003 一致。
+
+仍需收口：
+
+```text
+Global Settings / Registry Settings
+→ Port、Interval、Concurrency 等输入的范围校验
+→ 不能继续使用“任意输入 + 点击后只 toast”的假保存交互
+```
+
+## 9. 仍需完成的 Source Review 项
+
+当前只保留以下源码级阻塞：
+
+1. Dataset Policy 完整当前值往返保存，并作为新 Task 默认输入；
+2. Global/Registry Settings 前端范围校验和明确保存错误态；
+3. 对本轮大型 TypeScript/TSX 改动做最终静态断引用扫描。
+
+完成这三项后，才可以把：
+
+```text
+FRONTEND_PRODUCT_SOURCE_REVIEW = PASS
+```
+
+## 10. Runtime / Build 验证
+
+GitHub Workflow：
 
 ```text
 .github/workflows/frontend-check.yml
-```
-
-执行：
-
-```text
 npm ci
 npm run lint
 npm run build
 ```
 
-第一次真实 GitHub Actions Run 已创建，但 GitHub 明确返回：
+当前 Workflow 因 GitHub Actions 预算/额度原因无法启动 Job，步骤没有真正执行。因此：
 
 ```text
-The job was not started because an Actions budget is preventing further use.
+FRONTEND_RUNTIME_BUILD_VERIFICATION = BLOCKED_BY_GITHUB_ACTIONS_BUDGET
 ```
 
-因此当前不能把：
+在恢复 Actions 预算或获得等价可执行依赖环境前：
+
+- 不声明 `npm run lint` 已通过；
+- 不声明 `npm run build` 已通过；
+- 不把“Workflow 未运行”解释成源码失败；
+- 也不把它解释成验证通过。
+
+## 11. Phase 1 门槛
+
+当前仍保持：
 
 ```text
-npm run lint = PASS
-npm run build = PASS
-```
-
-写入验收结论。
-
-本地当前环境没有可用 npm 依赖缓存且不能联网安装依赖，也无法替代执行真实 Next Build。
-
-## 19. G-001 前剩余门槛
-
-当前产品源码侧已完成整改；G-001 前仍需：
-
-```text
-1. GitHub Actions 预算恢复，或其他具有完整 web/node_modules 的受控环境执行
-   npm ci
-   npm run lint
-   npm run build
-
-2. 实际启动 Next 前端，逐 URL 浏览器检查：
-   - Layout / responsive
-   - Refresh / Back / Forward
-   - Modal / Form / Dangerous Confirm
-   - Empty / Error / Loading / Disabled State
-
-3. 只有上述运行级验收通过后，才能将：
-   FRONTEND_RUNTIME_BUILD_VERIFICATION = PASS
-   PHASE1_OVERALL = PASS（仍需用户 G-001 明确签字）
-```
-
-在此之前继续保持：
-
-```text
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
 DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 ```
+
+下一步：
+
+```text
+完成第 9 节剩余 Source Review
+→ 补齐 lint/build 运行验证
+→ 逐页核对真实 URL、空态、错误态、危险确认
+→ Frontend 与冻结 Spec 100% 一致
+→ G-001 最终签字
+```
+
+在此之前不得创建/固化 Flyway V1，也不得推进 Java Entity/Repository/Service 批量整改。
