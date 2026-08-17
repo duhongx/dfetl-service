@@ -1,0 +1,46 @@
+name: Align C1-C3 authoritative documents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/c1-c3-authoritative-alignment-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply authoritative consistency fix
+        run: python scripts/align_c1_c3_authoritative_docs.py
+
+      - name: Validate consistency invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -F '固定共用一张 ODS 和一张 RAW' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          ! grep -F '每个标准数据集共用一张 `raw_`' spec/PRODUCT_AND_BUSINESS_DECISIONS.md
+          ! grep -F '不建立 `doris_table_contract`' spec/TARGET_METADATA_MODEL.md
+          grep -F '预检 RAW 按不可变 Dataset Version 建表' spec/TARGET_METADATA_MODEL.md
+          grep -F 'C1 物理 Review 已形成' spec/CURRENT_CONFIRMED_PROCESS_RULES.md
+          grep -F 'C2 物理 Review 已形成' spec/CURRENT_CONFIRMED_PROCESS_RULES.md
+          grep -F '签字前一致性复核已消除' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
+
+      - name: Commit and remove temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/align_c1_c3_authoritative_docs.py
+          rm -f .github/workflows/c1-c3-authoritative-alignment-once.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(spec): align C1-C3 physical model authority"
+          git push origin HEAD:main
