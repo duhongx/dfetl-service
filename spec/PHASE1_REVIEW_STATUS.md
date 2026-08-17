@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：PostgreSQL 表清单 + FK Matrix 已确认；进入 Unique Matrix Review  
+> 当前阶段：PostgreSQL 表清单 + FK Matrix + Unique Matrix 已确认；进入 Status/Enum/CHECK Matrix Review  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -29,6 +29,7 @@
 - [x] V1 数量口径：50；Flyway History 不计入。
 - [x] `alert_rule_channel` 保留。
 - [x] 全量 FK Matrix。
+- [x] Business / Concurrency Unique Matrix。
 
 ## 3. 当前主模型
 
@@ -41,9 +42,7 @@ Institution + Business Catalog
 → Execution / Validation Startup Snapshot
 ```
 
-## 4. 当前关键 FK 结论
-
-已确认原则：
+## 4. FK 结论
 
 ```text
 最强复合 FK
@@ -85,9 +84,31 @@ Execution(id,task,dataset,institution)
 → MessageOutbox(...)
 ```
 
-`route_field_resolution.field_code` 已删除，Field Code 从 Standard Field 读取。
+## 5. Unique 结论
 
-## 5. 当前 Validation
+唯一性分为：
+
+```text
+Business Unique
+Concurrency / Safety Partial Unique
+FK Support Unique
+```
+
+固定规则：
+
+- 稳定 Code/ID、父内 Version No、不可变内容 Hash、关系 Pair 使用 Business Unique。
+- FK Support Unique 不解释成业务身份。
+- Dataset/Route 历史相同 Hash 复用历史不可变 Version，不创建重复内容 Version。
+- Current Route / Current Task 使用逻辑删除条件 Partial Business Unique。
+- 活动 Execution/Precheck/Independent Validation/Delete Snapshot 使用 Partial Unique 做并发兜底。
+- External Client 只保证 `client_id` 唯一；`client_name` 可重复。
+- Alert Channel/Rule Name 继续大小写不敏感唯一。
+- Delete Apply 使用单一 `uk_delete_apply_effective` 覆盖 `PENDING/RUNNING/SUCCEEDED`。
+- Sync vs Independent Validation 跨表互斥不新增 Lock/Slot 表。
+
+权威文档：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`。
+
+## 6. 当前 Validation
 
 ```text
 sync_task.validation_method_override
@@ -99,19 +120,19 @@ sync_task.validation_method_override
 
 不存在三张独立 Policy 表。
 
-## 6. 当前 Review 顺序
+## 7. 当前 Review 顺序
 
 1. [x] P0 PostgreSQL 最终表清单 + 数量。
 2. [x] 全量 FK Matrix。
-3. [ ] **Business / Concurrency Unique Matrix。**
-4. [ ] Status / Enum / CHECK Matrix。
+3. [x] Business / Concurrency Unique Matrix。
+4. [ ] **Status / Enum / CHECK Matrix。**
 5. [ ] Delete Behavior Matrix。
 6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-下一项只讨论第 3 项。
+下一项只讨论第 4 项。
 
-## 7. 前端仍为开发优先级
+## 8. 前端仍为开发优先级
 
 - [ ] Navigation/IA。
 - [ ] Resource Pages。
@@ -122,12 +143,12 @@ sync_task.validation_method_override
 
 前端模型确认后再冻结最终 API Contract 和进入后端实现。
 
-## 8. 最终门槛
+## 9. 最终门槛
 
 - [x] Active Spec 业务语义收口。
 - [x] PostgreSQL/Quartz 表清单。
 - [x] FK Matrix。
-- [ ] Unique Matrix。
+- [x] Unique Matrix。
 - [ ] Status/CHECK Matrix。
 - [ ] Delete Behavior Matrix。
 - [ ] Snapshot Review。
