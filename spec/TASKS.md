@@ -1271,6 +1271,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 - [x] `B4`：建立权限指令、危险确认和审计调用的前端公共层。
 - [x] `B5`：按 A3 矩阵逐页消除空按钮和旧模型交互。
 - [x] `API-001`：生成并冻结 `spec/FRONTEND_API_CONTRACT_V1.md`，覆盖分页、Revision、幂等、权限、审计、导出任务和长任务状态。
+- [x] `B5-AUDIT`：二次反查 A3 操作矩阵，补齐数据源凭据/状态治理、核心表格分页、预检批量启动/取消、Execution/Validation 导出及删除对账 Dry Run/Apply。
 
 A1–A3 与 B1–B5 已完成前端 Mock 产品行为实现，并以 ESLint 和 Next.js 生产构建验证；真实 REST API、服务端鉴权/审计、数据库和外部组件尚未实施，因此只能标记前端产品交互为 `IMPLEMENTED`，不能标记端到端系统为 `VERIFIED`。
 

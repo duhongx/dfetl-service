@@ -961,6 +961,8 @@ spec/FRONTEND_API_CONTRACT_V1.md
 
 该合同覆盖统一响应、分页、Revision/ETag、幂等、权限、审计、错误码、Export Job、轮询/SSE 和全部页面接口。前端实现完成不代表 Java、PostgreSQL、Doris、RabbitMQ 或 Flyway 已完成。
 
+二次操作级反查已补齐：Source/Target 复制、状态、凭据轮换、删除引用保护；数据集五分区详情；Route 版本与字段解析；全部核心表格分页；预检批量启动与取消；Execution/Validation 导出；删除对账、Dry Run 和真实 Apply。
+
 ## 24. A3 通用验收条件
 
 1. 每个可见按钮在矩阵中有唯一操作、权限和审计定义；
