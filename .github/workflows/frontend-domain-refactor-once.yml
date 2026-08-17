@@ -23,7 +23,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .github/frontend-refactor-payload/part-*.b64 > /tmp/dfetl-frontend-refactor.b64
+          cat \
+            .github/frontend-refactor-payload/part-00.b64 \
+            .github/frontend-refactor-payload/part-01.b64 \
+            .github/frontend-refactor-payload/part-02.b64 \
+            .github/frontend-refactor-payload/part-03.b64 \
+            .github/frontend-refactor-payload/part-03b.b64 \
+            .github/frontend-refactor-payload/part-04.b64 \
+            .github/frontend-refactor-payload/part-05.b64 \
+            > /tmp/dfetl-frontend-refactor.b64
+          wc -c /tmp/dfetl-frontend-refactor.b64
           test "$(wc -c < /tmp/dfetl-frontend-refactor.b64)" -eq 56596
           base64 --decode /tmp/dfetl-frontend-refactor.b64 > /tmp/dfetl-frontend-refactor.tar.gz
           echo "63f7b843b3ebf84f026c1939fd4a81c52fba410b84b40aa4f2ec7d0528263a29  /tmp/dfetl-frontend-refactor.tar.gz" | sha256sum --check --strict
