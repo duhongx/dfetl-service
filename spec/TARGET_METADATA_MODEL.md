@@ -1,33 +1,32 @@
 # DFETL 目标元数据模型
 
-> 状态：阶段 1 逻辑模型收口版  
-> 更新：2026-08-17  
+> 状态：阶段 1 FK Matrix 收口版  
+> 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 限制：本文定义目标逻辑关系，不是 Flyway SQL；最终签字前不得据此直接修改生产数据库。
+> FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> 限制：本文定义目标逻辑关系，不是 Flyway SQL；阶段 1 最终签字前不得修改正式数据库。
 
-## 1. 设计目标
-
-目标元数据模型只表达当前产品需要的稳定事实：
+## 1. 总体主线
 
 ```text
 接入资源
-→ 机构采集路由
-→ 同步任务
-→ 执行/批次
-→ 校验/水位/消息
+→ 机构采集 Route
+→ Sync Task
+→ Execution / Batch
+→ Validation / Watermark / Message
 ```
 
-原则：
+固定原则：
 
-- 一个部署只服务一个医共体，不增加 tenant_id；
-- 机构为扁平集合；
-- HIS/LIS/PACS 只作为轻量业务目录；
-- 源端数据源直接属于一家机构和一个业务目录；
-- Route 固定属于一家机构；
-- 标准 Dataset、目标 Doris 为全局资源；
-- Dataset version 和 Route version 保留不可变版本；
-- Task 不建立版本表，保存当前配置；
-- Execution/Validation 保存启动快照解释历史。
+- 一个部署只服务一个医共体，不增加 Tenant 表。
+- Institution 扁平。
+- HIS/LIS/PACS 只作为轻量 Business Catalog。
+- Source Datasource 直接属于一家 Institution + 一个 Business Catalog。
+- Route 固定单机构。
+- Dataset Version、Route Version、Field Conversion Contract 保持不可变。
+- Task 不版本化，保存当前配置。
+- Execution/Validation 保存启动快照。
+- FK 使用最强复合关系证明同一业务身份。
 
 ## 2. 顶层关系
 
@@ -39,13 +38,12 @@ institution 1 ── N source_datasource N ── 1 business_catalog
                          ├── current_version_id → collection_route_version
                          │                         └── route_field_resolution
                          │
-                         └── 1 ── 0..1 sync_task（按 institution + dataset 唯一）
-                                         │
+                         └── 1 ── 0..1 sync_task
                                          ├── task_watermark
                                          ├── sync_execution
                                          │      └── load_batch
                                          ├── validation_run
-                                         └── message_outbox（通过 execution）
+                                         └── message_outbox（through execution）
 
 target_datasource
   └── target_datasource_fe_endpoint
@@ -55,93 +53,32 @@ standard_dataset
        └── standard_dataset_field
 ```
 
-## 3. 接入资源模型
+## 3. 接入资源
 
-### 3.1 `institution`
+### `institution`
 
-职责：医共体内医疗机构身份。
+医共体内机构身份；不保存机构树、Datasource、Route、Dataset、调度或运行状态。
 
-核心字段：
+### `business_catalog`
 
-```text
-id
-code
-name
-short_name
-institution_type
-institution_level
-region_code
-status
-revision
-created_*/updated_*
-```
+HIS/LIS/PACS/EMR 等轻量分类，不表示真实部署实例，不与 Institution 建多对多覆盖关系。
 
-不保存：父机构、数据源配置、Route、Dataset、调度或运行状态。
-
-### 3.2 `business_catalog`
-
-职责：HIS/LIS/PACS/EMR 等轻量业务分类。
-
-核心字段：
+### `source_datasource`
 
 ```text
-id
-code
-name
-description
-status
-revision
-created_*/updated_*
+institution_id      → institution
+business_catalog_id → business_catalog
 ```
 
-该表不是部署实例表，不与机构建立多对多覆盖关系。
+只保存数据库连接与测试状态；不保存 Dataset、Schema/Object 映射、Target Table。
 
-### 3.3 `source_datasource`
+### `target_datasource`
 
-职责：某一家机构某类业务数据库连接。
+逻辑 Doris 部署；子表 `target_datasource_fe_endpoint`。不绑定 Institution/Business Catalog/Dataset。
 
-核心关系：
+## 4. 标准 Dataset 与 Field Contract
 
-```text
-institution_id      → institution.id
-business_catalog_id → business_catalog.id
-```
-
-核心连接字段：
-
-```text
-code/name
-db_type
-connection_mode
-host/port/database_name/default_schema
-jdbc_url
-username/password_enc
-ssl_enabled/read_only
-connect/query/socket timeout
-pool_max_size
-status
-last_test_status/last_tested_at/last_test_error
-revision
-```
-
-不保存 Dataset、实际 Schema/Object 映射或目标表映射。
-
-### 3.4 `target_datasource`
-
-职责：逻辑 Doris 部署。
-
-一对多子表：
-
-```text
-target_datasource
-  └── target_datasource_fe_endpoint
-```
-
-目标资源不绑定机构、业务目录或 Dataset。
-
-## 4. 标准数据集模型
-
-继续保留：
+目标对象：
 
 ```text
 standard_dataset
@@ -150,24 +87,24 @@ standard_dataset_field
 field_conversion_contract
 field_conversion_rule
 generic_jdbc_type_mapping
+dataset_sync_policy
+dataset_message_policy
 ```
 
-`standard_dataset.current_version_id` 指向当前不可变定义版本。
+- Dataset 只允许管理员从规范库人工同步。
+- 定义变化生成不可变 `standard_dataset_version`。
+- Field 只属于某个 Dataset Version。
+- Dataset 当前 Validation Override 直接保存在 `standard_dataset.validation_method_override`。
+- Message Policy 只存在 Dataset 级。
+- 不建立 Global/Dataset/Task Validation Policy 表。
 
-当前策略存储遵循后续专项 Review：
-
-- 数据集同步默认参数保存在数据集侧既定对象/字段；
-- `standard_dataset.validation_method_override` 为可空覆盖；
-- 消息策略只存在数据集级；
-- 不建立任务级消息策略。
-
-## 5. 机构采集路由模型
+## 5. 机构采集 Route
 
 ### 5.1 `collection_route`
 
-职责：一家机构对一个标准 Dataset 的当前采集映射。
+职责：一家 Institution 对一个标准 Dataset 的当前采集映射。
 
-建议当前字段：
+当前字段：
 
 ```text
 id
@@ -188,20 +125,18 @@ deleted_at/deleted_by
 created_*/updated_*
 ```
 
-关键不变量：
+不变量：
 
-1. Route 只有一个 `institution_id`，不存在覆盖机构集合。
-2. `source_datasource.institution_id` 必须等于 Route 的 `institution_id`。
-3. 业务目录从 Source 推导，Route 不重复保存业务分类。
-4. 同一机构 + Dataset 只维护一条未删除当前 Route；切换源端时更新当前配置并生成新 Route version。
-5. ODS/RAW 表名按 Dataset 和统一命名规则推导，不在 Route 自由填写。
-6. Route 状态和结构核对状态是两个独立事实。
+1. Route 单机构。
+2. Source 必须属于 Route Institution。
+3. Business Catalog 从 Source 推导，Route 不重复保存。
+4. 一 Institution + Dataset 一条未删除 Route。
+5. `current_version_id` 只能指向自身 Route 的 Version。
+6. Route 状态与 Structure Status 独立。
 
 ### 5.2 `collection_route_version`
 
-职责：一次规范化 Route 配置快照，只插入不更新。
-
-建议字段：
+一次不可变 Route 配置快照：
 
 ```text
 id
@@ -220,47 +155,74 @@ contract_hash
 created_at/created_by
 ```
 
-保留 `institution_id/dataset_id` 快照是为了让 Task/Execution 能通过复合关系验证 Route version 的业务归属。
+FK 强关系：
+
+```text
+(route_id,institution_id,dataset_id)
+→ collection_route(id,institution_id,dataset_id)
+
+(dataset_id,dataset_version_id)
+→ standard_dataset_version(dataset_id,id)
+
+(source_datasource_id,institution_id)
+→ source_datasource(id,institution_id)
+```
+
+Task/Execution/Delete Snapshot 使用：
+
+```text
+(id,institution_id,dataset_id,dataset_version_id)
+```
+
+作为 Route Version 稳定业务身份父键。
 
 ### 5.3 `route_field_resolution`
 
-职责：某个 Route version 下“标准字段 → JDBC 真实字段名”的只读解析结果。
+职责：某个 Route Version 下 Standard Field → JDBC Actual Column 的不可变解析快照。
 
-建议字段：
+最终字段：
 
 ```text
 route_version_id
+dataset_version_id
 standard_field_id
-field_code
 source_column_name
 source_ordinal
 source_jdbc_type
+source_type_name
 resolved_at
 ```
 
-固定规则：
+**不再保存 `field_code`。**
 
-- 一标准字段一条解析；
-- 源字段按大小写折叠后必须唯一；
-- 不提供人工重命名、别名或转换表达式；
-- 所有源 SQL 共用这份解析结果。
+Standard Field Code 通过 `standard_field_id` 读取。
 
-## 6. Task 模型
+数据库关系：
 
-### 6.1 `sync_task`
+```text
+(route_version_id,dataset_version_id)
+→ collection_route_version(id,dataset_version_id)
 
-任务采用已确认的“固定身份 + 当前配置覆盖”。
+(dataset_version_id,standard_field_id)
+→ standard_dataset_field(dataset_version_id,id)
+```
 
-固定业务身份：
+因此数据库保证 Field 一定属于 Route Version 使用的 Dataset Version。
+
+只允许大小写差异；不支持字段重命名、别名、表达式、默认值。
+
+## 6. Sync Task
+
+### 6.1 固定业务身份
 
 ```text
 institution_id
 dataset_id
 ```
 
-创建后不可修改；同一机构 + Dataset 只能存在一个未删除任务。
+创建后不可修改；同一 Institution + Dataset 一个未删除 Task。
 
-当前配置至少包括：
+### 6.2 当前配置
 
 ```text
 dataset_version_id
@@ -272,157 +234,201 @@ doris_key_model
 incremental_field_code
 fetch_size
 upper_bound_delay_minutes
-schedule_mode
-schedule_interval_hours
-schedule_cron
-schedule_timezone
-schedule_source
-schedule_source_revision
-schedule_enabled
+lookback_seconds
+schedule_*
 validation_method_override
 revision
 ```
 
-删除旧任务版本模型：
+Task 通过一条四元 FK 固定当前 Route/Dataset/Institution：
 
 ```text
-不建立 sync_task_version
-不保存 sync_task.current_version_id
-Execution/Validation/Outbox/Watermark 不保存 task_version_id
+(route_version_id,institution_id,dataset_id,dataset_version_id)
+→ collection_route_version(id,institution_id,dataset_id,dataset_version_id)
 ```
 
-### 6.2 Route 与 Task 的一致性
-
-Task 选择的 `route_version_id` 必须满足：
-
-```text
-route_version.institution_id = task.institution_id
-route_version.dataset_id     = task.dataset_id
-```
-
-Task 可显式切换到同一机构、同一 Dataset 的新 Route version；不会自动切换，也不会自动重置水位。
+不建立 `sync_task_version/current_version_id/task_version_id`。
 
 ## 7. `task_watermark`
 
-一任务最多一条当前正式水位：
+一 Task 最多一条当前正式 Watermark：
 
 ```text
 task_id
 watermark_value
 source_execution_id
-updated_at
+revision
+updated_at/updated_by
 ```
 
-不建立 task version 维度和水位历史表。历史窗口从 `sync_execution` 查询。
-
-## 8. 执行和批次
-
-### 8.1 `sync_execution`
-
-一次接受的真实同步运行。
-
-除运行状态、范围、统计外，必须保存本次启动快照：
+自动推进来源通过：
 
 ```text
-task_id
-task_revision
+(source_execution_id,task_id)
+→ sync_execution(id,task_id)
+```
+
+保证 Source Execution 属于同一个 Task。
+
+不建立 Watermark History；历史范围从 Execution 查询。
+
+## 8. Execution / Batch
+
+### `sync_execution`
+
+保存一次真实同步运行和启动快照：
+
+```text
+task_id + task_revision
 institution_id/institution_code
 dataset_id/dataset_version_id
 route_version_id
-source/target 快照
-field contract/ref snapshot
-task_kind/write_mode/doris_key_model
+task kind/write mode/key model
 incremental field
-fetch_size / upper bound delay
-range snapshot
+fetch/read range
 validation method/source/revision
 message policy snapshot
+operation/trigger/status/range
+统计和错误
 ```
 
-任务后续修改不影响历史执行。
-
-### 8.2 `load_batch`
-
-批次只保存本次执行内部的 Doris Load 事实：
+关系：
 
 ```text
-execution_id
-batch_no
-cursor_start/cursor_end
-source_row_count
-loaded_row_count/rejected_row_count
-payload_digest
-doris_label
-doris_txn_id
-status
-doris_status
-probe_count
-visible_at
-error_code/error_message
+(task_id,institution_id,dataset_id)
+→ sync_task(id,institution_id,dataset_id)
+
+(route_version_id,institution_id,dataset_id,dataset_version_id)
+→ collection_route_version(...)
+
+(external_client_id,external_request_id)
+→ external_api_request(client_id,request_id)
 ```
 
-不作为跨执行恢复检查点。
+并提供：
 
-## 9. 预检模型
+```text
+UNIQUE(id,task_id)
+UNIQUE(id,task_id,dataset_id,institution_id)
+```
 
-当前目标对象：
+分别供 Watermark/Validation 和 Outbox 使用。
+
+### `load_batch`
+
+只保存本 Execution 内游标、Doris Label/Txn/State、批次行数和错误；不是跨 Execution Checkpoint。
+
+## 9. Precheck
+
+目标对象：
 
 ```text
 precheck_run
 precheck_issue_summary
 ```
 
-`precheck_run` 直接关联 `route_id/route_version_id`；一条 Route 同时最多一个活动预检。
+Precheck Run 固定 Route/Route Version/Institution/Dataset/Dataset Version；同 Route 最多一个活动 Run。
 
-预检保存整次运行和字段/组合规则汇总，正式同步不读取预检中间结果作为业务数据源。
+Issue Summary 只保存 STRUCTURE/FIELD/COMPOSITE 汇总，不保存行级问题。
 
-## 10. 校验模型
+## 10. Validation
 
-当前只保留统一 `validation_run`，不建立独立“任务版本校验”对象。
+统一 `validation_run`。
 
-同步门禁校验通过 `execution_id` 使用原执行快照；人工/定期独立校验通过 `task_id + context_snapshot + range_snapshot` 固定本次上下文。
+同步门禁/人工重新校验关联 Execution 时使用：
 
-校验方法来源：
+```text
+(execution_id,task_id)
+→ sync_execution(id,task_id)
+```
+
+因此不能引用其他 Task 的 Execution。
+
+独立 Validation 使用 Task + Context/Range Snapshot。
+
+校验方法解析：
 
 ```text
 sync_task.validation_method_override
 → standard_dataset.validation_method_override
 → system_setting[validation.default_method]
 → ROW_COUNT
+→ Dataset 合同能力
 ```
 
-## 11. 消息模型
+## 11. Message Outbox
 
-消息仅使用 RabbitMQ，数据集级配置。
+RabbitMQ Only；Dataset 级 Policy。
 
 ```text
 sync_execution
   └── 0..1 message_outbox
 ```
 
-Outbox 保存执行、机构、数据集、范围和消息策略小型快照，不保存逐条业务 payload 或任务版本引用。
+Outbox 通过：
 
-## 12. 支撑对象
+```text
+(execution_id,task_id,dataset_id,institution_id)
+→ sync_execution(id,task_id,dataset_id,institution_id)
+```
 
-继续按专项 Review 保留：
+保证所有冗余查询身份与原 Execution 一致。不保存 Task Version、逐条 Payload 或分页进度。
 
-- `app_user`、`audit_log`、`system_setting`；
-- 告警 channel/rule/event/delivery；
-- 外部 API client、授权、nonce/request；
-- Quartz 官方 JDBC JobStore 表；
-- 删除识别/人工应用对象；
-- Doris `_dfetl_key_snapshot`、`_dfetl_delete_diff` 等技术表。
+## 12. Delete Snapshot
 
-## 13. 明确废止的旧关系
+PostgreSQL：
 
-阶段 1 最终模型不得重新引入：
+```text
+delete_snapshot_run
+task_delete_snapshot_state
+validation_run(DELETE_RECONCILIATION)
+delete_apply_run
+```
 
-- 真实部署系统实例及其机构/数据源多对多中间层；
-- Route 多机构覆盖集合与 `collection_route_version_institution`；
-- `sync_task_version` 和任务版本发布/切换状态机；
-- 任务级消息配置；
-- 标准任务 `CUSTOM_SQL`；
-- 数据源组和任务组；
-- 机构树。
+Doris：
 
-后续数据库、Java DTO/Entity、API 和前端类型必须以本模型为准。
+```text
+_dfetl_key_snapshot
+_dfetl_delete_diff
+```
+
+Delete Snapshot 使用 Task 复合身份 + Route Version 四元身份；历史全部 RESTRICT。删除差异不自动应用。
+
+## 13. 支撑对象
+
+继续保留：
+
+```text
+app_user
+audit_log
+system_setting
+alert_channel
+alert_rule
+alert_rule_channel
+alert_event
+alert_delivery
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
+Quartz 官方 11 张 qrtz_* 表
+```
+
+普通审计用户 FK 使用 SET NULL；运行责任用户使用 RESTRICT。
+
+## 14. 明确废止
+
+不得重新引入：
+
+- Business System Instance 及其多对多中间层；
+- Multi-Institution Route；
+- `sync_task_version`；
+- Task-level Message Policy；
+- Global/Dataset/Task Validation Policy 表；
+- Standard Task CUSTOM_SQL；
+- Source/Task Group；
+- Institution Tree；
+- 行级 Precheck Issue；
+- Execution Resume/Checkpoint 状态表。
+
+后续数据库、Java Entity/DTO、API 和前端类型必须以本模型及 FK Matrix 为准。
