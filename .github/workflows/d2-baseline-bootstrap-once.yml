@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: d2-baseline-bootstrap
+  cancel-in-progress: true
+
 jobs:
   materialize:
     runs-on: ubuntu-latest
@@ -112,7 +116,7 @@ jobs:
           readme = readme_path.read_text(encoding="utf-8")
           readme = replace_once(
               readme,
-              "`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用户签字并进入 `FROZEN`；实施授权为 `YES`，D1 OpenAPI 已生成，D2 Flyway V1 尚未创建。",
+              "`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用戵签字并进入 `FROZEN`；实施授权为 `YES`，D1 OpenAPI 已生成，D2 Flyway V1 尚未创建。",
               "`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用户签字并进入 `FROZEN`；D1 OpenAPI 和 D2 PostgreSQL 物理字典/V1 已生成，D3 Flyway 空库 migrate/validate 为下一门槛。",
               "README stage sentence",
           )
