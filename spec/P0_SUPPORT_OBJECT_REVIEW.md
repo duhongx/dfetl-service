@@ -1,300 +1,295 @@
 # P0 支撑对象 Review
 
-> 状态：阶段 1 P0 业务范围 Review 已完成；物理表字典尚待复核  
-> 日期：2026-08-14  
-> 老系统代码基线：`duhongx/datax-lite-jdk21@175a15ff6d7f1f3b258a0422420ea672610933a4`  
-> 新系统业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 目标模型：`spec/TARGET_METADATA_MODEL.md`
+> 状态：阶段 1 P0 支撑对象业务范围已确认；已按当前 Validation/Task 模型收口  
+> 首次 Review：2026-08-14  
+> 最近收口：2026-08-17  
+> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> 目标模型：`spec/TARGET_METADATA_MODEL.md`  
+> Validation：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
+> Quartz：`spec/QUARTZ_JOBSTORE_REVIEW.md`
 
 ## 1. Review 原则
 
-P0 支撑对象包括本地账号、操作审计、系统设置、告警、外部任务 API 和 Quartz JDBC JobStore。它们按老系统当前可达代码核实真实功能，再以新系统已经确认的业务规则重新设计。
+P0 支撑对象包括：
+
+```text
+本地账号
+操作审计
+system_setting
+告警
+External API
+Quartz JDBC JobStore
+```
 
 统一规则：
 
-1. 老系统已经存在且新文档没有明确删除的业务能力继续保留。
-2. 新文档已经明确删除或改变的旧功能，以新文档为准。
-3. 不复制没有真实调用路径的旧表、字段或状态。
-4. 不因为未来可能扩展而预建复杂模型。
-5. 只有存在真实业务选择时才向用户确认；能从代码和业务基线直接判断的技术细节直接完成。
-6. 目标模型最终签字前不创建或固化 Flyway `V1__baseline.sql`。
+1. 老系统真实业务能力在新产品没有删除时继续保留，但按当前领域模型重写。
+2. 不复制孤立旧表、旧状态机或未来假设。
+3. 已被后续专项 Review 废止的 Task Version/Validation Policy 等旧结构不得继续作为本文件当前模型。
+4. 支撑对象不应重新定义 Resource/Route/Task/Validation 主模型。
+5. 阶段 1 最终签字前不创建 Flyway V1。
 
-## 2. 本地账号、角色和权限
+## 2. 本地管理员账号
 
-### 2.1 老系统实际能力
+P0 使用简单同权限管理员模型：
 
-老系统的 `app_user` 可以保存多行账号，但历史初始化说明按单个 `admin` 用户使用。当前实体字段主要包括：
+- 允许一个或多个管理员账号，实际规模通常 1～3 人。
+- 所有本地账号权限相同。
+- 不建立 `role/permission/user_role/role_permission` 等 RBAC 表。
+- 不建设角色、权限、机构级数据权限或菜单权限配置器。
+- 保留登录、Access/Refresh Token、Refresh Token 失效、退出和修改密码。
+- 账号不物理删除，只启用/停用。
+- 当前登录账号不能停用自己。
+- 最后一个启用账号不能被停用。
+- 停用或重置密码必须使旧 Refresh Token 失效。
+- Flyway/初始化 SQL 不写固定管理员密码或固定生产 Password Hash。
 
-- `id`
-- `username`
-- `password_hash`
-- `role`
-- `enabled`
-- `refresh_token_version`
-- `created_at`
+账号管理业务能力已确认：
 
-当前可达功能包括：
+```text
+列表
+新增
+启用/停用
+重置密码
+```
 
-- 用户名和密码登录；
-- 查询当前登录用户；
-- Access Token 和 Refresh Token；
-- Refresh Token 轮换与失效；
-- 退出登录；
-- 修改密码；
-- 个人中心展示账号信息。
+具体导航入口位置仍以 `PENDING_DECISIONS.md` 的前端信息架构确认结果为准；功能本身不建设 RBAC。
 
-老系统没有完整的用户管理、角色管理或权限管理页面。`role` 只是单个字符串，登录时转换为 Spring Security 的 `ROLE_<role>`；多数接口只要求“已经登录”，没有形成可配置 RBAC。部分旧代码虽然把路径命名为 `admin`，但注释也明确说明尚未实施真正的角色校验。
+## 3. `audit_log`
 
-### 2.2 已确认业务规则
+业务写操作同时记录成功和失败。
 
-P0 本地账号采用简单管理员模型：
+至少保存：
 
-1. 系统既允许只配置一个管理员账号，也允许配置多个管理员账号。
-2. 实际使用规模通常为 1～3 人，不设置“必须单账号”或“必须多账号”的产品限制。
-3. 所有本地账号均具有相同的管理员权限，不区分管理员、操作员、审计员等角色。
-4. P0 不建立 `role`、`permission`、`user_role`、`role_permission` 等 RBAC 表。
-5. P0 不建设角色管理、权限管理或菜单/按钮/API 权限配置器。
-6. 不需要按机构、数据集、任务或菜单划分账号数据权限。
-7. 保留账号启用/停用、密码 Hash、Refresh Token 版本和必要时间字段。
-8. 多账号的主要价值是登录身份和操作审计可区分，不将其扩展为复杂权限体系。
-9. 所有管理员都可以执行系统中的正常管理和运维操作；危险操作继续通过业务确认、范围展示和审计控制，不增加复杂审批流。
-10. Flyway 或其他初始化 SQL 禁止写入固定管理员密码或固定生产密码 Hash。
+```text
+actor type / actor identity snapshot
+source = WEB/EXTERNAL_API/SCHEDULER/SYSTEM
+operation_code
+target type/id/name snapshot
+result = SUCCESS/FAILED
+request/correlation id
+client ip
+脱敏 summary
+error_code/error_message
+occurred_at
+```
 
-因此，目标模型中的“`app_user`、角色/权限关联”收敛为单一 `app_user` 账号模型，不再建立角色和权限关联表。应用层把所有启用的本地账号统一视为管理员，无需持久化只有一个合法值的角色字段。
+固定边界：
 
-### 2.3 目标表方向
+- 本地账号、External Client、Scheduler、System Task 均可成为 Actor。
+- 目标后续改名/逻辑删除不破坏历史审计理解。
+- 普通只读查询默认不写业务 Audit。
+- 登录失败、无效 Token、HMAC 失败进入 Security Log。
+- Password/Hash、DB Password、RabbitMQ Credential、API Secret、签名原文和完整 Auth Header 不得写 Audit。
+- `audit_log` 追加写，不提供普通 Update/Delete。
+- 不建设 Audit 审批/处理状态/明细子表。
 
-`app_user` 的最小目标职责：
+## 4. `system_setting`
 
-- 本地登录账号身份；
-- 唯一用户名；
-- 密码 Hash；
-- 启用/停用；
-- Refresh Token 版本；
-- 创建、更新时间；
-- 必要时记录最后登录时间。
+### 4.1 定位
 
-最终字段长度、默认值、索引和账号创建方式在物理表字典复核时确定。不会增加角色和权限相关物理表。
-
-### 2.4 操作审计关系
-
-操作审计继续区分具体登录账号。`audit_log` 应保存能够长期识别操作者的信息；即使账号后续被停用，也不能破坏历史审计记录。
-
-账号不物理删除，因此目标审计建议同时保存可空账号外键和不可变用户名快照；外部 client、调度器和系统任务使用对应操作者类型与名称快照。审计继续保持追加写，不提供普通修改或删除入口。
-
-### 2.5 账号管理和生命周期（已确认）
-
-P0 在“系统设置”中提供简单的“账号管理”页面，不建设完整用户中心。页面只提供：
-
-- 查看管理员账号列表；
-- 新增管理员账号；
-- 启用或停用账号；
-- 重置账号密码。
+`system_setting` 是**已注册系统设置**的持久化，不是用户自由键值中心。
 
 固定规则：
 
-1. 新增账号只填写用户名和初始密码，不提供角色、权限、机构或数据集范围配置。
-2. 所有账号仍具有相同管理员权限。
-3. 用户可以在个人中心修改自己的密码；管理员账号管理页面可以为其他账号重置密码。
-4. 账号不提供物理删除入口，只允许停用，以保留审计中的操作者身份。
-5. 当前登录账号不能停用自己。
-6. 系统至少保留一个启用账号；最后一个启用账号不能被停用。
-7. 停用账号时增加 `refresh_token_version` 或采用等效方式使其既有 Refresh Token 失效。
-8. 重置密码后使该账号既有 Refresh Token 失效，并要求重新登录。
-9. 新增、启停和重置密码均写入操作审计，但审计日志和应用日志不得记录密码明文或密码 Hash。
-10. 不限制账号只能有一个，也不要求必须创建多个；部署后可按实际使用人数维护 1～3 个账号。
+1. `setting_key` 稳定且大小写敏感；接口只允许代码注册的 Known Key。
+2. Value 可使用文本物理存储，但类型、默认值、范围、是否敏感、是否可空由统一 Setting Registry 定义。
+3. Bool/Integer/Duration/Enum/URL/Port/数量等统一验证。
+4. 使用 `revision` 乐观锁，防止多页面静默覆盖。
+5. 医共体名称/编码继续放在 Setting；一个部署只服务一个医共体。
+6. 规范库连接可页面维护；Password 保存密文并只返回掩码。
+7. RabbitMQ、应用数据库、JWT、Encryption Master Key 等部署级 Secret 不进入 `system_setting`。
+8. Field Contract、Datasource、Doris、External Client 等已有领域对象不重复塞进 Setting。
+9. 所有 Setting 写操作成功/失败均 Audit；敏感值只记录“已变更”，不记录值。
+10. 老库任意 Key 不整体迁移，新库只迁移最终注册项。
 
-该方案只增加一个很小的账号维护页面和对应 API，不引入 RBAC、审批流或复杂组织权限。
+### 4.2 Validation 全局默认的唯一入口
 
-### 2.6 业务写操作成功与失败审计（已确认）
+旧描述：
 
-老系统审计切面在业务方法成功返回后才写入 `audit_log`，业务方法抛出异常时不会留下审计记录；外部任务 API 等不在普通 Controller 包下的写入口也没有被完整覆盖。新系统不沿用这种“主要只记录成功操作”的实现。
+```text
+global_validation_policy
+dataset_validation_policy
+task_validation_policy
+```
 
-P0 对业务写操作同时记录成功和失败：
+**全部废止。**
 
-1. 记录本地账号、外部 API client、调度器或系统后台任务等实际操作者类型，并保存可长期识别的操作者名称快照。
-2. 记录发起来源，例如 `WEB`、`EXTERNAL_API`、`SCHEDULER`、`SYSTEM`。
-3. 使用受控的操作编码，例如任务创建、运行、取消、暂停、重新采集、数据补采、删除、水位重置、Doris 重建、消息重发、账号启停和密码重置。
-4. 保存目标类型、目标 ID 和目标名称快照；目标后续逻辑删除或改名不影响历史审计理解。
-5. 保存执行结果 `SUCCESS/FAILED`。失败时保存业务错误码和脱敏后的错误摘要。
-6. 保存请求或关联标识，用于与应用日志、同步执行、外部幂等请求和消息 Outbox 关联定位。
-7. 保存客户端 IP；必要的操作参数和影响范围使用小型脱敏摘要表达，不保存完整请求体。
-8. 密码、密码 Hash、数据库密码、RabbitMQ 凭据、外部 API secret、签名原文和其他敏感字段不得进入审计或普通应用日志。
-9. 普通只读查询默认不写业务审计；登录失败、无效 Token、HMAC 签名失败等认证安全事件进入安全日志，不全部混入业务 `audit_log`。
-10. `audit_log` 继续采用追加写模型，不提供普通修改或删除入口；P0 不建设审计审批、处理状态或明细子表。
+当前全局默认直接注册为：
 
-目标 `audit_log` 不再依赖 Controller 类名和方法名猜测操作语义，应由明确的领域命令或审计注解提供操作编码、目标和脱敏摘要。具体字段类型、索引及事务实现将在物理表字典复核中完成。
+```text
+setting_key = validation.default_method
+```
 
-## 3. `system_setting`
+允许：
 
-### 3.1 老系统实际能力
+```text
+ROW_COUNT
+ROW_COUNT_CHECKSUM
+```
 
-老系统使用一张通用键值表保存系统参数，`setting_key` 作为主键，`setting_value` 和 `description` 为文本。当前 `/api/settings` 接口可以一次读取全部设置，也允许前端提交任意 Map 批量新增或覆盖 key；医共体规范库密码单独做了加密保存和掩码显示。
+注册默认：
 
-当前实际用途主要包括：
+```text
+ROW_COUNT
+```
 
-- 医共体名称、编码和平台展示类参数；
-- 医共体规范库的连接信息、库名及数据集/字段/数据项表名；
-- 少量全局运行参数；
-- 老实现中的校验默认值和兼容开关。
+数据库没有该 Setting 行时，直接使用注册默认值；Flyway V1 不要求插入单例 Policy Row。
 
-旧实现的问题不是功能缺失，而是任意 key 可写、类型和范围校验分散、不同领域配置容易重复进入同一张表。
+完整解析：
 
-### 3.2 目标范围（技术规则已对齐）
+```text
+sync_task.validation_method_override
+→ standard_dataset.validation_method_override
+→ system_setting[validation.default_method]
+→ 注册默认 ROW_COUNT
+→ Dataset 合同能力强制
+```
 
-`system_setting` 继续进入 P0，但收敛为“已注册系统设置”的存储，不建设自由扩展的用户自定义键值中心：
+运行中 Execution 已保存启动 Validation Snapshot，因此修改全局默认只影响**后续新 Execution**，不热更新正在运行或历史 Execution；这不是 Task Version/“下一版本生效”机制。
 
-1. `setting_key` 是稳定主键；接口只允许读取和修改应用代码注册的已知 key，未知 key 明确拒绝。
-2. 表中可以继续使用文本值存储，但每个 key 的数据类型、是否敏感、默认值、允许为空、范围和格式由统一设置注册表定义，不能由各 Controller 自行解析。
-3. 已知布尔、整数、时长、枚举、URL、端口和数量参数在保存前执行统一类型与范围校验；读取到非法历史值时明确报错或进入迁移检查，不静默使用危险默认值。
-4. 保存 `revision` 或等效乐观锁字段，防止多个页面或用户相互覆盖设置。
-5. 医共体名称和编码继续保存在该表；一个部署只服务一个医共体，不再建立租户表。
-6. 医共体规范库连接属于页面可维护的系统配置，连接参数继续保存；密码只保存密文，查询时只返回掩码，掩码值提交表示“保持原值”。
-7. RabbitMQ 连接、应用数据库密码、JWT/加密主密钥和其他部署级 Secret 继续由部署配置或 Kubernetes Secret 提供，不进入 `system_setting`。
-8. 全局校验策略使用已经设计的 `global_validation_policy`，数据集和任务覆盖使用对应策略表；不再把同一策略重复保存为散落的 `validation_*` 键。
-9. 医疗字段转换合同、通用 JDBC 类型映射、数据源、Doris 和外部 API client 各有独立业务对象，不写入通用设置表。
-10. 设置变更写入已确认的成功/失败操作审计，并保存 key、旧值/新值的脱敏摘要和 revision；敏感值不进入审计。
-11. 会影响正在运行任务的执行类参数不能通过设置表热更新现有执行；治理类参数和执行类参数继续遵守已经确认的版本与下一批生效规则。
-12. 老库任意 key 不整体迁入新库；最终需要保留的设置由 `DB-002` 配置迁移清单显式转换。
+### 4.3 不进入 `system_setting` 的 Validation 旧配置
 
-### 3.3 目标表方向
+```text
+validation enabled/disabled
+row tolerance
+validation lookback
+auto revalidate
+fail_block
+override_mode
+```
 
-`system_setting` 的最小职责包括：
+这些能力已经从目标产品删除，不作为任意 Setting Key 恢复。
 
-- `setting_key`；
-- `setting_value`；
-- 说明；
-- `revision`；
-- 更新账号和更新时间。
+## 5. Alert
 
-值类型、敏感标识、默认值和校验规则优先由应用内统一设置注册表维护，避免数据库中的元数据与代码支持能力漂移。最终字段长度、空值、索引和加密格式在物理表字典复核时确定。
+P0 保留：
 
-该部分没有需要新增的业务选择，按现有产品基线和旧代码实际用途直接完成对齐。
+```text
+alert_channel
+alert_rule
+alert_event
+alert_delivery
+```
 
-## 4. 告警渠道、规则、事件和投递历史
+固定语义：
 
-### 4.1 老系统实际能力
+- Rule 命中产生一条 `alert_event`。
+- 每个目标 Channel 产生一条 `alert_delivery`。
+- Event 保存 Rule/Severity/Source/业务关联对象/Title/Summary/Time Snapshot。
+- Delivery 保存 Channel Snapshot、状态、汇总 Attempt Count、最后 Attempt、成功时间、脱敏 Error。
+- 一个 Channel 失败不影响其他 Channel。
+- 不建设确认、认领、处理人、工单、审批流程。
+- 不建设逐次投递明细表。
+- Webhook URL/Secret 和敏感 Response 不进入 Event/Audit。
+- Alert 实现优先级最低，但仍属于最终交付范围。
 
-老系统已经提供告警渠道和告警规则管理、规则启停、渠道测试、任务执行和校验结束后的规则评估、静默窗口以及 Webhook 失败重试。规则命中后直接向关联渠道发送；至少一个渠道成功时只更新规则的 `last_triggered_at`，发送失败主要写应用日志。
+## 6. External API
 
-老系统没有完整保存一次告警触发事实和各渠道发送结果，无法长期从数据库回答“何时触发、由哪个任务或校验触发、哪些渠道成功、哪些渠道失败以及失败原因”。
+详细合同以 `EXTERNAL_API_REVIEW.md` 为准。
 
-### 4.2 已确认业务规则
+当前支撑结论：
 
-P0 保留告警渠道、规则和通知功能，并保存最小告警历史：
+- 请求可批量，但内部固定拆成 Institution + Dataset 原子目标。
+- Task 已存在返回 `EXISTS`，不隐式修改当前 Task 配置。
+- 新 Task 直接插入 `sync_task`，不创建 Task Version。
+- `runAfterCreate` 只运行本次新建 Task；Execution 启动时固定快照。
+- Client Institution Scope 支持 `ALL/SELECTED`。
+- Client 不物理删除，只启停和 Reset Secret。
+- Secret 明文创建/重置时只展示一次；Reset 后旧值立即失效，不支持双 Key。
+- 外部写操作统一要求 `requestId`，按 `(client_id,request_id)` 幂等。
+- Timestamp Window ±5 分钟；Nonce 保留 1 小时。
+- `/api/v1/**` 使用独立 HMAC Security Chain。
+- P0 不做应用层 Rate Limit；通用 Traffic Protection 由 Nginx/Ingress/Gateway 提供。
 
-1. 每次告警规则实际命中时生成一条 `alert_event`。
-2. 同一告警事件向每个目标渠道发送时，各生成一条 `alert_delivery`。
-3. `alert_event` 保存规则和严重程度快照、告警来源、关联任务/执行/预检/校验标识、标题、摘要和触发时间；不依赖规则后续改名或删除解释历史。
-4. `alert_delivery` 保存事件、渠道和渠道名称快照、发送状态、汇总尝试次数、最后尝试时间、成功时间及脱敏错误摘要。
-5. 一个渠道发送失败不影响其他渠道继续发送；事件本身仍保留。
-6. 不建立告警确认、认领、处理人、处理状态流转、工单或审批流程。
-7. 不建立每次发送重试明细子表，不长期保存完整 Webhook 请求和响应载荷；详细过程写应用日志。
-8. 渠道 URL、签名密钥和响应中的敏感内容不得进入事件摘要、投递错误或操作审计。
-9. 告警功能在整个系统中的实现优先级最低：仍属于目标模型和最终交付范围，但排在数据同步、预检、校验、消息、外部 API 和基础运维能力之后实施。
-10. 告警历史的具体保留期和清理策略在物理表字典复核时结合实际数据规模确定，不预建复杂归档体系。
+最小对象：
 
-该模型只负责记录“规则命中事实”和“每个渠道的投递结果”，不把告警扩展为事件处置平台。
+```text
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
+```
 
-### 4.3 目标表方向
+## 7. Quartz JDBC JobStore
 
-| 表 | 最小职责 |
-| --- | --- |
-| `alert_channel` | 渠道配置、启停、Webhook、密钥密文、消息格式和测试结果。 |
-| `alert_rule` | 规则名称、启停、指标、条件、阈值、严重程度、作用范围、静默时间和关联渠道。 |
-| `alert_event` | 每次规则命中的不可变事实和关联业务对象快照。 |
-| `alert_delivery` | 每个事件到每个渠道的汇总发送结果。 |
+Quartz 只作为当前 Task 调度配置的**可重建运行投影**。
 
-最终字段类型、状态枚举、删除行为、唯一约束和索引在物理表字典复核时确定。
+唯一业务事实：
 
-## 5. 外部任务 API 与 Quartz
+```text
+sync_task.deleted_at IS NULL
+AND sync_task.schedule_enabled = true
+AND sync_task.schedule_mode != MANUAL
+AND sync_task.schedule_cron 有效
+```
 
-### 5.1 外部 API 业务边界
+明确不存在：
 
-外部 API 属于阶段 1 P0。业务端创建或发布数据集后，直接调用 `dfetl-service`，由 DFETL 根据医疗机构编码和数据集标识完成对应同步任务的规划与创建。
+```text
+sync_task_version
+sync_task.current_version_id
+“当前 Task Version Cron”
+```
 
-请求可以批量，但服务端最终统一拆分为“一个医疗机构 + 一个标准数据集”的原子目标。规划和确保任务存在支持 `targets=[{institutionCode,datasetCodes[]}]`，并兼容旧的单机构请求。任务已经存在时返回 `EXISTS`，不视为失败；`runAfterCreate` 只运行本次新建任务。
+固定行为：
 
-外部调用方不传数据源、Schema、源对象、目标表、同步策略、校验策略、消息策略或字段映射。详细接口合同见 `spec/EXTERNAL_API_REVIEW.md`。
+1. `schedule_enabled=false`、MANUAL、无有效 Cron 或 Task 逻辑删除时删除 Job/Trigger。
+2. 当前 `sync_task.schedule_cron/timezone` 变化时 reschedule。
+3. 启动/周期对账读取当前 `sync_task`，补建/更新/删除 Quartz Projection。
+4. Quartz 状态不得反向修改 Task。
+5. Misfire 固定 `DO_NOTHING`；错过不补跑。
+6. Task 已有活动 Execution 时跳过本次 Trigger，不排队、不追赶。
+7. JobDataMap 只保存 `taskId`。
+8. Trigger 后重新读取当前 Task，创建 `sync_execution`，并在创建时固定 Task/Route/Dataset/Validation/Message Snapshot。
+9. 真实执行并发由 `sync_execution` 数据库唯一约束保证。
+10. Quartz 官方表位于新独立 PostgreSQL `df_etl` Schema，显式 Table Prefix、独立 Pool、Clustered Mode。
+11. 老系统 Quartz Runtime 不迁移。
 
-### 5.2 外部 client、幂等和安全
+## 8. 当前支撑对象目标表
 
-1. client 机构授权支持 `ALL/SELECTED`，`SELECTED` 可显式关联一个或多个机构。
-2. client 只支持新增、编辑、启停和重置 secret，不提供物理删除；`client_id` 稳定且不可复用。
-3. secret 明文只在创建或重置时展示一次；重置后旧 secret 立即失效，不设计双密钥；重新启用沿用当前 secret。
-4. 任务创建、运行、删除和消息人工重发等外部写操作统一要求 `requestId`，按 `(client_id, request_id)` 幂等；规范化请求和结果记录长期保留。
-5. HMAC 时间窗口为前后 5 分钟；nonce 保留 1 小时并每小时清理。
-6. `/api/v1/**` 使用独立 HMAC 安全链，普通后台 JWT 不能绕过；GET 签名覆盖规范化 Query String。
-7. P0 不实现应用层限流，不建立限流窗口、配额、计数器或状态表；需要时由 Nginx、Ingress 或网关提供部署层流量防护。
-8. 目标对象固定为 `external_api_client`、`external_api_client_institution`、`external_api_request_nonce` 和 `external_api_request`。
+```text
+app_user
+audit_log
+system_setting
 
-### 5.3 Quartz JDBC JobStore
+alert_channel
+alert_rule
+alert_event
+alert_delivery
 
-Quartz JDBC JobStore 只作为可重建调度运行投影：
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
 
-1. 任务未删除、`schedule_enabled=true` 且当前任务版本存在有效 Cron，是唯一的调度业务事实。
-2. 任务暂停、无 Cron 或逻辑删除时直接删除 Quartz Job/Trigger，不使用 Quartz `PAUSED` 保存第二套状态。
-3. 服务启动和周期对账负责补建、更新和清理投影，不反向修改业务任务，也不建立调度对账历史表。
-4. misfire 固定 `DO_NOTHING`；错过不补跑，已有活动执行时直接跳过。
-5. JobDataMap 只保存 `taskId`，触发后重新读取当前任务和版本并进入统一执行入口。
-6. 真实执行并发由 `sync_execution` 的数据库部分唯一约束保证。
-7. Quartz 标准表位于新独立 PostgreSQL 数据库的 `df_etl` Schema，使用显式表前缀、独立连接池和 cluster 模式；老 Quartz 运行态不迁移。
+Quartz 官方 PostgreSQL qrtz_* 表
+```
 
-详细设计见 `spec/QUARTZ_JOBSTORE_REVIEW.md`。
+不建立：
 
-## 6. 当前已确认与待完成
+```text
+RBAC 表
+global_validation_policy
+dataset_validation_policy
+task_validation_policy
+Scheduler Reconciliation 表
+External API Rate Limit 表
+Secret History/Dual Key 表
+Alert Workflow/Approval 表
+```
 
-### 6.1 已确认
+## 9. 当前状态
 
-- 本地账号功能进入 P0。
-- 支持一个或多个管理员账号。
-- 使用规模按 1～3 人设计，不建设复杂权限系统。
-- 所有本地账号权限相同。
-- 不建立角色、权限及其关联表。
-- 不建设角色和权限管理页面。
-- 登录、退出、Token 轮换、修改密码和个人中心继续保留。
-- 提供简单账号管理页面：列表、新增、启停、重置密码。
-- 账号只允许停用，不提供物理删除。
-- 当前账号不能停用自己，最后一个启用账号不能停用。
-- 停用或重置密码后撤销该账号已有 Refresh Token。
-- 业务写操作同时记录成功和失败。
-- 操作审计区分本地用户、外部 client、调度器和系统任务，并保存来源、结果、目标和脱敏摘要。
-- 普通查询不默认审计；认证失败进入安全日志。
-- 操作审计继续记录具体登录账号。
-- 初始化 SQL 不写固定管理员密码。
-- `system_setting` 继续保留，但只允许已注册 key，不允许前端任意创建配置项。
-- 已知设置统一进行类型、范围、敏感和 revision 校验。
-- 医共体规范库密码加密保存并掩码返回；部署级 Secret 不进入通用设置表。
-- 全局校验策略和其他独立领域配置不再重复保存为通用键值。
-- 每次规则命中保存一条 `alert_event`，每个目标渠道保存一条 `alert_delivery`。
-- 告警只保存触发事实和投递结果，不建设确认、认领或处理流程。
-- 告警在实施顺序中优先级最低，但仍属于目标模型和最终交付范围。
-- 外部 API 的批量结构、原子任务语义、机构授权、幂等、client/secret 生命周期、nonce 清理和无应用层限流均已确认。
-- Quartz JDBC JobStore 只作为可重建运行投影，业务任务及当前版本是唯一事实。
+- [x] 简单同权限管理员业务范围确认。
+- [x] Audit 成功/失败双向记录确认。
+- [x] `system_setting` 收敛为 Registered Setting。
+- [x] Validation 全局默认改为 `validation.default_method`，不使用 Policy Table。
+- [x] Alert 最小 Event/Delivery History 确认。
+- [x] External API 业务边界、Auth、Idempotency、Client Lifecycle 确认。
+- [x] External API 已去除 Task Version 当前语义。
+- [x] Quartz 已改为直接读取当前 `sync_task`，不读取 Task Version。
+- [ ] 最终全量 P0 表/FK/Unique/Enum/Delete Matrix 统一核对。
+- [ ] 阶段 1 Final Review。
 
-### 6.2 尚待技术复核
-
-P0 支撑对象的业务范围已经全部确认。后续不再讨论是否保留或扩大功能，只完成物理字典和实现映射：
-
-- `app_user`、`audit_log`、`system_setting`；
-- `alert_channel`、`alert_rule`、`alert_event`、`alert_delivery`；
-- `external_api_client`、`external_api_client_institution`、`external_api_request_nonce`、`external_api_request`；
-- Quartz 官方 PostgreSQL JDBC JobStore 标准表和索引。
-
-需要直接完成的技术内容包括字段类型、长度、空值、默认值、枚举 CHECK、外键删除行为、唯一约束、查询索引、事务边界和敏感字段加密。
-
-## 7. 当前任务状态
-
-P0 支撑对象业务范围 Review 已完成：
-
-- [x] 支持一个或多个同权限管理员账号，不建设 RBAC；
-- [x] 提供简单账号管理，账号只停用不物理删除；
-- [x] 业务写操作同时审计成功和失败；
-- [x] `system_setting` 只保存已注册设置并统一校验；
-- [x] 告警保存最小事件和投递历史，实施优先级最低；
-- [x] 外部 API 批量/原子任务、机构授权、client/secret 生命周期、写操作幂等、nonce 清理和无应用层限流均已确认；
-- [x] Quartz JDBC JobStore 只作为可重建运行投影，业务任务是唯一事实；
-- [ ] 完成全部支撑对象物理表字典；
-- [ ] 将最终结果合并回 `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TARGET_METADATA_MODEL.md` 和 `TASKS.md` 并执行阶段 1 一致性检查。
-
-本文件只记录阶段 1 Review 结论，不修改当前实体、Repository、数据库结构或 Flyway 文件。
+本文件只记录阶段 1 Review 结论，不创建 Flyway、不修改当前数据库。
