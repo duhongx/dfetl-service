@@ -60,7 +60,7 @@ export const loadBatchSeed: LoadBatchRow[] = [
 ];
 
 export const messageOutboxSeed: MessageOutboxRow[] = [
-  { id: "OUT-001", eventId: "EVT-20260817-001", executionId: "EXE-260817-002", taskId: "TASK-1001", publishScope: "INCREMENTAL", status: "PUBLISHED", routingKey: "YL.HUANZHEJBXX", attemptCount: 1, maxAttempts: 5, publishedAt: "2026-08-17 08:18:22", lastError: "" },
+  { id: "OUT-001", eventId: "EVT-20260817-001", executionId: "EXE-260817-002", taskId: "TASK-1001", publishScope: "INCREMENTAL", status: "PUBLISHED", routingKey: "YL_HUANZHEJBXX", attemptCount: 1, maxAttempts: 5, publishedAt: "2026-08-17 08:18:22", lastError: "" },
 ];
 
 export const deleteSnapshotSeed: DeleteSnapshotRow[] = [
