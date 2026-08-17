@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：技术模型 Review 已通过；等待前端 100% 对齐与 G-001 最终签字  
+> 当前阶段：技术模型 Review 已通过；P-002 已确认；等待 P-003、前端 100% 对齐与 G-001 最终签字  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Final Review：`spec/PHASE1_FINAL_REVIEW.md`
@@ -51,15 +51,22 @@ Institution + Business Catalog
 
 六项技术矩阵均已冻结，不再因普通实现问题继续新增 Table/FK/Unique/Status/Delete/Snapshot 设计问题。
 
-## 4. 当前唯一阻塞
+## 4. 当前阻塞项
 
 G-001 最终签字前必须完成：
 
 ```text
 Frontend 与已冻结 Spec 100% 对齐
-+ P-002 管理员账号管理入口收口
 + P-003 Help/Docs 入口收口
 ```
+
+P-002 已确认：
+
+```text
+系统设置 → 账号管理
+```
+
+但账号管理页面仍必须在前端验收中实际落页。
 
 前端仍需完成：
 
@@ -69,11 +76,12 @@ Frontend 与已冻结 Spec 100% 对齐
 - [ ] Task Current Config UI，不出现 Task Version。
 - [ ] Precheck / Validation / Operations。
 - [ ] Alert / Log / Audit / System Settings。
+- [ ] 账号管理页面实际位于 `系统设置 → 账号管理`。
 - [ ] 所有菜单真实 URL。
 - [ ] lint / build。
 - [ ] 逐页原型、状态、空态、错误态、危险确认验收。
-- [ ] P-002。
-- [ ] P-003。
+- [x] P-002 产品入口决策。
+- [ ] P-003 产品入口决策。
 
 ## 5. 不阻塞技术模型冻结的 Pending Decisions
 
@@ -94,7 +102,7 @@ P-007 GraalVM Native Image           → 暂缓
 G-001 = PENDING_FINAL_SIGNOFF
 ```
 
-只有前端收口完成后，用户明确确认：
+只有 P-003 与前端收口完成后，用户明确确认：
 
 ```text
 目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
