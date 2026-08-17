@@ -2,7 +2,7 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 分支：`main`  
-> 状态：P0 PostgreSQL 表清单 + FK Matrix 已冻结；前端优先  
+> 状态：P0 PostgreSQL 表清单 + FK Matrix + Unique Matrix 已冻结；前端优先  
 > 最近更新：2026-08-17  
 > 产品基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`
@@ -45,7 +45,8 @@ Spec 技术一致性逐项收口
 ### Dataset
 
 - [x] 只从规范库人工同步。
-- [x] 定义变化生成不可变 Dataset Version。
+- [x] 定义内容使用不可变 Dataset Version。
+- [x] 相同 `definition_hash` 命中历史 Version 时复用旧 Version，不创建重复内容 Version。
 - [x] Field Contract 服务 DDL/Reader/Precheck/Checksum。
 - [x] Dataset Validation Override 直接保存在 `standard_dataset`。
 - [x] Message Policy 只在 Dataset 级。
@@ -55,6 +56,7 @@ Spec 技术一致性逐项收口
 - [x] 单机构 Route。
 - [x] 一 Institution + Dataset 一条未删除 Route。
 - [x] Route Version 不可变。
+- [x] 相同 `contract_hash` 命中历史 Route Version 时复用旧 Version。
 - [x] Route/Route Version/Source 机构一致性使用复合 FK。
 - [x] Route Current Version 使用同父 Deferred FK。
 - [x] `route_field_resolution` 使用 `dataset_version_id + standard_field_id`，不重复保存 `field_code`。
@@ -94,8 +96,6 @@ V1 创建                50
 
 权威文档：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`。
 
-已确认原则：
-
 ```text
 最强复合 FK
 历史 RESTRICT
@@ -105,35 +105,60 @@ V1 创建                50
 FK 子列具备索引
 ```
 
-已完成：
-
 - [x] Route → Current Route Version 同父 Deferred FK。
 - [x] Route Version → Route Identity 复合 FK。
-- [x] Route Version 四元身份父键。
 - [x] Field Resolution Dataset Version/Standard Field 闭环。
-- [x] Task 只保留四元 Route Version FK。
+- [x] Task 四元 Route Version FK。
 - [x] Watermark/Validation → 同 Task Execution。
 - [x] External Request → Execution。
 - [x] Execution → Outbox 四元身份。
 - [x] Alert/External API 支撑 FK。
-- [x] 普通审计 User SET NULL / 运行责任 User RESTRICT。
-- [x] 删除被强复合 FK 完全覆盖的重复单列 FK。
 
-## 4. 阶段 1 技术一致性 Review 顺序
+## 4. P0 Business / Concurrency Unique Matrix：完成
+
+权威文档：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`。
+
+唯一性分类：
+
+```text
+Business Unique
+Concurrency / Safety Partial Unique
+FK Support Unique
+```
+
+确认结论：
+
+- [x] 稳定 Code/ID、父内 Version No、不可变内容 Hash、业务关系 Pair 使用 Business Unique。
+- [x] FK Support Unique 不重复算业务唯一。
+- [x] Dataset/Route 相同 Hash 复用历史不可变 Version；Audit 记录再次保存动作。
+- [x] Current Route：Institution + Dataset 未删除唯一。
+- [x] Current Task：Institution + Dataset 未删除唯一。
+- [x] Active Execution per Task Partial Unique。
+- [x] Active Precheck per Route Partial Unique。
+- [x] Active Independent Validation per Task Partial Unique。
+- [x] Active Delete Snapshot per Task Partial Unique。
+- [x] 一个 Execution 最多一个 SYNC_GATE 和一个 Message Outbox。
+- [x] 一个 Delete Candidate 最多一个 Delete Reconciliation。
+- [x] External Client 只保证 `client_id` 唯一；`client_name` 可重复。
+- [x] Alert Channel/Rule 因无独立 Code，Name 继续大小写不敏感唯一。
+- [x] Delete Apply 使用单一 `uk_delete_apply_effective`，覆盖 PENDING/RUNNING/SUCCEEDED。
+- [x] Sync Execution 与 Independent Validation 跨表互斥不新增 Lock/Slot 表。
+
+## 5. 阶段 1 技术一致性 Review 顺序
 
 严格一次讨论一个：
 
 1. [x] P0 PostgreSQL 最终表清单 + 数量。
 2. [x] 全量 FK Matrix。
-3. [ ] **Business / Concurrency Unique Matrix。**
-4. [ ] Status / Enum / CHECK Matrix。
+3. [x] Business / Concurrency Unique Matrix。
+4. [ ] **Status / Enum / CHECK Matrix。**
 5. [ ] Delete Behavior Matrix。
 6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
-下一项只讨论第 3 项。
+下一项只讨论第 4 项。
 
-## 5. 当前最高开发优先级：前端 100%
+## 6. 当前最高开发优先级：前端 100%
 
 ### Navigation
 
@@ -177,7 +202,7 @@ FK 子列具备索引
 - [ ] 所有菜单真实 URL。
 - [ ] 逐页原型、状态、空态、错误态、危险确认核对。
 
-## 6. 前端之后
+## 7. 前端之后
 
 1. API Contract；
 2. Flyway V1；
@@ -188,12 +213,12 @@ FK 子列具备索引
 7. 多实例与大批次可靠性；
 8. Audit/Alert/生产验收。
 
-## 7. 阶段 1 最终签字门槛
+## 8. 阶段 1 最终签字门槛
 
 - [x] Active Spec 业务模型无 Business System Instance/Multi-Institution Route/Task Version/Validation Policy 残留。
 - [x] PostgreSQL/Quartz 表清单和数量冻结。
 - [x] FK Matrix 完成。
-- [ ] Unique Matrix 完成。
+- [x] Unique Matrix 完成。
 - [ ] Status/CHECK Matrix 完成。
 - [ ] Delete Behavior Matrix 完成。
 - [ ] Snapshot 最小充分性完成。
