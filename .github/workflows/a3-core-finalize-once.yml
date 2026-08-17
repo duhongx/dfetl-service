@@ -27,8 +27,12 @@ jobs:
           python scripts/a3_patch_precheck_monitor.py
           python scripts/a3_patch_validation.py
 
-      - name: Show generated source around parser error
-        run: nl -ba web/app/etl/app-shell-final.tsx | sed -n '318,336p'
+      - name: Upload generated source for diagnosis
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-a3-source
+          path: web/app/etl/app-shell-final.tsx
+          retention-days: 1
 
       - name: Install dependencies
         working-directory: web
