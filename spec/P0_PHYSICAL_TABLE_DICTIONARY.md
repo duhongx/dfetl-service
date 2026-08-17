@@ -1,10 +1,11 @@
 # P0 物理表字典总索引
 
-> 状态：阶段 1 PostgreSQL Table + FK + Unique + Status/CHECK + Delete + Snapshot Matrix 已冻结  
+> 状态：P0 技术模型 Review 已通过；Phase 1 总体等待前端验收与 G-001 最终签字  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`  
-> 限制：阶段 1 最终签字前不得创建 `V1__baseline.sql`。
+> Final Review：`spec/PHASE1_FINAL_REVIEW.md`  
+> 限制：用户最终签字前不得创建/固化 `V1__baseline.sql`。
 
 ## 1. 权威物理文档
 
@@ -23,10 +24,11 @@
 | Status / Enum / CHECK Matrix | `P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md` |
 | Delete Behavior Matrix | `P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md` |
 | Snapshot 最小充分性 | `P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md` |
+| Phase 1 Final Gate | `PHASE1_FINAL_REVIEW.md` |
 | External API | `EXTERNAL_API_REVIEW.md` |
 | Quartz | `QUARTZ_JOBSTORE_REVIEW.md` |
 
-冲突时以用户最新确认及日期更晚的专项 Matrix/Review 为准；Snapshot 字段/NULL/Secret 边界以 `P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md` 为最终 V1 基线。
+冲突时以用户最新确认及日期更晚的专项 Matrix/Review 为准。
 
 ## 2. PostgreSQL 表数量
 
@@ -95,45 +97,22 @@ COMPLETED + result = 检查/分析技术完成，结果另行表达
 - `validation_run.validation_source` 额外允许 `FIXED`，只用于 Delete Reconciliation。
 - Outbox/Delete Apply/Audit/Alert/External Request 终态组合固定。
 
-完整见 `P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`；Snapshot 专属 NULL/Checksum Protocol CHECK 以 Snapshot Review 和最新 Execution/Validation 字典为准。
+完整见 `P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`。
 
 ## 7. Delete Behavior 原则
 
-### Resource
-
-```text
-institution/business_catalog/source_datasource/target_datasource
-→ 无引用可物理删除
-→ 有引用只能停用
-→ 不增加 deleted_at
-```
-
-### Definition History
-
-```text
-standard_dataset → VOID
-field_conversion_contract → RETIRED
-Dataset Version / Field / Contract History → 永久保留
-```
-
-### Route / Task / Watermark
-
-```text
-collection_route → LOGICAL_DELETE
-sync_task        → LOGICAL_DELETE
-```
-
-Watermark 仅显式 Clear 删除当前 Row，Task 删除不级联。
-
-### Runtime / Support
-
-Execution/Batch/Precheck/Validation/Outbox/Delete/Audit/External Request/Alert History 无普通 DELETE/自动 PostgreSQL retention；Nonce 1 小时 TTL；Doris RAW/Snapshot/Diff 按生命周期清理；Quartz 为可重建投影。
+- Resource：无引用可物理删除，有引用只能停用，不增加逻辑删除；
+- Dataset/Version/Field/Contract：永久定义历史，通过 VOID/RETIRED 表达失效；
+- Route/Task：逻辑删除；
+- Watermark：Task 删除不级联，仅显式 Clear 删除当前 Row；
+- Runtime/Audit/External Request/Alert History：无普通 DELETE/自动 PostgreSQL retention；
+- External Nonce：1 小时 TTL；
+- Doris RAW/Snapshot/Diff：按生命周期清理，PostgreSQL Run 保留；
+- Quartz：可重建投影。
 
 完整见 `P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md`。
 
 ## 8. Snapshot 最小充分性原则
-
-统一：
 
 ```text
 不可变定义只引用
@@ -143,72 +122,25 @@ Secret 永不快照
 
 ### Execution
 
-不可变定义只保存 ID/FK：
-
-```text
-dataset_version_id
-route_version_id
-```
-
-不复制 Definition Hash、字段列表、Route/Field Contract JSON。
-
-实际可变运行事实保存：
-
-```text
-Task 实际执行参数
-operation/trigger/scope/range
-最终 Validation Resolution
-message_policy_snapshot
-source_runtime_snapshot
-target_runtime_snapshot
-```
-
-新增：
-
-```text
-source_runtime_snapshot jsonb NOT NULL
-target_runtime_snapshot jsonb NOT NULL
-```
-
-两者只保存非 Secret Endpoint/Revision/运行连接事实。
-
-删除：
-
-```text
-precheck_fact_snapshot
-```
-
-Checksum Protocol：仅 `ROW_COUNT_CHECKSUM` 非空。
+- `dataset_version_id/route_version_id` 只引用永久不可变定义；
+- 保存实际 Task 执行参数、运行原因/范围、最终 Validation、Message Policy；
+- 新增非 Secret `source_runtime_snapshot/target_runtime_snapshot`；
+- 删除 `precheck_fact_snapshot`；
+- Checksum Protocol 仅 `ROW_COUNT_CHECKSUM` 非空。
 
 ### Validation
 
 ```text
-SYNC_GATE / MANUAL_RECHECK
-→ context_snapshot/range_snapshot = NULL
-→ 唯一上下文来自父 Execution
-
-普通独立 Validation
-→ context_snapshot/range_snapshot 非空
-→ 最小 Context = routeVersionId + Source/Target Runtime Snapshot
-
-DELETE_RECONCILIATION
-→ context_snapshot/range_snapshot = NULL
-→ 唯一上下文来自 baseline/current Snapshot Run FK
+SYNC_GATE / MANUAL_RECHECK → 父 Execution 是唯一 Context
+普通独立 Validation       → 最小 Context/Range
+DELETE_RECONCILIATION      → Snapshot Run FK 是唯一 Context
 ```
 
 ### Outbox
 
-Outbox 保留显式 Message Policy Snapshot 和最小 `range_snapshot`，但 Range JSON 不重复：
+保留显式 Message Policy Snapshot + 最小 `range_snapshot`，不重复显式身份/`operationType`，不复制 Target Runtime Endpoint；人工重发读取当前 Doris。
 
-```text
-executionId/taskId/datasetId/institutionId/operationType
-```
-
-不复制 Execution Target Runtime Endpoint；人工重发读取当前 Doris。
-
-### Secret
-
-Runtime/Validation/Outbox Snapshot 禁止保存 DB/RabbitMQ/API/Webhook/JWT/Master Key/Authorization/HMAC 等 Secret。
+所有 Runtime/Validation/Outbox Snapshot 禁止 DB/RabbitMQ/API/Webhook/JWT/Master Key/Authorization/HMAC Secret。
 
 完整见 `P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md`。
 
@@ -242,19 +174,31 @@ _dfetl_delete_diff
 
 Doris 大数据生命周期不改变 PostgreSQL 39+11 口径。
 
-## 11. 阶段 1 当前状态
+## 11. Phase 1 Final Review 状态
 
-已完成：
+`spec/PHASE1_FINAL_REVIEW.md` 已完成。
 
-- [x] PostgreSQL / Quartz 表清单与数量。
-- [x] FK Matrix。
-- [x] Business / Concurrency Unique Matrix。
-- [x] Status / Enum / CHECK Matrix。
-- [x] Delete Behavior Matrix。
-- [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+```text
+TECHNICAL_MODEL_REVIEW = PASS
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
+DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
+```
 
-下一项：
+技术模型已冻结，不再继续新增 Table/FK/Unique/Status/Delete/Snapshot 设计问题。
 
-- [ ] **`PHASE1_FINAL_REVIEW.md`。**
+当前只剩：
 
-前端产品模型仍优先完成；阶段 1 最终 Review 和用户明确签字后，才能进入 Flyway V1/Java 后端实施。
+```text
+Frontend 与 Spec 100% 对齐
++ P-002
++ P-003
++ G-001 用户最终签字
+```
+
+在用户明确确认：
+
+```text
+目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
+```
+
+之前，不得创建/固化 Flyway V1，也不得按最终模型推进 Java 后端实施。
