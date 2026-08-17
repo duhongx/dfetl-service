@@ -1,37 +1,40 @@
 # 外部任务 API Review
 
-> 状态：阶段 1 P0 业务范围、接口语义和支撑对象生命周期 Review 已完成；物理表字典尚待复核  
-> 日期：2026-08-14  
+> 状态：阶段 1 P0 业务范围和接口语义已确认；已按当前 Task 模型收口  
+> 首次 Review：2026-08-14  
+> 最近收口：2026-08-17  
 > 老系统代码基线：`duhongx/datax-lite-jdk21@175a15ff6d7f1f3b258a0422420ea672610933a4`  
-> 新系统业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> Task 模型：`spec/P0_MUTABLE_TASK_MODEL_REVIEW.md`  
 > 目标模型：`spec/TARGET_METADATA_MODEL.md`
 
 ## 1. 产品目的
 
-外部任务 API 属于阶段 1 P0。业务端创建或发布数据集后，可以直接调用 `dfetl-service` 完成相应同步任务的规划和创建，避免维护人员再到 DFETL 管理端重复建立同一批任务。
+外部任务 API 属于 P0。业务端创建或发布自身业务定义后，可以调用 `dfetl-service` 规划并确保对应同步 Task 存在，避免实施人员重复在管理端创建同一批 Task。
 
-该接口不是业务数据上传接口，也不是高频数据采集通道。业务端只传递机构和数据集身份；真实数据读取、Doris 写入、校验、水位推进和消息发送仍由 DFETL 后台同步任务完成。
+该 API 不是业务数据上传接口，也不是高频采集通道。调用方只传机构和 Dataset 身份；Source、Route、Doris、执行、Validation、Watermark 和 Message 仍由 DFETL 内部模型负责。
 
-## 2. 不变的内部任务模型
+## 2. 内部 Task 模型
 
-无论外部请求采用单条还是批量形式，服务端最终都展开为若干个原子目标：
+所有外部请求最终展开为原子目标：
 
 ```text
-一个医疗机构 + 一个标准数据集
+一个医疗机构 + 一个标准 Dataset
 ```
 
-每个原子目标最多对应一个未删除同步任务。批量请求只是接口层便利形式，不改变核心任务模型：
+固定不变量：
 
-- 一个同步任务只属于一个医疗机构和一个标准数据集；
-- 同一医疗机构、同一数据集只能存在一个未删除任务；
-- 每个任务独立引用采集链路、任务版本、执行、水位、校验和消息上下文；
-- 任务创建最终由数据库业务唯一约束和新任务领域服务保证。
+- 一个 `sync_task` 只属于一家机构和一个 Dataset。
+- 同一机构 + Dataset 最多一个未删除 Task。
+- Task 固定身份为 `institution_id + dataset_id`。
+- Task 当前配置直接保存在 `sync_task`，包括 `dataset_version_id/route_version_id`、读取、写入、调度和 Task 级 Validation Override。
+- 不建立 `sync_task_version`，也没有 `task_version_id`。
+- 已启动运行的不可变性由 `sync_execution/validation_run` 启动快照保证。
+- 外部 API 只负责“确保 Task 存在”，不会修改已经存在 Task 的当前配置。
 
 ## 3. 请求合同
 
 ### 3.1 推荐批量结构
-
-规划和确保任务存在接口使用按机构分组的数据集清单：
 
 ```json
 {
@@ -39,16 +42,11 @@
   "targets": [
     {
       "institutionCode": "330106001",
-      "datasetCodes": [
-        "YL_HUANZHEJBXX",
-        "YL_KESHIXX"
-      ]
+      "datasetCodes": ["YL_HUANZHEJBXX", "YL_KESHIXX"]
     },
     {
       "institutionCode": "330106002",
-      "datasetCodes": [
-        "YL_HUANZHEJBXX"
-      ]
+      "datasetCodes": ["YL_HUANZHEJBXX"]
     }
   ],
   "runAfterCreate": false,
@@ -64,159 +62,216 @@
 330106002 + YL_HUANZHEJBXX
 ```
 
-按机构分组可以明确表达任意机构与数据集组合，不使用两个独立数组形成有歧义的笛卡尔积。
+不使用 `institutionCodes[] + datasetCodes[]` 两个独立数组形成有歧义笛卡尔积。
 
-### 3.2 兼容旧请求
-
-旧的“单机构 + 多数据集”请求继续作为兼容输入：
+### 3.2 兼容旧单机构请求
 
 ```json
 {
   "requestId": "BIZ-20260814-000001",
   "yiLiaoJgDm": "330106001",
-  "datasetCodes": [
-    "YL_HUANZHEJBXX",
-    "YL_KESHIXX"
-  ],
+  "datasetCodes": ["YL_HUANZHEJBXX", "YL_KESHIXX"],
   "runAfterCreate": false,
   "failurePolicy": "BEST_EFFORT"
 }
 ```
 
-接口适配层收到后立即转换为统一 `targets` 结构。规划、授权、幂等和任务创建只维护一套内部处理逻辑，不为兼容 DTO 复制业务服务。
+适配层立即转换为统一 `targets`；领域服务只维护一套处理逻辑。
 
-### 3.3 参数边界
+### 3.3 调用方参数边界
 
-核心业务参数只有：
+业务参数只有：
 
-- 医疗机构编码；
-- 标准数据集编码或编码清单。
+- Institution Code；
+- Dataset Code/列表。
 
-技术控制字段包括：
+控制参数：
 
-- `requestId`：调用方幂等请求号；
-- `runAfterCreate`：是否提交本次新建任务运行；
-- `failurePolicy`：批量失败策略。
+- `requestId`；
+- `runAfterCreate`；
+- `failurePolicy`。
 
-外部调用方不传递：
+调用方不传：
 
-- 数据源、Schema、源表或源视图；
-- 采集链路 ID；
-- Doris 表名；
-- 同步模式、写入模式和增量字段；
-- 校验方式；
-- 消息策略；
-- 字段映射或转换表达式；
-- 任务版本内部字段。
+```text
+sourceDatasourceId
+schema/table/view
+routeId/routeVersionId
+datasetVersionId
+Doris 表名
+taskKind/writeMode/incrementalField
+validation method/message policy
+field mapping/conversion expression
+Task 内部当前配置字段
+Execution Snapshot 字段
+```
 
-这些内容由 DFETL 根据当前机构、数据集、采集链路和已确认业务模型解析。
-
-请求以稳定的 `datasetCode` 定位数据集，不使用可能修改或重名的数据集展示名称。响应可以同时返回数据集名称。
+这些由 DFETL 根据当前 Institution、Dataset、单机构 Route 和已确认产品模型解析。
 
 ## 4. 统一展开和规范化
 
-服务端固定执行：
+服务端：
 
-1. 兼容 DTO 转换为统一 `targets`；
-2. 机构编码和数据集编码去除首尾空格并按大小写不敏感方式规范化；
-3. 展开为 `(institutionCode, datasetCode)` 原子目标；
-4. 对原子目标去重；
-5. 按稳定顺序排序，用于幂等 Hash 和稳定响应；
-6. 限制展开并去重后的原子目标总数，P0 默认最多 500 个；
-7. 每个原子目标独立执行机构、数据集、链路、任务唯一性和授权检查。
+1. 兼容 DTO 转换为 `targets`。
+2. Institution/Dataset Code 去首尾空格并按稳定规则规范化。
+3. 展开为 `(institutionCode,datasetCode)` 原子目标。
+4. 原子目标去重。
+5. 稳定排序用于幂等 Hash 和响应。
+6. P0 展开后总目标默认最多 500 个。
+7. 每个目标独立执行 Institution、Dataset、Route、Task 唯一性和 Client 授权检查。
 
-内部统一使用类似以下值对象：
+内部可使用：
 
 ```java
-record ExternalTaskTarget(
-    String institutionCode,
-    String datasetCode
-) {}
+record ExternalTaskTarget(String institutionCode, String datasetCode) {}
 ```
 
-接口层之后的领域服务不再关心原请求是单机构格式还是分组批量格式。
+## 5. “确保 Task 存在”语义
 
-## 5. “确保任务存在”语义
+目标语义：
 
-任务创建接口的实际业务语义是：
+> 确保每个“机构 + Dataset”已经存在一个未删除 `sync_task`。
 
-> 确保请求中的每个“机构 + 数据集”目标已经存在对应同步任务。
+### 5.1 Task 不存在
 
-因此：
-
-- 任务不存在且条件满足时创建任务和第一个不可变任务版本；
-- 任务已经存在时返回已有任务，不重复创建，也不把该原子目标视为失败；
-- 任务不存在但机构、数据集或链路条件不满足时返回明确阻断状态；
-- 并发请求由“未删除任务按机构和数据集唯一”的数据库约束最终收敛。
-
-原子目标状态包括：
-
-- `READY`：规划检查通过，可以创建；
-- `CREATED`：本次创建成功；
-- `EXISTS`：任务已经存在，目标已满足；
-- `BLOCKED`：当前不能创建；
-- `RUN_SUBMITTED`：本次新建任务已提交运行；
-- `RUN_FAILED`：任务创建成功，但提交运行失败。
-
-## 6. 批量失败策略
-
-### 6.1 `BEST_EFFORT`
-
-默认策略。每个原子目标独立处理：
-
-- 可创建目标正常创建；
-- 已存在目标返回 `EXISTS`；
-- 无权限、机构无效、数据集无效、缺少链路或其他前置条件不满足时返回 `BLOCKED`；
-- 其他目标不受影响。
-
-请求整体根据原子结果返回 `SUCCESS`、`PARTIAL_SUCCESS` 或 `BLOCKED`。
-
-### 6.2 `ALL_OR_NOTHING`
-
-先完整规划全部原子目标。存在以下任一阻断条件时，本次不创建任何新任务：
-
-- 机构不存在或停用；
-- 数据集不存在或已作废；
-- 没有可用采集链路；
-- 存在多条无法唯一确定的链路；
-- client 无权访问机构；
-- 其他任务创建前置条件不满足。
-
-已经存在的任务表示目标已满足，不阻断批次。
-
-`ALL_OR_NOTHING` 只保证任务创建事务的原子性，不承诺后续所有任务运行都成功。
-
-## 7. `runAfterCreate`
-
-`runAfterCreate=true` 时只提交本次新创建的任务运行，不运行请求前已经存在的任务。
+条件满足时：
 
 ```text
-A + D1：原任务已存在 -> EXISTS，不运行
-A + D2：本次创建     -> RUN_SUBMITTED
+解析 Institution
+→ 解析 ACTIVE Dataset + current Dataset Version
+→ 解析该 Institution + Dataset 唯一未删除 Route
+→ 读取/确认 current Route Version
+→ 校验 Route/Source/Target 和 Dataset 合同
+→ 从 Dataset/Global 默认生成初始 Task 当前配置
+→ 插入 sync_task
 ```
 
-需要运行已有任务时调用独立运行接口。运行提交发生在任务创建事务提交之后；不同任务的运行提交允许分别成功或失败。
+**不创建：**
 
-## 8. 接口批量范围
+```text
+sync_task_version
+第一个不可变 Task Version
+task_validation_policy
+```
 
-只有真正有批量价值的接口支持 `targets`：
+初始 Task Validation Override：
 
-- 任务创建前规划；
-- 确保/创建任务。
+```text
+sync_task.validation_method_override = NULL
+```
 
-以下接口保持单对象操作：
+### 5.2 Task 已存在
 
-- 查询任务：一个机构 + 一个数据集；
-- 运行任务：一个机构 + 一个数据集；
-- 删除任务：一个机构 + 一个数据集；
-- 消息发布状态查询：一个 `executionId`；
-- 消息人工重发：一个 `executionId`。
+返回 `EXISTS`：
 
-运行、删除和消息重发属于低频的具体对象操作，不增加批量状态机和批量删除语义。
+- 不重复创建；
+- 不切换 Route Version；
+- 不升级 Dataset Version；
+- 不修改读取/写入/调度/Validation 配置；
+- `runAfterCreate` 不运行该既有 Task。
 
-## 9. 响应合同
+已有 Task 的配置变更属于管理端对当前 Task 的显式编辑，不由“确保存在”接口隐式完成。
 
-响应必须按原子目标返回，不能只返回一个模糊批次结果：
+### 5.3 并发创建
+
+最终由：
+
+```text
+UNIQUE active (institution_id,dataset_id)
+```
+
+收敛。并发唯一冲突后重新查询并返回 `EXISTS`，不能制造两个业务 Task。
+
+## 6. 原子目标状态
+
+```text
+READY
+CREATED
+EXISTS
+BLOCKED
+RUN_SUBMITTED
+RUN_FAILED
+```
+
+典型阻断：
+
+```text
+INSTITUTION_NOT_FOUND / INSTITUTION_DISABLED
+DATASET_NOT_FOUND / DATASET_VOID
+ROUTE_NOT_FOUND / ROUTE_NOT_AVAILABLE
+CLIENT_INSTITUTION_FORBIDDEN
+TASK_CONFIGURATION_INVALID
+```
+
+错误码稳定；message 只用于人工理解。
+
+## 7. 批量失败策略
+
+### BEST_EFFORT
+
+每个原子目标独立处理：可创建继续、已有返回 EXISTS、阻断目标返回 BLOCKED，其他目标不受影响。
+
+整体结果：
+
+```text
+SUCCESS
+PARTIAL_SUCCESS
+BLOCKED
+```
+
+### ALL_OR_NOTHING
+
+先规划全部目标。任一目标存在业务阻断时，不创建任何新 Task。
+
+已存在 Task 表示目标已满足，不阻断批次。
+
+由于当前产品固定一家机构 + Dataset 只允许一条未删除 Route，因此不再存在“多条 Route 自动择一”的模型；Route 缺失或当前不可用直接 BLOCKED。
+
+`ALL_OR_NOTHING` 只保证 Task 创建事务原子性，不承诺后续运行全部成功。
+
+## 8. `runAfterCreate`
+
+`runAfterCreate=true` 只提交**本次新创建 Task**：
+
+```text
+A + D1：已有 → EXISTS，不运行
+A + D2：新建 → RUN_SUBMITTED
+```
+
+Task 创建事务提交后再提交运行。
+
+运行入口：
+
+```text
+taskId
+→ 读取/锁定当前 sync_task
+→ 创建 sync_execution
+→ 将本次 Task/Route/Dataset/Validation/Message 上下文固定到 Execution Snapshot
+→ 提交执行队列
+```
+
+不同新 Task 的运行提交允许分别成功或失败。
+
+## 9. 接口批量边界
+
+支持 `targets`：
+
+- Task 创建前规划；
+- 确保/创建 Task。
+
+保持单对象：
+
+- 查询 Task：Institution + Dataset；
+- 运行已有 Task：Institution + Dataset；
+- 删除 Task：Institution + Dataset；
+- Message 状态：Execution ID；
+- Message 人工重发：Execution ID。
+
+不新增批量运行/删除/重发状态机。
+
+## 10. 响应合同
+
+响应必须按原子目标返回，例如：
 
 ```json
 {
@@ -227,156 +282,134 @@ A + D2：本次创建     -> RUN_SUBMITTED
     "total": 3,
     "created": 1,
     "exists": 1,
-    "runSubmitted": 0,
     "blocked": 1,
+    "runSubmitted": 0,
     "runFailed": 0
   },
   "items": [
     {
       "institutionCode": "330106001",
       "datasetCode": "YL_HUANZHEJBXX",
-      "datasetName": "患者基本信息",
       "status": "EXISTS",
-      "taskId": 101,
-      "errorCode": null,
-      "message": "任务已经存在"
+      "taskId": 101
     },
     {
       "institutionCode": "330106001",
       "datasetCode": "YL_KESHIXX",
-      "datasetName": "科室信息",
       "status": "CREATED",
-      "taskId": 102,
-      "errorCode": null,
-      "message": "任务创建成功"
+      "taskId": 102
     },
     {
       "institutionCode": "330106002",
       "datasetCode": "YL_HUANZHEJBXX",
-      "datasetName": "患者基本信息",
       "status": "BLOCKED",
       "taskId": null,
-      "errorCode": "ROUTE_NOT_FOUND",
-      "message": "没有可用于该机构和数据集的采集链路"
+      "errorCode": "ROUTE_NOT_FOUND"
     }
   ]
 }
 ```
 
-错误码使用稳定受控枚举，错误信息用于人工理解，不作为调用方程序判断的唯一依据。
+## 11. 外部写操作统一幂等
 
-## 10. 所有写操作统一幂等
+只读接口不要求 `requestId`：
 
-以下只读接口不要求 `requestId`：
+- 规划；
+- Task 查询；
+- Message 状态查询。
 
-- 任务规划；
-- 任务查询；
-- 消息发布状态查询。
+写操作必须要求：
 
-以下写操作必须要求 `requestId`：
+- 确保/创建 Task；
+- 运行 Task；
+- 删除 Task；
+- 人工重发 Message。
 
-- 确保/创建任务；
-- 运行已有任务；
-- 删除任务；
-- 人工重发消息。
-
-幂等范围按调用方隔离：
+唯一范围：
 
 ```text
-UNIQUE(client_id, request_id)
+UNIQUE(client_id,request_id)
 ```
 
-请求 Hash 包含：
+`request_hash` 覆盖：
 
-- `operation_code`；
-- 展开、去重并排序后的机构 + 数据集原子目标，或单对象业务身份；
+- operation_code；
+- 规范化、展开、去重和排序后的目标；
 - `runAfterCreate`；
 - `failurePolicy`；
-- 该写操作其他影响结果的规范化参数。
+- 其他会改变结果的规范参数。
 
-分组顺序、数据集顺序和重复项不改变同一业务请求的 Hash。
+同一 Client + Request ID：
 
-同一 client 和 `requestId`：
+- 内容相同：返回第一次结果，`idempotentReplay=true`；
+- 操作或内容不同：`IDEMPOTENCY_CONFLICT`；
+- 需要再次真实执行：使用新 Request ID。
 
-- 操作和请求内容相同：返回第一次结果，`idempotentReplay=true`；
-- 用于不同操作或不同请求内容：返回 `IDEMPOTENCY_CONFLICT`；
-- 调用方需要再次真实执行同一业务动作时，必须使用新的 `requestId`。
+统一 `external_api_request` 承担幂等和接口处理摘要；领域操作继续进入 `audit_log`。
 
-不再分别维护单任务请求表、批量请求表和批量操作审计表。统一的 `external_api_request` 承担请求幂等和接口处理摘要，业务操作继续进入通用 `audit_log`。
+## 12. Client 机构授权
 
-## 11. 外部 client 机构授权
+支持：
 
-机构授权支持：
+```text
+ALL
+SELECTED
+```
 
-- `ALL`：允许当前医共体全部机构；
-- `SELECTED`：通过 `external_api_client_institution` 显式关联一个或多个允许机构。
+`SELECTED` 通过 `external_api_client_institution` 显式关联多家机构。
 
-该设计同时支持：
+服务端逐原子目标检查：
 
-- 医共体统一业务端操作全部机构；
-- 一家医院只操作本机构；
-- 一套业务系统操作指定的多家机构。
+- BEST_EFFORT：无权目标 `BLOCKED + INSTITUTION_FORBIDDEN`；
+- ALL_OR_NOTHING：任一无权则不创建任何新 Task。
 
-服务端在展开原子目标后逐项检查授权：
+P0 不增加操作权限矩阵，机构范围是唯一 Client 业务授权边界。
 
-- `BEST_EFFORT`：无权目标返回 `BLOCKED + INSTITUTION_FORBIDDEN`，其他目标继续；
-- `ALL_OR_NOTHING`：任一目标无权时，本批次不创建任何新任务。
+通过 Execution ID 查询/重发 Message 时，先解析 Execution 所属 Task/Institution，再执行同一授权检查。
 
-P0 不增加操作权限矩阵。所有启用 client 使用同一套已开放外部任务 API，机构范围是唯一的 client 业务授权边界。
+## 13. External Client 生命周期
 
-通过 `executionId` 查询消息状态或人工重发时，服务端必须先解析执行所属任务和机构，再执行同一机构授权校验。
+P0 提供：
 
-## 12. external client 生命周期
+- 新增；
+- 编辑名称/说明；
+- 启停；
+- 修改机构授权；
+- 重置 Secret；
+- 筛选启用/停用 Client。
 
-### 12.1 管理能力
+不物理删除，不增加 `deleted_at`。
 
-P0 保留：
+Secret：
 
-- 新增 client；
-- 编辑 client 名称、说明、启停状态和机构授权范围；
-- 重置 secret；
-- 查看启用和停用 client。
+- 创建/重置时明文只展示一次；
+- 平时只返回掩码；
+- 存储密文；
+- 重置后旧 Secret 立即失效；
+- 不支持双 Secret 并行；
+- 不建立 Secret 历史/版本；
+- 不自动过期；
+- 无中断换密钥可新建第二 Client，切换后停用旧 Client。
 
-### 12.2 不提供物理删除
-
-external client 不提供物理删除功能：
-
-1. 撤销访问统一使用 `enabled=false`；
-2. 停用后立即拒绝新的 HMAC 请求；
-3. 授权关系、nonce、幂等请求和操作审计历史继续保留，不因停用而删除；
-4. 停用 client 可以重新启用；
-5. `client_id` 是稳定、唯一、不可复用的调用方身份；
-6. 不增加 `deleted_at` 或“已删除/已恢复”状态；
-7. 管理页面默认可只展示启用 client，并允许筛选查看停用 client。
-
-### 12.3 secret 规则
-
-- 创建 client 和重置 secret 时，明文只展示一次；
-- 平时只显示掩码，不提供再次读取明文的接口；
-- secret 只保存密文；
-- 重置后旧 secret 立即失效；
-- 不支持新旧两个 secret 并行使用，不建立密钥版本表和过渡截止时间；
-- 停用后重新启用默认继续使用当前 secret，也允许管理员先重置再启用；
-- secret 不设置自动过期时间；
-- 确需无中断换密钥时，新建另一个 client，调用方切换后停用旧 client。
-
-## 13. HMAC、nonce 和安全边界
+## 14. HMAC、Nonce 和安全边界
 
 继续使用：
 
-- HMAC-SHA256；
-- timestamp 时间窗口；
-- nonce 防重放；
-- 常量时间签名比较；
-- client 启用/停用检查；
-- secret 加密保存；
-- 独立 OpenAPI 分组；
-- 外部写操作成功/失败审计；
-- 认证失败安全日志。
+```text
+HMAC-SHA256
+timestamp ±5分钟
+nonce 防重放
+constant-time compare
+Client enabled 检查
+Secret 加密保存
+独立 OpenAPI 分组
+写操作成功/失败审计
+认证失败安全日志
+```
 
-外部 `/api/v1/**` 必须经过专用 HMAC 安全链，不能被普通后台 JWT 绕过。
+外部 `/api/v1/**` 使用专用 HMAC Security Chain，不能被后台 JWT 绕过。
 
-签名合同覆盖：
+签名覆盖：
 
 ```text
 HTTP Method
@@ -387,102 +420,114 @@ Nonce
 Body SHA-256
 ```
 
-固定时间规则：
+Nonce：
 
-- timestamp 允许服务器时间前后 5 分钟；
-- nonce 唯一约束为 `(client_id, nonce)`；
-- 只有完整签名校验通过后才保存 nonce；
-- nonce 保留 1 小时；
-- 每小时清理过期 nonce；
-- nonce 清理失败只告警，不影响正常 API 认证；
-- nonce 不承担长期审计，长期追溯由 `external_api_request` 和 `audit_log` 完成。
+- `UNIQUE(client_id,nonce)`；
+- 完整签名成功后才写入；
+- 保留 1 小时；
+- 每小时清理；
+- 清理失败只告警；
+- 长期追溯依赖 `external_api_request + audit_log`。
 
-P0 不实现应用层 client 限流，不建立限流窗口、配额、计数器或限流状态表，也不为了限流引入 Redis 或 PostgreSQL 计数器。部署层确需通用流量防护时，由 Nginx、Ingress 或网关处理。
+P0 不做应用层限流，不建设 Redis/PostgreSQL 配额计数状态；通用流量防护由 Nginx/Ingress/网关承担。
 
-## 14. 外部请求记录
+## 15. `external_api_request`
 
-`external_api_request` 保存：
+保存：
 
-- `client_id`；
-- `request_id`；
-- `operation_code`；
-- `request_hash`；
-- 处理状态；
-- 规范化请求 JSONB；
-- 响应结果 JSONB；
-- 错误码和脱敏错误摘要；
-- 创建、开始和完成时间。
+```text
+client_id
+request_id
+operation_code
+request_hash
+status
+normalized_request jsonb
+response_result jsonb
+error_code/error_message
+created_at/started_at/completed_at
+```
 
 不保存：
 
-- HMAC 签名原文；
-- secret；
-- 完整认证 Header；
-- 数据库密码和其他敏感凭据。
+```text
+HMAC signature
+Secret
+完整认证 Header
+数据库密码/其他凭据
+```
 
-外部 API 调用频率很低，P0 不自动清理 `external_api_request`：
+P0 长期保留该表：历史 Request ID 持续幂等并支持业务追溯。
 
-- 历史 `requestId` 持续保持幂等；
-- 可以追溯业务端曾经发起的任务操作；
-- 不设计请求号复用、归档或清理后的幂等失效规则。
+## 16. 最小持久化对象
 
-## 15. 目标持久化对象
-
-外部 API 的最小对象集为：
-
-| 表 | 职责 |
-| --- | --- |
-| `external_api_client` | Client 稳定身份、名称、启停、授权模式和密钥密文；不物理删除。 |
-| `external_api_client_institution` | `SELECTED` 模式下的允许机构集合。 |
-| `external_api_request_nonce` | HMAC nonce 防重放及过期清理。 |
-| `external_api_request` | `(client_id, request_id)` 幂等、操作编码、规范化请求 Hash、处理状态、请求/结果摘要和时间。 |
+```text
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
+```
 
 不建立：
 
-- 应用层限流表、配额表或计数窗口表；
-- `external_task_request` 和 `external_task_batch_request` 两套重叠请求表；
-- `external_task_batch_operation_audit` 专表；
-- 外部 API 操作权限矩阵表；
-- 外部 API 任务副本、策略副本或任务状态机；
-- external client 物理删除或软删除状态；
-- secret 历史或双密钥过渡表；
-- nonce 长期归档表。
+```text
+应用层限流/配额表
+external_task_request + external_task_batch_request 双请求表
+external_task_batch_operation_audit 专表
+外部 API 操作权限矩阵
+外部 Task/策略副本
+External Client 软删除状态
+Secret 历史/双密钥表
+Nonce 长期归档表
+```
 
-## 16. 明确非目标
+## 17. 明确非目标
 
 外部 API 不负责：
 
-- 自动同步医共体数据集定义；
-- 自动创建或修改采集链路；
-- 在多条歧义链路中替业务端自动选择；
-- 自动升级已有任务版本；
-- 自动修改已有任务同步、校验或消息配置；
-- 绕过数据集变化后的管理员人工维护流程；
-- 直接写任务、版本、执行、水位、校验或 Outbox 表。
+- 自动同步医共体 Dataset 定义；
+- 自动创建/修改 Route；
+- 自动修改已有 Task 当前配置；
+- 自动切换已有 Task 的 Route Version/Dataset Version；
+- 自动调整 Watermark；
+- 自动修改 Validation/Message 配置；
+- 绕过 Dataset 变化后的管理员人工维护流程；
+- 直接写 Task、Execution、Watermark、Validation 或 Outbox 表。
 
-每个原子目标必须满足：机构和数据集已经存在且有效，并能够唯一解析当前可用采集链路。条件不满足时返回明确结果，不创建半成品任务。
+不存在“自动升级已有 Task Version”能力，因为目标模型不建设 Task Version。
 
-## 17. Review 结论
+## 18. Task Version 旧文案清理
 
-外部任务 API 的 P0 业务范围和生命周期已全部确认：
+以下旧描述全部废止：
 
-- [x] 外部任务 API 属于阶段 1 P0；
-- [x] 请求可灵活批量，但内部固定拆成“一个机构 + 一个数据集”原子目标；
-- [x] 推荐请求使用 `targets=[{institutionCode, datasetCodes[]}]`，兼容旧单机构请求；
-- [x] 任务已存在视为目标已满足；
-- [x] `runAfterCreate` 只运行本次新建任务；
-- [x] 支持 `BEST_EFFORT` 和 `ALL_OR_NOTHING`；
-- [x] 只有规划和确保/创建接口支持批量，运行、删除和重发保持单对象；
-- [x] 所有外部写操作要求 `requestId`；
-- [x] 幂等范围为 `(client_id, request_id)`；
-- [x] `external_api_request` 长期保留，不自动清理；
-- [x] client 机构授权支持 `ALL/SELECTED`，`SELECTED` 可关联多家机构；
-- [x] external client 不物理删除，只支持启停和重置 secret；
-- [x] secret 重置后旧 secret 立即失效，不支持双密钥；
-- [x] timestamp 窗口为前后 5 分钟，nonce 保留 1 小时并每小时清理；
-- [x] 不实现应用层限流；
-- [x] 外部 API 不接收 DFETL 内部任务策略和技术配置。
+```text
+每个 Task 独立引用 Task Version
+任务不存在时创建第一个不可变 Task Version
+外部请求包含 Task Version 内部字段
+自动升级已有 Task Version
+Task 创建后通过 Version 发布配置
+```
 
-下一步不再讨论外部 API 业务范围，只需在 P0 支撑对象物理表字典中完成字段类型、默认值、CHECK、外键删除行为、唯一约束和索引，并在实施阶段完成 DTO、OpenAPI、领域服务、兼容适配、测试和端到端联调。
+统一替换为：
 
-本文件只记录阶段 1 Review 结论，不修改当前实体、Repository、数据库结构或 Flyway 文件。
+```text
+sync_task = 固定 Institution/Dataset 身份 + 当前配置
+sync_execution/validation_run = 启动时不可变快照
+```
+
+## 19. Review 结论
+
+- [x] 外部任务 API 属于 P0。
+- [x] 批量请求内部拆为 Institution + Dataset 原子目标。
+- [x] 推荐 `targets=[{institutionCode,datasetCodes[]}]`，兼容旧单机构请求。
+- [x] Task 已存在返回 `EXISTS`，不修改已有 Task 当前配置。
+- [x] 新 Task 直接插入 `sync_task`，不创建 Task Version。
+- [x] `runAfterCreate` 只运行本次新建 Task；Execution 在启动时固定快照。
+- [x] 支持 `BEST_EFFORT/ALL_OR_NOTHING`。
+- [x] 写操作统一 Request ID 幂等，唯一范围 `(client_id,request_id)`。
+- [x] Client 授权 `ALL/SELECTED`。
+- [x] Client 不物理删除；Secret 重置立即失效。
+- [x] timestamp ±5 分钟；Nonce 保留 1 小时。
+- [x] 不做应用层限流。
+- [x] 外部 API 不接收或隐式修改 DFETL 内部 Task 配置。
+
+后续只需按最终物理字典实现 DTO/OpenAPI/领域服务/兼容适配/测试和端到端联调，不再重新讨论 Task Version。
