@@ -1,17 +1,18 @@
 # DFETL 目标元数据模型
 
-> 状态：阶段 1 FK Matrix 收口版  
+> 状态：阶段 1 最终物理矩阵收口版；Snapshot 最小充分性已确认  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> FK：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Snapshot：`spec/P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md`  
 > 限制：本文定义目标逻辑关系，不是 Flyway SQL；阶段 1 最终签字前不得修改正式数据库。
 
 ## 1. 总体主线
 
 ```text
 接入资源
-→ 机构采集 Route
-→ Sync Task
+→ Institution Route
+→ Sync Task Current Config
 → Execution / Batch
 → Validation / Watermark / Message
 ```
@@ -19,13 +20,12 @@
 固定原则：
 
 - 一个部署只服务一个医共体，不增加 Tenant 表。
-- Institution 扁平。
-- HIS/LIS/PACS 只作为轻量 Business Catalog。
-- Source Datasource 直接属于一家 Institution + 一个 Business Catalog。
+- Institution 扁平；HIS/LIS/PACS 仅为轻量 Business Catalog。
+- Source 直接属于一家 Institution + 一个 Business Catalog。
 - Route 固定单机构。
-- Dataset Version、Route Version、Field Conversion Contract 保持不可变。
+- Dataset Version、Route Version、Field Resolution、Field Conversion Contract 永久不可变。
 - Task 不版本化，保存当前配置。
-- Execution/Validation 保存启动快照。
+- Runtime Snapshot 遵循：**不可变定义只引用、可变运行事实才快照、Secret 永不快照**。
 - FK 使用最强复合关系证明同一业务身份。
 
 ## 2. 顶层关系
@@ -55,30 +55,20 @@ standard_dataset
 
 ## 3. 接入资源
 
-### `institution`
-
-医共体内机构身份；不保存机构树、Datasource、Route、Dataset、调度或运行状态。
-
-### `business_catalog`
-
-HIS/LIS/PACS/EMR 等轻量分类，不表示真实部署实例，不与 Institution 建多对多覆盖关系。
-
-### `source_datasource`
-
 ```text
-institution_id      → institution
-business_catalog_id → business_catalog
+institution
+business_catalog
+source_datasource
+target_datasource
+target_datasource_fe_endpoint
 ```
 
-只保存数据库连接与测试状态；不保存 Dataset、Schema/Object 映射、Target Table。
+- Source 保存当前可编辑数据库连接资源。
+- Target 保存当前可编辑 Doris 逻辑连接和 FE Endpoint。
+- Resource 无引用时可物理删除，有历史引用时只能停用。
+- Password/Credential 使用密文或部署 Secret，不进入 Runtime Snapshot。
 
-### `target_datasource`
-
-逻辑 Doris 部署；子表 `target_datasource_fe_endpoint`。不绑定 Institution/Business Catalog/Dataset。
-
-## 4. 标准 Dataset 与 Field Contract
-
-目标对象：
+## 4. Dataset / Field Contract
 
 ```text
 standard_dataset
@@ -92,166 +82,86 @@ dataset_message_policy
 ```
 
 - Dataset 只允许管理员从规范库人工同步。
-- 定义变化生成不可变 `standard_dataset_version`。
-- Field 只属于某个 Dataset Version。
-- Dataset 当前 Validation Override 直接保存在 `standard_dataset.validation_method_override`。
+- 相同历史 Definition Hash 复用原不可变 Version。
+- Version/Field/Contract 永久保留，不复制到 Execution/Validation JSON。
+- Dataset Validation Override 直接保存在 `standard_dataset.validation_method_override`。
 - Message Policy 只存在 Dataset 级。
-- 不建立 Global/Dataset/Task Validation Policy 表。
+- 不建立独立 Global/Dataset/Task Validation Policy 表。
 
-## 5. 机构采集 Route
+## 5. Institution Route
 
-### 5.1 `collection_route`
+### `collection_route`
 
-职责：一家 Institution 对一个标准 Dataset 的当前采集映射。
-
-当前字段：
+一家 Institution + 一个 Dataset 的当前采集投影：
 
 ```text
-id
 institution_id
 dataset_id
 source_datasource_id
-source_schema
-source_object
-source_object_type
+source_schema/source_object/source_object_type
 target_datasource_id
-status
-structure_status
-structure_checked_at
-structure_error_summary
+status/structure_status
 current_version_id
 revision
 deleted_at/deleted_by
-created_*/updated_*
 ```
 
-不变量：
+Route 使用逻辑删除。
 
-1. Route 单机构。
-2. Source 必须属于 Route Institution。
-3. Business Catalog 从 Source 推导，Route 不重复保存。
-4. 一 Institution + Dataset 一条未删除 Route。
-5. `current_version_id` 只能指向自身 Route 的 Version。
-6. Route 状态与 Structure Status 独立。
+### `collection_route_version`
 
-### 5.2 `collection_route_version`
-
-一次不可变 Route 配置快照：
+永久不可变 Route 定义：
 
 ```text
-id
-route_id
-version_no
+id/route_id/version_no
 institution_id
-dataset_id
-dataset_version_id
+dataset_id/dataset_version_id
 source_datasource_id
-source_schema
-source_object
-source_object_type
+source_schema/source_object/source_object_type
 target_datasource_id
-structure_hash
-contract_hash
-created_at/created_by
+structure_hash/contract_hash
 ```
 
-FK 强关系：
+Route Version 不冻结 Source/Target 当前 Connection Endpoint；因此运行时由 Execution 另行冻结非 Secret Runtime Endpoint。
 
-```text
-(route_id,institution_id,dataset_id)
-→ collection_route(id,institution_id,dataset_id)
-
-(dataset_id,dataset_version_id)
-→ standard_dataset_version(dataset_id,id)
-
-(source_datasource_id,institution_id)
-→ source_datasource(id,institution_id)
-```
-
-Task/Execution/Delete Snapshot 使用：
-
-```text
-(id,institution_id,dataset_id,dataset_version_id)
-```
-
-作为 Route Version 稳定业务身份父键。
-
-### 5.3 `route_field_resolution`
-
-职责：某个 Route Version 下 Standard Field → JDBC Actual Column 的不可变解析快照。
-
-最终字段：
+### `route_field_resolution`
 
 ```text
 route_version_id
 dataset_version_id
 standard_field_id
-source_column_name
-source_ordinal
-source_jdbc_type
-source_type_name
-resolved_at
+source_column_name/source_ordinal/source_jdbc_type/source_type_name
 ```
 
-**不再保存 `field_code`。**
-
-Standard Field Code 通过 `standard_field_id` 读取。
-
-数据库关系：
-
-```text
-(route_version_id,dataset_version_id)
-→ collection_route_version(id,dataset_version_id)
-
-(dataset_version_id,standard_field_id)
-→ standard_dataset_field(dataset_version_id,id)
-```
-
-因此数据库保证 Field 一定属于 Route Version 使用的 Dataset Version。
-
-只允许大小写差异；不支持字段重命名、别名、表达式、默认值。
+不重复保存 `field_code`；只允许大小写差异，不支持别名、表达式或默认值改写身份。
 
 ## 6. Sync Task
 
-### 6.1 固定业务身份
+固定业务身份：
 
 ```text
-institution_id
-dataset_id
+institution_id + dataset_id
 ```
 
-创建后不可修改；同一 Institution + Dataset 一个未删除 Task。
+创建后不可修改；同一 Institution + Dataset 一条未删除 Task。
 
-### 6.2 当前配置
+当前配置：
 
 ```text
 dataset_version_id
 route_version_id
 name
-task_kind
-write_mode
-doris_key_model
+task_kind/write_mode/doris_key_model
 incremental_field_code
-fetch_size
-upper_bound_delay_minutes
-lookback_seconds
+fetch_size/upper_bound_delay_minutes/lookback_seconds
 schedule_*
 validation_method_override
 revision
 ```
 
-Task 通过一条四元 FK 固定当前 Route/Dataset/Institution：
-
-```text
-(route_version_id,institution_id,dataset_id,dataset_version_id)
-→ collection_route_version(id,institution_id,dataset_id,dataset_version_id)
-```
-
 不建立 `sync_task_version/current_version_id/task_version_id`。
 
-## 7. `task_watermark`
-
-一 Task 最多一条当前正式 Watermark：
+## 7. Watermark
 
 ```text
 task_id
@@ -261,58 +171,55 @@ revision
 updated_at/updated_by
 ```
 
-自动推进来源通过：
-
-```text
-(source_execution_id,task_id)
-→ sync_execution(id,task_id)
-```
-
-保证 Source Execution 属于同一个 Task。
-
-不建立 Watermark History；历史范围从 Execution 查询。
+Watermark 是当前状态，不保存历史；显式“清除水位”可删除当前 Row，Task 逻辑删除不级联 Watermark。
 
 ## 8. Execution / Batch
 
 ### `sync_execution`
 
-保存一次真实同步运行和启动快照：
+Execution 的启动上下文分三类。
+
+#### 不可变定义引用
 
 ```text
-task_id + task_revision
+task_id/task_revision
 institution_id/institution_code
 dataset_id/dataset_version_id
 route_version_id
-task kind/write mode/key model
-incremental field
-fetch/read range
-validation method/source/revision
-message policy snapshot
-operation/trigger/status/range
-统计和错误
 ```
 
-关系：
+Dataset/Route/Field Contract 不复制第二份完整 JSON。
+
+#### 可变运行事实快照
 
 ```text
-(task_id,institution_id,dataset_id)
-→ sync_task(id,institution_id,dataset_id)
-
-(route_version_id,institution_id,dataset_id,dataset_version_id)
-→ collection_route_version(...)
-
-(external_client_id,external_request_id)
-→ external_api_request(client_id,request_id)
+task_kind/write_mode/doris_key_model
+incremental_field_code
+fetch_size/upper_bound_delay_minutes/lookback_seconds
+source_runtime_snapshot
+target_runtime_snapshot
+operation_type/trigger_type/execution_scope/target_prepare_mode
+固定 time/key range
+watermark_before/watermark_commit_expected
+validation_method/source/source_revision/contract_forced
+checksum_protocol_version（仅 ROW_COUNT_CHECKSUM）
+message_policy_snapshot
 ```
 
-并提供：
+`source_runtime_snapshot/target_runtime_snapshot` 只保存非 Secret Endpoint/Revision/运行连接事实；严禁 Password/Credential。
+
+不建立 `precheck_fact_snapshot`。
+
+#### 运行结果
 
 ```text
-UNIQUE(id,task_id)
-UNIQUE(id,task_id,dataset_id,institution_id)
+status
+counts
+engine_job_id
+cancel/error/timestamps
 ```
 
-分别供 Watermark/Validation 和 Outbox 使用。
+这些不是启动 Snapshot。
 
 ### `load_batch`
 
@@ -320,59 +227,88 @@ UNIQUE(id,task_id,dataset_id,institution_id)
 
 ## 9. Precheck
 
-目标对象：
-
 ```text
 precheck_run
 precheck_issue_summary
 ```
 
-Precheck Run 固定 Route/Route Version/Institution/Dataset/Dataset Version；同 Route 最多一个活动 Run。
-
-Issue Summary 只保存 STRUCTURE/FIELD/COMPOSITE 汇总，不保存行级问题。
+Precheck 独立于正式同步；Execution 不复制 Precheck Fact。PostgreSQL Run/Summary 永久保留，Doris RAW 终态后按 1 天规则清理。
 
 ## 10. Validation
 
-统一 `validation_run`。
+统一 `validation_run`，但每种运行只有**一个上下文真相来源**。
 
-同步门禁/人工重新校验关联 Execution 时使用：
-
-```text
-(execution_id,task_id)
-→ sync_execution(id,task_id)
-```
-
-因此不能引用其他 Task 的 Execution。
-
-独立 Validation 使用 Task + Context/Range Snapshot。
-
-校验方法解析：
+### SYNC_GATE / MANUAL_RECHECK
 
 ```text
-sync_task.validation_method_override
-→ standard_dataset.validation_method_override
-→ system_setting[validation.default_method]
-→ ROW_COUNT
-→ Dataset 合同能力
+execution_id NOT NULL
+context_snapshot NULL
+range_snapshot NULL
 ```
+
+全部上下文读取父 `sync_execution`。
+
+### 普通独立 Validation
+
+```text
+execution_id NULL
+context_snapshot NOT NULL
+range_snapshot NOT NULL
+```
+
+最小 Context 只保存：
+
+```text
+routeVersionId
+sourceRuntimeSnapshot
+targetRuntimeSnapshot
+```
+
+Range 只保存 FULL_DATASET 空对象或 CHANGE_WINDOW 的 lower/upper。
+
+### DELETE_RECONCILIATION
+
+```text
+execution_id NULL
+context_snapshot NULL
+range_snapshot NULL
+baseline_snapshot_run_id/current_snapshot_run_id NOT NULL
+validation_method=DELETE_KEY_DIFF
+validation_source=FIXED
+```
+
+上下文来自 Delete Snapshot Run FK。
 
 ## 11. Message Outbox
 
-RabbitMQ Only；Dataset 级 Policy。
+RabbitMQ Only，Dataset Message Policy 在 Execution 接受时冻结。
 
 ```text
 sync_execution
   └── 0..1 message_outbox
 ```
 
-Outbox 通过：
+Outbox 显式保存：
 
 ```text
-(execution_id,task_id,dataset_id,institution_id)
-→ sync_execution(id,task_id,dataset_id,institution_id)
+execution_id/task_id/dataset_id/institution_id
+publish_scope
+Message Policy Snapshot fields
+最小 range_snapshot
 ```
 
-保证所有冗余查询身份与原 Execution 一致。不保存 Task Version、逐条 Payload 或分页进度。
+`range_snapshot` 不重复显式身份或 `operation_type`，只保存 Publisher 所需：
+
+```text
+executionScope
+institutionCode
+datasetVersionId
+routeVersionId
+targetDatasourceId
+具体 time/key range
+```
+
+Outbox 不复制 Execution Target Runtime Endpoint；人工重发按已确认语义重新读取当前 Doris，不做历史 Payload Replay。
 
 ## 12. Delete Snapshot
 
@@ -392,11 +328,9 @@ _dfetl_key_snapshot
 _dfetl_delete_diff
 ```
 
-Delete Snapshot 使用 Task 复合身份 + Route Version 四元身份；历史全部 RESTRICT。删除差异不自动应用。
+Delete Snapshot 使用 Task 复合身份 + Route Version 四元身份；PostgreSQL 历史永久保留，Doris Key/Diff 按生命周期清理。
 
-## 13. 支撑对象
-
-继续保留：
+## 13. Support Objects
 
 ```text
 app_user
@@ -414,21 +348,23 @@ external_api_request
 Quartz 官方 11 张 qrtz_* 表
 ```
 
-普通审计用户 FK 使用 SET NULL；运行责任用户使用 RESTRICT。
+普通审计用户 FK 使用 SET NULL；运行责任用户 RESTRICT。Nonce 1 小时清理；Quartz 是可重建调度投影。
 
 ## 14. 明确废止
 
 不得重新引入：
 
-- Business System Instance 及其多对多中间层；
+- Business System Instance；
 - Multi-Institution Route；
-- `sync_task_version`；
+- `sync_task_version/task_version_id`；
 - Task-level Message Policy；
-- Global/Dataset/Task Validation Policy 表；
+- 独立 Validation Policy Table；
 - Standard Task CUSTOM_SQL；
 - Source/Task Group；
 - Institution Tree；
 - 行级 Precheck Issue；
-- Execution Resume/Checkpoint 状态表。
+- Execution Resume/Checkpoint；
+- Runtime Snapshot 中的完整不可变定义副本；
+- Credential/Secret History。
 
-后续数据库、Java Entity/DTO、API 和前端类型必须以本模型及 FK Matrix 为准。
+后续数据库、Java Entity/DTO、API 和前端类型必须以本模型及已冻结矩阵为准。
