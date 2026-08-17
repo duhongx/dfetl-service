@@ -1,0 +1,29 @@
+name: OpenAPI contract check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "spec/FRONTEND_API_CONTRACT_V1.md"
+      - "spec/openapi/**"
+      - "scripts/generate_openapi_v1.py"
+      - ".github/workflows/openapi-check.yml"
+  pull_request:
+    paths:
+      - "spec/FRONTEND_API_CONTRACT_V1.md"
+      - "spec/openapi/**"
+      - "scripts/generate_openapi_v1.py"
+      - ".github/workflows/openapi-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate generated OpenAPI 3.1 contract
+        run: python scripts/generate_openapi_v1.py --check
+      - name: Validate JSON syntax
+        run: python -m json.tool spec/openapi/dfetl-api-v1.json > /dev/null

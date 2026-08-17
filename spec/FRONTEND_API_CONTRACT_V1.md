@@ -1,12 +1,14 @@
 # DFETL 前端 REST API 合同 V1
 
-> 状态：`CURRENT`  
+> 状态：`FROZEN_FOR_IMPLEMENTATION`  
 > 合同版本：`v1`  
 > 冻结日期：2026-08-17  
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> OpenAPI：`spec/openapi/dfetl-api-v1.json`（167 operations，已生成并校验）  
 > 产品依据：`CURRENT_CONFIRMED_PROCESS_RULES.md`、`PRODUCT_AND_BUSINESS_DECISIONS.md`、`FRONTEND_PRODUCT_CONTRACTS_A1_A3.md`  
 > 适用范围：当前前端页面、命令、权限、审计、分页、导出和长任务交互  
-> 后端实现状态：`NOT_IMPLEMENTED`；本文是实现合同，不表示 Java、PostgreSQL、Doris 或 RabbitMQ 已完成  
-> 物理模型边界：预检明细存储介质、Doris 机构范围原子替换及 Flyway 表结构仍按目标模型 Review 结论实施，不由本文件反向决定。
+> 后端实现状态：`OPENAPI_GENERATED`；Java、PostgreSQL、Doris、RabbitMQ 和 Quartz 仍为 `NOT_IMPLEMENTED`  
+> 物理模型边界：预检明细、Doris 机构范围替换和 P0 支撑对象已按 C1–C3 签字冻结；OpenAPI 不取代 Flyway 和外部组件能力验证。
 
 ---
 

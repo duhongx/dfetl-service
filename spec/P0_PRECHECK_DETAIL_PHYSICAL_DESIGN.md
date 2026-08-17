@@ -1,10 +1,13 @@
 # P0 数据预检问题明细物理设计
 
-> 状态：`CONFIRMED_FOR_SIGNOFF`  
+> 状态：`FROZEN_FOR_IMPLEMENTATION`  
 > 日期：2026-08-17  
+> 签字日期：2026-08-17  
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> 批准语句：`批准阶段 1 目标模型并授权实施。`  
 > 工作包：`C1`  
 > 产品依据：`CURRENT_CONFIRMED_PROCESS_RULES.md`、`FRONTEND_PRODUCT_CONTRACTS_A1_A3.md`  
-> 实施边界：本文冻结物理职责、表职责、生命周期、查询和导出合同；当前不创建 Flyway、不修改 Java、不创建 Doris 表。
+> 实施边界：已获实施授权；本文是 DDL、代码和外部组件实现的冻结设计基线，但不表示对应实现或生产验证已经完成。
 
 ## 1. 最终结论
 

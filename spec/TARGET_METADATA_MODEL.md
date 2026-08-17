@@ -1,8 +1,11 @@
 # P0 目标元数据模型
 
-> 状态：`READY_FOR_SIGNOFF`；C1–C3 物理设计已完成，等待用户签字；尚未固化为 Flyway `V1`  
-> 实施授权：`NO`；当前只具备签字条件，用户明确批准前不得创建 V1、OpenAPI 实现或批量改造后端  
+> 状态：`FROZEN`；阶段 1 已签字，作为 PostgreSQL/Doris/后端实施基线  
+> 实施授权：`YES`；允许按 D1–D10 顺序实施，仍须经过隔离验证后才能进入生产  
 > 初稿日期：2026-08-14；C1–C3 Review：2026-08-17  
+> 签字日期：2026-08-17  
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> 批准语句：`批准阶段 1 目标模型并授权实施。`  
 > 适用范围：新系统独立 PostgreSQL 元数据库  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -19,7 +22,7 @@
 7. 每个标准数据集身份在一个逻辑 Doris 部署中固定共用一张 ODS；预检 RAW 按不可变 Dataset Version 建表。PostgreSQL 保存期望 Doris 合同和机构正式分区绑定，但不复制 Doris 实际列清单、分区运行态或业务数据；实际状态始终从 Doris 元数据实时核对。
 8. 预检每次扫描整条采集链路；运行记录及字段级/组合规则级汇总长期持久化，同时提供可定位具体记录和非法字段的限期问题明细。物理方案已冻结为 PostgreSQL 控制面、Doris 明细面和 S3 兼容导出面，详见 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`；不保留严重级别或平台内修复状态。
 9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
-10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户或机构层级预建扩展。C1–C3 已完成但尚未获得用户签字；签字前不创建 `V1__baseline.sql`、不生成后端实现。
+10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户或机构层级预建扩展。C1–C3 已签字冻结；D1 OpenAPI 已生成，后续按 D2–D10 实施和验证。
 
 ## 2. 全局数据库约定
 
@@ -247,52 +250,48 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 ## 9. 数据预检运行、汇总与问题明细
 
-### 9.1 已确认的 PostgreSQL 运行与汇总模型
+本节的物理职责已经由 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md` 冻结，不再保留“载体待 Review”的占位表述。
 
-| 表 | 关键字段 | 约束和说明 |
+### 9.1 PostgreSQL 控制面
+
+| 表 | 关键职责 | 核心约束 |
 | --- | --- | --- |
-| `precheck_run` | `id`, `run_uuid`, `route_id`, `route_version_id`, `execution_status`, `result_status`, structure/resolution snapshot hashes, phase/progress, extracted/checked/issue row counts, detail retention deadline/cleaned time, error, trigger/operator/timestamps | 人工发起并固定扫描整条链路；重新预检新建行。不提供单机构运行范围。运行记录长期保留。 |
-| `precheck_issue_summary` | `id`, `run_id`, optional `institution_id`, `rule_scope`, optional `standard_field_code`, `rule_code`, `rule_definition_version`, `affected_rows`, `observed_metrics` JSON, `summary`, timestamps | 保存字段级、规则级、组合规则级和机构级聚合，用于列表、趋势、筛选和长期审计；汇总不替代问题明细。 |
+| `precheck_run` | 一次不可变预检运行事实；固定 Route Version、Dataset Version、状态、结果、结构 Hash、计数和保留策略快照。 | 同一 Route 仅一个活动 Run；`COMPLETED` 才允许 `PASS/ISSUES`。 |
+| `precheck_issue_summary` | 长期保存字段级、组合规则级、结构级和机构级汇总。 | Run、机构、Scope、字段、规则和规则版本形成唯一汇总身份。 |
+| `precheck_detail_manifest` | 记录 Doris RAW、问题记录、问题项的物理载体、行数、到期时间和清理状态。 | 每个 Run 一行；页面不得以“查不到 Doris 行”推断零问题。 |
+| `export_job` | 保存预检汇总/明细异步导出的不可变筛选快照、敏感标志、对象清单和生命周期。 | 幂等键和请求 Hash 防止重复或冲突导出；不保存永久下载 URL。 |
 
-`execution_status` 固定：`PENDING/EXTRACTING/VALIDATING/COMPLETED/FAILED/CANCELLED`；`result_status` 固定：`PASS/ISSUES`。完整扫描发现不合格数据是 `COMPLETED + ISSUES`，不是技术失败。
+PostgreSQL 不保存海量问题行、完整原始行或敏感原值。旧 `DfetlPrecheckIssue.raw_row_json/raw_value/remediation_status/severity` 不进入 V1。
 
-并发和索引：
+### 9.2 Doris 明细面
 
-- `route_id WHERE execution_status IN ('PENDING','EXTRACTING','VALIDATING')` 部分唯一，保证同链路只有一个活动预检。
-- 全局并发上限由系统设置和加锁队列控制；不同链路可以并发。
-- 索引 `precheck_run(route_id, created_at DESC)`、`precheck_issue_summary(run_id, institution_id, standard_field_code)`。
-- 预检运行不被任何任务创建或运行外键作为准入条件；界面展示事实和风险，但不存在预检通过才允许运行的数据库约束。
+```text
+raw_precheck_<dataset_hash>_v<dataset_version>
+dfetl_precheck_issue_record
+dfetl_precheck_issue_item
+```
 
-### 9.2 问题明细逻辑合同（物理设计待 Review）
-
-问题明细必须能够表达：
-
-- `run_id`、链路版本、数据集版本、机构代码；
-- 记录定位类型和记录定位值；
-- 标准字段、规则代码、规则版本；
-- 实际值或脱敏值、期望规则、问题原因；
-- 同一问题记录下的多个字段问题；
-- 创建时间、保留截止时间和清理状态。
-
-记录定位分为：
-
-1. `BUSINESS_KEY`：数据集存在真实业务主键时，使用机构代码和标准业务主键；
-2. `RUN_SCOPED`：无真实业务主键时，使用只在本次运行内有效的 `run_row_id`、行指纹或等价技术定位符。
-
-`RUN_SCOPED` 定位符不得进入同步任务业务主键、Doris 键模型、增量游标、删除对账或逐行 Checksum 合同。
-
-本轮不提前决定问题明细必须落在 PostgreSQL、Doris 专用结果结构还是对象存储，也不提前固定表名。确定物理载体前必须 Review：预计问题量、分页/筛选路径、敏感字段脱敏、原值查看权限、导出规模、清理成本和运行历史可追溯性。若采用 PostgreSQL 明细表，必须再单独确认分区、索引、VACUUM 和容量边界；若采用 Doris 或对象存储，也必须保证规则版本和本次运行结果不可被后续重算悄然改变。
+- RAW 按不可变 Dataset Version 建表，同版本的 Run 通过 Run ID、Route Version、机构代码和运行内定位符隔离；
+- `issue_record` 一行表示一条问题源记录；
+- `issue_item` 一行表示字段或组合规则问题项；
+- 问题项只保存脱敏值，授权查看时从限期 RAW 按字段回读原值；
+- 无业务主键时的运行内定位符不得进入正式同步、Doris UNIQUE KEY、增量水位、删除对账或 Checksum 合同；
+- 正式同步始终重新读取真实源对象，不读取预检 RAW 或问题明细。
 
 ### 9.3 保留、查询和导出
 
-- `precheck_run` 和 `precheck_issue_summary` 长期保留。
-- 问题明细及用于还原问题上下文的原始预检数据限期保留，默认值和最大值后续确认；不再把固定 1 天视为已冻结物理结论。
-- 汇总和明细分别支持按机构、字段、规则和运行筛选；页面从汇总下钻到问题记录，再查看该记录的字段问题。
-- 明细默认脱敏；查看原值和导出明细使用独立权限并记录 `audit_log`。
-- 小结果可同步导出；大结果是否使用异步导出及对象存储，由产品和容量 Review 决定，当前模型不得预先禁止。
-- 明细到期清理后，长期汇总仍可查询，并明确记录明细清理时间。
+| 数据 | 默认保留 | 允许范围 |
+| --- | ---: | ---: |
+| Run 和 Summary | 长期 | P0 不自动清理 |
+| `ISSUES` Run 的 RAW 和问题明细 | 7 天 | 1–30 天 |
+| `PASS` Run 的 RAW | 1 天 | 0–7 天 |
+| `FAILED/CANCELLED` Run 已写 RAW | 1 天 | 0–7 天 |
+| 导出对象 | 24 小时 | 1–168 小时 |
 
-该部分完成物理 Review 前，阶段 1 目标模型不能最终签字，也不得将“没有问题明细表”固化进 Flyway V1。
+- 汇总从 PostgreSQL 查询；问题记录、问题项和授权原值从 Doris 查询；
+- 明细到期后仍可查看 Run 和 Summary，Manifest 明确返回 `EXPIRED` 和清理时间；
+- 明细导出统一创建 `export_job`，生产文件写入 MinIO/S3 兼容对象存储；
+- 原值查看、敏感导出和下载均执行服务端鉴权、S1 确认和审计，日志及审计不保存原值。
 
 ## 10. 校验策略和校验运行
 
@@ -368,7 +367,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 医共体 | 当前没有稳定的租户根模型。 | 一个部署固定服务一个医共体，名称和编码进入 `system_setting`；不新增 `medical_community/community_id`。 | API 不传递租户 ID，部署和数据库本身就是隔离边界。 |
 | 机构 | 旧表存在层级或单归属痕迹。 | P0 机构扁平化，编码全局唯一，不保存 `parent_id`。 | 删除层级查询和继承逻辑。 |
 | 源数据源 | `SourceDataSource.institutionId` 单归属；`findByInstitutionId`/`countByInstitutionId` 广泛使用。 | 数据源与实例多对多；支持 `HOST_PORT/JDBC_URL` 两种逻辑连接方式。 | 替换单机构查询；凭据与 URL 分离，不管理第三方节点切换。 |
-| 目标 Doris | 表名来源分散，执行前建表逻辑会自动创建或补列。 | 逻辑部署支持单机/集群；表名按数据集固定；直接读取 Doris 实际元数据，不建 PostgreSQL 表登记。 | 收敛 DDL 生成器；普通执行只校验，建表/重建必须人工显式发起。 |
+| 目标 Doris | 表名来源分散，执行前建表逻辑会自动创建或补列。 | 逻辑部署支持单机/集群；PostgreSQL 保存期望合同 Hash 和机构正式分区绑定，实际列/分区运行态仍从 Doris 实时读取。 | 收敛 DDL 生成器；普通执行只校验，建表、分区维护和重建必须人工显式发起。 |
 | 系统实例 | 当前无实体、Repository 和外键。 | 新增实例及两张多对多表。 | 新建管理 API/服务；链路创建先验证实例覆盖和数据源关系。 |
 | 链路 | `InstitutionDatasetRoute` 直接含单个 `institutionId`，并保存 `enabled`、结构 `validationStatus` 和当前 revision。 | 链路多机构；身份/版本/覆盖快照分离；链路无运行态，预检不作准入。 | 重写 route repository/resolver/validation service；删除 `enabled` 依赖结构通过的门禁。 |
 | 字段映射 | `TaskViewConfig.fieldMappings` JSON 可编辑；任务控制器直接返回它。 | 只读 `route_field_resolution`，只允许大小写解析。 | 删除字段重命名写入口；所有 SQL 生成统一使用解析快照。 |
@@ -377,7 +376,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 执行 | `TaskExecution` 不引用任务版本，快照仅覆盖少数字段，并含 `SUCCESS_WITH_DIRTY_ROWS`。 | 执行引用不可变任务版本并保存最终有效配置；移除分流成功状态。 | 执行组装器和监控 DTO 按版本/执行快照读取。 |
 | 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 当前正式水位进入 `task_watermark`；成功执行窗口和通用审计分别承担正常推进、人工重置追溯。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint` 或 `task_watermark_history`，失败后从头重新采集。 |
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
-| 预检 | `DfetlPrecheckRun` 混合状态；旧 issue/dirty 表保存严重级别、原始值和处理状态。 | 运行状态与结果状态分离；长期保存运行和汇总，同时提供限期问题明细，支持业务键或运行内定位。 | 重写预检服务和查询 API；删除平台内脏数据修复语义，明细物理载体在容量与安全 Review 后确定。 |
+| 预检 | `DfetlPrecheckRun` 混合状态；旧 issue/dirty 表保存严重级别、原始值和处理状态。 | 运行状态与结果状态分离；PostgreSQL 保存 Run/Summary/Manifest，Doris 保存限期 RAW/问题记录/问题项，MinIO/S3 保存导出对象。 | 重写预检服务和查询 API；删除平台内脏数据修复语义，按 C1 冻结载体实施。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
 | 消息 | `DfetlMessagePolicy` 已按数据集保存策略；任务创建时 `DatasetTaskSnapshotAssembler` 再复制为 `MessagePublishConfig`，执行器读取这份任务副本；同时存在 Redis Stream/RabbitMQ 两套发布器、publish log 和 send record。 | 仅 RabbitMQ；只保留数据集消息策略、执行/Outbox 指令快照和单一 outbox，不保留任务级消息配置或覆盖。 | 数据集参数对该数据集所有任务一致；机构、Doris 目标、批次和窗口从任务/执行上下文取得。完成事务插入指令，独立 RabbitMQ 发布器消费，旧 config/log/send-record/recovery 路径退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
@@ -418,7 +417,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | `SyncTaskApplicationService.findExistingTaskId` 扫机构任务再比 dataset | 直接按部分唯一键查询；创建依赖唯一冲突处理，不先扫列表。 |
 | `SyncTaskRepository` 含修复空机构和数据源归属的 JPQL | 新库无历史脏数据修复查询；配置迁移由 `DB-002` 工具显式完成。 |
 | `WatermarkService` 更新任务行 checkpoint | 锁 `task_watermark(task_id)`；只在完整执行和校验成功后推进，失败后的重新采集从任务范围起点开始。 |
-| 预检 issue/dirty 行分页 | 按 run/institution/field/rule 查询 summary；不再提供行级索引。 |
+| 预检 issue/dirty 行分页 | Summary 按 Run/机构/字段/规则查询 PostgreSQL；问题记录和问题项在 Doris 按 Run/机构/定位符/规则稳定分页。 |
 | publish log/recovery 定时扫描 | outbox 使用 `(status, available_at)` 索引和 `SKIP LOCKED`。 |
 
 ## 14. 目标模型到现有对象的处置映射
@@ -435,32 +434,32 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | message policy/config/log/send record | 合并为策略、执行快照和单一 outbox；逐次投递详情只写应用日志。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |
 
-## 15. Review 门槛与后续步骤
+## 15. 签字结果与实施步骤
 
-C1–C3 已完成：
-
-- `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`：预检明细、保留、查询、导出和权限；
-- `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`：单机构 LIST 分区、临时分区替换、备份与回滚；
-- `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`：RBAC、审计、设置、幂等、告警、External Client 和 Quartz；
-- `PHASE1_TARGET_MODEL_SIGNOFF.md`：签字范围、授权条件和实施顺序。
-
-当前准确状态：
+阶段 1 已于 2026-08-17 完成签字，基线 Commit 为 `938566a6659fbf445e00f472ba932fe446d1d886`。
 
 ```text
-Target Model: READY_FOR_SIGNOFF
-Implementation Authorization: NO
-Flyway V1: NOT_AUTHORIZED
-OpenAPI Implementation: NOT_GENERATED
+Target Model: FROZEN
+Implementation Authorization: YES
+OpenAPI: GENERATED_AND_VALIDATED
+Flyway V1: AUTHORIZED_NOT_CREATED
 Backend API: NOT_IMPLEMENTED
 ```
 
-用户明确批准前：
+D1 已完成：
 
-- 不创建、命名或提交 `server/src/main/resources/db/migration/V1__baseline.sql`；
-- 不生成 OpenAPI 文件或 Controller/DTO/Service 实现；
-- 不移动历史 SQL 以伪装成已建立迁移链；
-- 不修改当前实体去适配尚未签字的物理表；
-- 不连接、修改或 baseline 老 `df_ygt/df_etl` 数据库；
-- 不修改 PostgreSQL、Doris、RabbitMQ 或 Quartz 生产结构。
+- 生成 `spec/openapi/dfetl-api-v1.json`；
+- OpenAPI 版本为 3.1.0；
+- 与 `FRONTEND_API_CONTRACT_V1.md` 的 Method/Path 集合精确一致；
+- 命令接口包含 `Idempotency-Key`，更新接口包含 `If-Match`；
+- 权限、审计、确认等级和敏感条件以 OpenAPI 扩展表达；
+- `.github/workflows/openapi-check.yml` 阻止 Markdown 与生成文件漂移。
 
-用户签字并将实施授权改为 `YES` 后，阶段 2 按 `PHASE1_TARGET_MODEL_SIGNOFF.md` 的 D1–D10 顺序执行：先生成 OpenAPI，再生成物理 DDL/Flyway，完成空库迁移验证后才实施后端和真实联调。
+下一步 D2：基于本冻结模型、C1–C3 和 OpenAPI 生成完整 PostgreSQL 物理表字典与 Flyway V1；先完成空库 migrate/validate，再实施 Java 后端。
+
+实施仍遵守以下边界：
+
+- 不对老 `df_ygt/df_etl` 执行 baseline；
+- 不把历史 SQL 或当前实体直接当作 V1；
+- 不修改生产 PostgreSQL/Doris 结构；
+- 不把 OpenAPI 已生成解释为接口、数据库或端到端已经完成。

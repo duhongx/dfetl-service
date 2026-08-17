@@ -1,10 +1,13 @@
 # P0 Doris 机构范围原子替换设计
 
-> 状态：`CONFIRMED_FOR_SIGNOFF`  
+> 状态：`FROZEN_FOR_IMPLEMENTATION`  
 > 日期：2026-08-17  
+> 签字日期：2026-08-17  
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> 批准语句：`批准阶段 1 目标模型并授权实施。`  
 > 工作包：`C2`  
 > 业务合同：`FULL_ONLY + REPLACE_INSTITUTION_SCOPE + DUPLICATE_KEY`  
-> 实施边界：本文冻结表分区合同、执行状态机、回滚和验收要求；当前不创建 Doris 表、不执行 DDL、不修改 Java。
+> 实施边界：已获实施授权；本文是 DDL、代码和外部组件实现的冻结设计基线，但不表示对应实现或生产验证已经完成。
 
 ## 1. 最终结论
 

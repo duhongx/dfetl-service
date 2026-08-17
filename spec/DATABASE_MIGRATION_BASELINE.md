@@ -1,10 +1,12 @@
 # DFETL 数据库迁移基线与 SQL 维护规范
 
-> 状态：已确认  
+> 状态：`FROZEN_FOR_IMPLEMENTATION`  
 > 首次确认：2026-08-13  
-> 最近更新：2026-08-14  
+> 最近更新：2026-08-17  
 > 适用范围：`dfetl-service` PostgreSQL 元数据库  
 > 业务优先级：与本文冲突时，以 `PRODUCT_AND_BUSINESS_DECISIONS.md` 为准。
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> 实施授权：`YES`  
 
 ## 1. 已确认的部署边界
 
@@ -50,7 +52,7 @@
 
 因此，新 V1 必须从最终业务合同和代码模型重新构建，而不是把历史 SQL 排序后执行。
 
-62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；阶段 1 的 P0 关系模型、状态、约束、索引和现有代码差异见 `spec/TARGET_METADATA_MODEL.md`。目标模型正在逐项 Review，2026-08-14 第一批确认项已经合并；全部 Review 完成前不得创建或固化 `V1__baseline.sql`。
+62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；P0 关系模型、C1–C3 物理设计和现有代码差异已经在 `938566a6659fbf445e00f472ba932fe446d1d886` 签字冻结。当前已授权创建新的 `V1__baseline.sql`，但必须先完成 D2 物理字典和 D3 独立空库验证。
 
 ## 4. Flyway 目录和命名
 
@@ -86,7 +88,7 @@ V1 不得包含：
 - 老库中的运行数据、执行历史、Quartz 状态、预检行级明细或消息发送历史；
 - 已废止的 `validation_task`、`dfetl_task`、`task_group`、行级问题和问题分流模型；
 - 单医共体部署下不需要的 `medical_community`、`community_id` 和机构层级 `parent_id`；
-- PostgreSQL Doris 物理表登记/结构版本表、`execution_checkpoint`、`execution_reconciliation`、独立重试关联/恢复字段、`recollect_of_execution_id` 自关联，以及预检/校验异步导出任务表；
+- 复制 Doris 实际列清单或分区运行态的镜像表（仅允许 C2 定义的期望 `doris_table_contract` 和机构分区绑定）、`execution_checkpoint`、`execution_reconciliation`、独立重试关联/恢复字段、`recollect_of_execution_id` 自关联，以及按领域重复建设的预检/校验导出任务表（统一使用 C3 `export_job`）；
 - 与成功执行窗口和通用审计重复的 `task_watermark_history` 表；
 - 仅服务内部计算分批且不需要恢复的 `validation_run_segment` 表；
 - 可由触发类型、同步执行和通用审计替代的 `validation_run.recheck_of_run_id` 自关联；
@@ -103,7 +105,7 @@ V1 不得包含：
 - RabbitMQ 地址、凭据、连接参数或固定 Exchange `YL` 的数据库配置字段；连接信息属于部署配置，Exchange 由平台按固定契约幂等声明；
 - 消息发布 `full_sync_mode`、`send_truncate_signal` 及 `ALL/SKIP/NOTIFY_ONLY`、`FULL_SYNC_COMPLETE`、TRUNCATE 信号相关结构；新模型始终发布本次同步范围内的全部业务数据；
 - 与执行结果或当前版本指针重复的任务生命周期状态、任务版本状态，以及自动失败阻断字段 `schedule_blocked/block_reason` 和待追赶字段 `catch_up_pending`；
-- 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
+- 与共享多机构链路、共享 ODS + Dataset Version RAW 合同或最终校验策略冲突的旧结构；
 - 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；
 - 为兼容老库而存在、但新系统不再使用的临时迁移字段。
 

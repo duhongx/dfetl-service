@@ -2,11 +2,11 @@
 
 > 仓库：`duhongx/dfetl-service`  
 > 基线：Java 服务已由 `datax-lite-jdk21/master` 迁入 `main`，生产代码迁移提交为 `abf1e8c08a8c096980ea29f60c4c9c3856a2ef95`。  
-> 当前阶段：阶段 1——可信需求恢复、核心文档一致性修订与 P0 目标模型 Review  
+> 当前阶段：阶段 2——OpenAPI、物理表字典、Flyway V1 与后端接口实施  
 > 阶段状态：`IN_PROGRESS`  
-> 实施授权：`NO`；目标模型最终签字前不创建 Flyway V1，不按 Review 草案批量改造数据库和后端  
+> 实施授权：`YES`；阶段 1 已按 `938566a6659fbf445e00f472ba932fe446d1d886` 签字冻结  
 > 已验证：Java 生产代码迁移及 JDK 21 编译打包、老库结构快照、62 个历史 SQL 审计、可信 `spec/` 清理  
-> A1–A3 产品合同：`CONFIRMED`；前端产品交互：`IMPLEMENTED`；C1–C3：`CONFIRMED_FOR_SIGNOFF`；目标模型：`READY_FOR_SIGNOFF`；实施授权：`NO`  
+> A1–A3：`FROZEN`；C1–C3：`FROZEN_FOR_IMPLEMENTATION`；目标模型：`FROZEN`；D1 OpenAPI：`GENERATED_AND_VALIDATED`  
 > 测试策略：当前阶段不迁移、不补写原单元测试和接口测试；主业务流程跑通并稳定后，再按本清单补接口测试。
 
 ## 1. 项目目标
@@ -1276,24 +1276,43 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 A1–A3 与 B1–B5 已完成前端 Mock 产品行为实现，并以 ESLint 和 Next.js 生产构建验证；真实 REST API、服务端鉴权/审计、数据库和外部组件尚未实施，因此只能标记前端产品交互为 `IMPLEMENTED`，不能标记端到端系统为 `VERIFIED`。
 
 
-## 5.2 C1–C3 物理设计和签字门槛（2026-08-17）
+## 5.2 C1–C3 物理设计和签字门槛（2026-08-17，已完成）
 
 - [x] `C1`：确认预检问题明细的 PostgreSQL/Doris/对象存储职责、字段、保留、查询、脱敏、导出和清理方案。
 - [x] `C2`：确认 Doris 一机构一 LIST 分区、临时分区原子替换、旧数据备份、切换后校验、回滚和能力探针方案。
 - [x] `C3`：确认账号权限、Session、审计、设置、Export Job、幂等、锁、告警、External Client 和 Quartz JDBCJobStore 物理模型。
-- [x] `C1-C3-DOC`：新增 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`、`P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md` 和 `P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md`。
-- [x] `SIGNOFF-PREP`：新增 `PHASE1_TARGET_MODEL_SIGNOFF.md`，形成签字范围、冻结边界和实施顺序。
-- [ ] `SIGNOFF`：用户明确批准阶段 1 目标模型并授权实施。
-- [ ] `C4`：签字后依据 `FRONTEND_API_CONTRACT_V1.md` 生成 OpenAPI 3.1、Flyway V1 和后端接口实现。
+- [x] `SIGNOFF-PREP`：形成签字范围、冻结边界和实施顺序。
+- [x] `SIGNOFF`：用户明确批准阶段 1 目标模型并授权实施；签字基线 `938566a6659fbf445e00f472ba932fe446d1d886`。
+
+```text
+Phase 1: COMPLETED
+Target Model: FROZEN
+Implementation Authorization: YES
+```
+
+## 5.3 阶段 2 实施工作包
+
+- [x] `D1`：依据 `FRONTEND_API_CONTRACT_V1.md` 生成 OpenAPI 3.1；完成 167 个 Method/Path 覆盖、JSON 结构、幂等、Revision、权限和确认等级校验。
+- [ ] `D2`：生成完整 PostgreSQL 物理表字典和 `server/src/main/resources/db/migration/V1__baseline.sql`。
+- [ ] `D3`：在独立 PostgreSQL 空库执行 Flyway migrate/validate，并验证重复启动不修改结构。
+- [ ] `D4`：按领域实现 Controller / DTO / Service / Repository，并严格匹配 OpenAPI。
+- [ ] `D5`：实现服务端认证、RBAC、审计、幂等、Revision 和通用 Export Job。
+- [ ] `D6`：执行客户 Doris 版本能力探针，验证 LIST/Temporary Partition/REPLACE PARTITION/Label 恢复。
+- [ ] `D7`：实现预检明细、保留清理和机构范围原子替换。
+- [ ] `D8`：实现 RabbitMQ Outbox 和 Quartz JDBCJobStore 集群调度。
+- [ ] `D9`：前端 Mock Service 按领域切换真实 API。
+- [ ] `D10`：完成 PostgreSQL、Doris、RabbitMQ、Quartz 和前端端到端验证。
+- [ ] `C4`：D1–D10 全部完成后，关闭阶段 2 总工作包。
 
 当前 Gate：
 
 ```text
-READY_FOR_SIGNOFF != FROZEN
-Implementation Authorization = NO
+D1: COMPLETE
+D2: NEXT
+Backend API: NOT_IMPLEMENTED
+Flyway V1: AUTHORIZED_NOT_CREATED
+End-to-End: NOT_VERIFIED
 ```
-
-`SIGNOFF` 未完成前，`C4` 保持阻塞。
 
 
 ---

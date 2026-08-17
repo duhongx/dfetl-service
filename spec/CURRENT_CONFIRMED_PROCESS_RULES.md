@@ -3,6 +3,9 @@
 > 状态：当前有效  
 > 整理日期：2026-08-17  
 > 可信基线：`341e3b5d070e5b2a242457c74d325ca7639c43d4`  
+> 阶段 1 签字日期：2026-08-17  
+> 签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`  
+> 实施授权：`YES`  
 > 适用范围：数据预检、正式同步、无主键机构范围替换、同步后校验、RabbitMQ 数据集级消息、阶段状态  
 > 边界：本文只记录用户已经明确确认的流程规则，不定义新的资源模型、物理表、API、前端页面或 Flyway 结构。
 
@@ -41,7 +44,7 @@
 - 预检运行记录及字段级、规则级、机构级汇总作为审计和质量趋势依据长期保留。
 - 问题记录明细及用于还原问题上下文的原始预检数据按限期保留策略管理，不要求永久保存完整源数据。
 - 明细页面默认按敏感字段规则掩码；查看原值和导出问题明细使用独立权限并记录操作审计。
-- C1 物理 Review 已形成 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`：PostgreSQL 保存 Run/Summary/Manifest/Export Job，Doris 保存按数据集版本隔离的限期 RAW、问题记录和问题项，MinIO/S3 保存限期导出对象。该方案当前为 `CONFIRMED_FOR_SIGNOFF`，用户签字前不得创建表、固定生产参数或据此实施后端。
+- C1 物理 Review 已形成 `P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md`：PostgreSQL 保存 Run/Summary/Manifest/Export Job，Doris 保存按数据集版本隔离的限期 RAW、问题记录和问题项，MinIO/S3 保存限期导出对象。该方案当前为 `FROZEN_FOR_IMPLEMENTATION`，用户签字前不得创建表、固定生产参数或据此实施后端。
 - 明细到期清理后仍可查看长期汇总，但页面必须明确提示明细已清理以及清理时间。
 
 ### 2.4 与正式同步的边界
@@ -70,7 +73,7 @@
 - 旧文档中的 `FULL_ONLY + TRUNCATE + DUPLICATE_KEY` 仅作为历史术语；当前实现不得把它映射为整表 `TRUNCATE TABLE`、SeaTunnel `DROP_DATA` 或其他会清空共享表全部机构数据的操作。
 - 底层优先采用能够先完整装载和校验、再原子替换当前机构分区或范围的方案；无法原子替换时，必须单独 Review staging、失败恢复、查询空窗和机构隔离，不得简单“先删当前机构、再边读边逐批写入”。
 - 无论采用何种物理策略，都必须证明只影响当前任务所属机构，其他机构数据保持不变。
-- C2 物理 Review 已形成 `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`：一机构一正式 LIST 分区、Execution 临时分区、原子 `REPLACE PARTITION`、独立旧数据备份和失败回滚。该方案当前为 `CONFIRMED_FOR_SIGNOFF`；用户签字前仍不授权修改 Doris DDL 或执行代码。
+- C2 物理 Review 已形成 `P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md`：一机构一正式 LIST 分区、Execution 临时分区、原子 `REPLACE PARTITION`、独立旧数据备份和失败回滚。该方案当前为 `FROZEN_FOR_IMPLEMENTATION`；用户签字前仍不授权修改 Doris DDL 或执行代码。
 
 ## 4. 同步后校验
 
@@ -102,15 +105,17 @@
 
 ## 6. 当前阶段状态和实施授权
 
-- 当前阶段为“阶段 1：可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。
-- 已完成：可信 `spec/` 清理和优先级恢复、最新流程规则确认、Java 生产代码迁移与 JDK 21 编译、老库结构快照及历史 SQL 审计。
-- 已完成 Review、等待签字：C1 预检明细物理方案、C2 Doris 机构范围原子替换、C3 账号权限/审计/告警/External API/Quartz 支撑对象，以及核心文档一致性收口。
-- 尚未完成：用户对阶段 1 目标模型的明确签字和实施授权；OpenAPI 3.1、完整物理表字典/Flyway `V1`、独立 PostgreSQL 空库迁移、真实后端接口、Doris 能力探针、RabbitMQ/Quartz 集成、前后端联调和端到端验收。
-- 当前实施授权为 `NO`：目标模型最终签字前，不创建或固化 Flyway `V1__baseline.sql`，不依据 Review 草案批量改造数据库、后端或前端。
-- `CONFIRMED` 只表示业务语义已确认，不等于技术设计 `FROZEN`；`IMPLEMENTED` 也不等于真实环境 `VERIFIED`。
+- 阶段 1“可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”已于 2026-08-17 完成。
+- 用户明确批准：`批准阶段 1 目标模型并授权实施。`。
+- 签字基线为 `938566a6659fbf445e00f472ba932fe446d1d886`；目标模型状态为 `FROZEN`，实施授权为 `YES`。
+- 阶段 2“OpenAPI、物理表字典、Flyway V1 与后端接口实施”当前为 `IN_PROGRESS`。
+- D1 已完成：OpenAPI 3.1 已生成并通过与 Markdown 合同的全量接口集合校验。
+- 下一项为 D2：生成完整 PostgreSQL 物理表字典和 Flyway V1，并在独立空库完成 migrate/validate。
+- Java 后端、真实 PostgreSQL、Doris 能力探针、RabbitMQ、Quartz、前后端联调和端到端验收仍未完成。
+- `FROZEN` 表示设计基线已签字；`GENERATED` 不等于 `IMPLEMENTED`，`IMPLEMENTED` 不等于真实环境 `VERIFIED`。
 
 ## 7. 变更控制
 
-- 本文件不授权创建或修改 Java、TypeScript、SQL、Flyway、数据库表、外键、状态机或前端信息架构。
-- A1–A3 页面合同、REST API V1 和 C1–C3 物理方案已经形成；目标模型当前为 `READY_FOR_SIGNOFF`。在用户明确批准前，它们不得被解释为 `FROZEN` 或实施授权。
+- 本文件自身不构成实施授权；本轮授权来自用户在 2026-08-17 的明确签字，实施必须遵循已冻结 Spec、OpenAPI 和 D1–D10 顺序。
+- A1–A3 页面合同、REST API V1 和 C1–C3 物理方案已经签字冻结；任何破坏性变化必须先修改权威 Spec，再重新生成 OpenAPI/DDL 并追加迁移。
 - 后续新文档不得从错误规划稿反向推导“当前模型已冻结”“技术 Review 已通过”或“数据库/后端实施已授权”。

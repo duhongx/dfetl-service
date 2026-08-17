@@ -1,10 +1,10 @@
 # 阶段 1 目标模型签字单
 
-> 状态：`READY_FOR_USER_SIGNOFF`  
+> 状态：`SIGNED_AND_AUTHORIZED`  
 > 日期：2026-08-17  
-> 当前实施授权：`NO`  
+> 当前实施授权：`YES`  
 > 签字对象：P0 目标元数据模型、预检明细物理方案、Doris 机构范围替换、P0 支撑对象、前端 API V1 合同  
-> 边界：本文件准备签字，不代表用户已经批准实施。
+> 边界：用户已完成阶段 1 签字并授权实施；本文记录冻结基线和后续变更治理，不表示所有后端与数据库实现已经完成。
 
 ## 1. 签字范围
 
@@ -27,7 +27,7 @@
 
 ### C1：预检问题明细物理方案
 
-状态：`CONFIRMED_FOR_SIGNOFF`
+状态：`FROZEN_FOR_IMPLEMENTATION`
 
 最终选择：
 
@@ -51,7 +51,7 @@ MinIO/S3：限期导出对象
 
 ### C2：Doris 机构范围原子替换
 
-状态：`CONFIRMED_FOR_SIGNOFF`
+状态：`FROZEN_FOR_IMPLEMENTATION`
 
 最终选择：
 
@@ -78,7 +78,7 @@ MinIO/S3：限期导出对象
 
 ### C3：P0 支撑对象
 
-状态：`CONFIRMED_FOR_SIGNOFF`
+状态：`FROZEN_FOR_IMPLEMENTATION`
 
 已确认：
 
@@ -124,7 +124,7 @@ MinIO/S3：限期导出对象
 
 ## 5. 签字后的实施顺序
 
-只有用户明确签字并授权后，才进入以下顺序：
+签字和实施授权条件已经满足，阶段 2 按以下顺序推进：
 
 ```text
 D1 生成 OpenAPI 3.1 合同文件
@@ -141,29 +141,34 @@ D10 PostgreSQL、Doris、RabbitMQ、Quartz 端到端验证
 
 OpenAPI 先从 `FRONTEND_API_CONTRACT_V1.md` 生成，再由后端实现匹配合同；不得先写 Controller 再反向拼接接口文档。
 
-## 6. 实施授权条件
+## 6. 实施授权结果
 
-实施授权必须同时满足：
+以下条件已于 2026-08-17 全部满足：
 
-1. 用户明确确认本签字单；
-2. `TARGET_METADATA_MODEL.md` 状态由 `READY_FOR_SIGNOFF` 改为 `FROZEN`；
-3. 实施授权由 `NO` 改为 `YES`；
-4. `TASKS.md` 中 Signoff Gate 勾选完成；
-5. 在同一提交中记录签字日期、签字基线 Commit 和后续变更治理规则。
+1. 用户明确回复：`批准阶段 1 目标模型并授权实施。`；
+2. 签字基线固定为 `938566a6659fbf445e00f472ba932fe446d1d886`；
+3. `TARGET_METADATA_MODEL.md` 状态改为 `FROZEN`；
+4. 实施授权改为 `YES`；
+5. `TASKS.md` 的 Signoff Gate 已完成；
+6. C1–C3 物理设计进入 `FROZEN_FOR_IMPLEMENTATION`；
+7. 后续变更继续遵循“先 Spec、再 OpenAPI/DDL、最后代码”的治理顺序。
 
-建议使用的明确签字语句：
+授权范围：
 
 ```text
-批准阶段 1 目标模型并授权实施。
+允许生成和维护 OpenAPI 3.1
+允许设计并创建新系统 Flyway V1
+允许按冻结合同实施 Java 后端和真实前端接口
+允许执行隔离 PostgreSQL / Doris / RabbitMQ / Quartz 验证
 ```
 
-在出现该明确批准之前：
+仍然禁止：
 
 ```text
-不得创建 Flyway V1
-不得生成或提交后端接口实现
-不得修改 PostgreSQL / Doris 生产结构
-不得把 READY_FOR_SIGNOFF 解释为 FROZEN
+对老 df_ygt/df_etl 执行 Flyway baseline
+直接修改生产 PostgreSQL 或 Doris 结构
+把 OpenAPI 已生成解释为后端接口已完成
+跳过空库迁移、能力探针和端到端验证
 ```
 
 ## 7. 签字后变更治理
@@ -179,15 +184,20 @@ OpenAPI 先从 `FRONTEND_API_CONTRACT_V1.md` 生成，再由后端实现匹配�
 
 ## 8. 当前判断
 
-C1、C2、C3 已具备签字所需的物理方案、状态机、约束、索引、安全和验收边界。签字前一致性复核已消除“固定一张 RAW / 不登记任何 Doris 合同”与 C1/C2 之间的旧表述冲突。当前不存在需要继续由前端产品层确认的未决问题。
+阶段 1 已正式签字并完成冻结。签字基线为 `938566a6659fbf445e00f472ba932fe446d1d886`，用户批准语句为 `批准阶段 1 目标模型并授权实施。`。
 
-剩余门槛仅为用户签字和实施授权；因此当前准确状态是：
+D1 已在本次实施提交中完成：OpenAPI 3.1 由 `FRONTEND_API_CONTRACT_V1.md` 生成，并通过 Method/Path 全量覆盖、JSON 结构、权限扩展、幂等 Header 和 Revision Header 校验。
+
+当前准确状态：
 
 ```text
-Target Model: READY_FOR_SIGNOFF
-Implementation Authorization: NO
-OpenAPI: NOT_GENERATED
+Phase 1: COMPLETED
+Target Model: FROZEN
+Implementation Authorization: YES
+OpenAPI: GENERATED_AND_VALIDATED
 Backend API: NOT_IMPLEMENTED
-Flyway V1: NOT_AUTHORIZED
+Flyway V1: AUTHORIZED_NOT_CREATED
 End-to-End: NOT_VERIFIED
 ```
+
+下一实施工作包为 D2：生成完整 PostgreSQL 物理表字典和 `V1__baseline.sql`，先在隔离空库执行 migrate/validate，再开始 Java 领域实现。

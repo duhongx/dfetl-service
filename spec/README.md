@@ -6,7 +6,7 @@
 > A1–A3 产品合同：2026-08-17  
 > 清理前 `main`：`5268dc54aaf3abef0785d3cd336ce87271404964`  
 > 可信交接提交：`341e3b5d070e5b2a242457c74d325ca7639c43d4`  
-> 范围：仅清理和维护 `spec/` 文档；不修改 Java、TypeScript、SQL、Flyway 或数据库结构。
+> 范围：维护可信 Spec、生成 OpenAPI 和实施状态；本次仍不修改 Java、Flyway 或生产数据库结构。
 
 ## 1. 实际读取与差异结论
 
@@ -52,7 +52,7 @@ head behind by 0 commits
 
 `FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 冻结页面行为，`FRONTEND_API_CONTRACT_V1.md` 冻结 REST 合同，C1–C3 文档冻结对应物理方案。
 
-`TARGET_METADATA_MODEL.md` 已达到 `READY_FOR_SIGNOFF`，但仍不代表用户最终签字；实施授权保持 `NO`，不授权创建 Flyway V1、OpenAPI 实现或批量修改后端。
+`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用户签字并进入 `FROZEN`；实施授权为 `YES`，D1 OpenAPI 已生成，D2 Flyway V1 尚未创建。
 
 ## 2.1 当前阶段与实施授权
 
@@ -62,13 +62,13 @@ head behind by 0 commits
 | 最新流程业务规则 | `CONFIRMED` | 预检问题明细、正式同步、无主键范围替换、校验和 RabbitMQ 规则已确认。 |
 | A1–A3 前端产品合同 | `IMPLEMENTED` | A3 Mock 产品行为已完成并通过 ESLint/Next.js 生产构建；真实 API 和服务端尚未实施。 |
 | 核心文档一致性 | `ALIGNED` | 已同步修订核心文档冲突，并建立 A1–A3 产品合同。 |
-| P0 目标元数据模型 | `READY_FOR_SIGNOFF` | C1 预检明细、C2 Doris 范围替换和 C3 支撑对象已完成 Review；等待用户签字，实施授权仍为 NO。 |
-| Flyway V1 | `NOT_AUTHORIZED` | 目标模型最终签字前不得创建或固化 `V1__baseline.sql`。 |
+| P0 目标元数据模型 | `FROZEN` | 阶段 1 已签字；C1–C3 成为 DDL 和后端实施基线。 |
+| Flyway V1 | `AUTHORIZED_NOT_CREATED` | D2 将生成物理字典和 V1，D3 在独立空库验证。 |
 | Java 生产代码迁移 | `IMPLEMENTED` | 迁移和 JDK 21 编译完成；真实 PostgreSQL 启动与健康检查尚未验证。 |
 | 前端产品整改 | `IMPLEMENTED` | 页面、操作、权限、确认、审计、分页和主要失败/空状态已完成；真实 API 接入进入下一阶段。 |
 | 前后端业务闭环 | `IN_PROGRESS` | Web 仍有 Mock，真实 API、数据库和端到端联调尚未完成。 |
 
-阶段 1 的准确名称是“可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。`CONFIRMED` 不等于技术设计 `FROZEN`，`IMPLEMENTED` 不等于真实环境 `VERIFIED`。当前实施授权为 `NO`。
+阶段 1 已完成并签字；阶段 2“OpenAPI、物理表字典、Flyway V1 与后端接口实施”为 `IN_PROGRESS`。当前实施授权为 `YES`；OpenAPI 为 `GENERATED_AND_VALIDATED`，后端和端到端仍未完成。
 
 ## 3. 当前有效：保留、回退改写或新增
 
@@ -78,13 +78,16 @@ head behind by 0 commits
 | `spec/CURRENT_CONFIRMED_PROCESS_RULES.md` | 当前有效 | 新增 | 只保留后来由用户明确确认的预检、正式同步、校验和 RabbitMQ 数据集级消息规则。 |
 | `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` | 当前有效、产品合同 | 新增并持续维护 | 冻结 A1–A3 产品合同；前端 Mock 行为已实现，服务端仍待实施。 |
 | `spec/FRONTEND_API_CONTRACT_V1.md` | 当前有效、API 合同 | 新增 | 冻结页面到 REST API、分页、Revision、幂等、权限、审计、错误码、导出任务和长任务状态合同。 |
+| `spec/openapi/dfetl-api-v1.json` | 当前有效、生成合同 | 新增 | OpenAPI 3.1；由 Markdown 合同确定性生成，覆盖 167 个 operations。 |
+| `scripts/generate_openapi_v1.py` | 生成与校验工具 | 新增 | 无第三方依赖；生成 OpenAPI并校验 Method/Path、幂等、Revision、权限扩展和合同 Hash。 |
+| `.github/workflows/openapi-check.yml` | CI 合同门禁 | 新增 | 合同或生成器变化时验证 OpenAPI 未漂移。 |
 | `spec/P0_PRECHECK_DETAIL_PHYSICAL_DESIGN.md` | 当前有效、C1 物理设计 | 新增 | 冻结 PostgreSQL 控制面、Doris 明细面、MinIO/S3 导出面及生命周期。 |
 | `spec/P0_DORIS_INSTITUTION_SCOPE_REPLACE_DESIGN.md` | 当前有效、C2 物理设计 | 新增 | 冻结 LIST 分区、临时分区替换、备份回滚、Label 和能力探针。 |
 | `spec/P0_SUPPORT_OBJECT_PHYSICAL_MODEL.md` | 当前有效、C3 物理设计 | 新增 | 冻结 RBAC、审计、设置、导出、幂等、告警、External Client 和 Quartz。 |
-| `spec/PHASE1_TARGET_MODEL_SIGNOFF.md` | 当前有效、签字单 | 新增 | 记录签字范围、实施授权条件、冻结边界和 D1–D10 实施顺序。 |
+| `spec/PHASE1_TARGET_MODEL_SIGNOFF.md` | 当前有效、已签字 | 新增 | 记录批准语句、签字基线、授权结果、冻结边界和 D1–D10 实施顺序。 |
 | `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退并对齐 | 恢复可信交接内容，并于 2026-08-17 对齐问题记录级预检和 `REPLACE_INSTITUTION_SCOPE`。 |
-| `spec/TARGET_METADATA_MODEL.md` | 当前有效、Review 中 | 回退并对齐 | 恢复可信 Review 模型并补充问题明细逻辑合同；物理载体未确认，仍未冻结。 |
-| `spec/TASKS.md` | 当前有效 | 回退并对齐 | 恢复可信任务清单，并明确阶段 1 为 `IN_PROGRESS`、实施授权为 `NO`。 |
+| `spec/TARGET_METADATA_MODEL.md` | 当前有效、已冻结 | 回退并对齐 | 阶段 1 签字后的 P0 PostgreSQL/Doris/后端实施基线。 |
+| `spec/TASKS.md` | 当前有效 | 回退并对齐 | 阶段 1 已完成；阶段 2 D1 完成、D2–D10 待实施。 |
 | `spec/DATABASE_MIGRATION_BASELINE.md` | 当前有效 | 回退改写 | 恢复可信数据库隔离、Flyway 治理和迁移规则。 |
 
 ## 4. 历史审计：保留或归档保留
@@ -219,17 +222,9 @@ spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md
 2. **A2 无主键机构范围替换前端语义**：普通用户统一看到“每次全量 · 替换当前机构范围”，界面不得出现 TRUNCATE、DROP_DATA 或清空共享整表的表达。
 3. **A3 页面—操作—权限—审计矩阵**：确认目标信息架构、`domain.action` 权限命名、确认等级、审计通则，以及全部主要页面的操作、权限和审计事件。
 
-当前状态：产品合同 `CONFIRMED`，前端代码 `NOT_IMPLEMENTED`，API 与物理模型继续 `IN_REVIEW`。
+当前状态：产品合同和前端 Mock 行为 `IMPLEMENTED`，API 与物理模型 `FROZEN_FOR_IMPLEMENTATION`，OpenAPI `GENERATED_AND_VALIDATED`。
 
-下一工作包：
-
-```text
-B1：按目标信息架构整改路由和菜单
-B2：实现 A1 预检 Route/Run/汇总/明细页面
-B3：统一 A2 无主键任务文案和确认交互
-B4：建立权限指令、危险确认和审计调用的前端公共层
-B5：按 A3 矩阵逐页消除空按钮和旧模型交互
-```
+B1–B5 已全部完成；真实接口切换进入阶段 2 的 D9。
 
 ## 12. 2026-08-17 A3 交互与 API 合同完成
 
@@ -243,27 +238,42 @@ REST API 合同：FROZEN_FOR_IMPLEMENTATION
 Java 后端接口：NOT_IMPLEMENTED
 服务端鉴权与审计：NOT_IMPLEMENTED
 PostgreSQL / Doris / RabbitMQ：NOT_IMPLEMENTED
-Flyway V1：NOT_AUTHORIZED
+Flyway V1：AUTHORIZED_NOT_CREATED
 ```
 
 
-## 13. 2026-08-17 C1–C3 物理设计完成
-
-已完成：
+## 13. 2026-08-17 C1–C3 物理设计与阶段 1 签字
 
 ```text
-C1 Precheck Detail Physical Design
-C2 Doris Institution Scope Replace Design
-C3 P0 Support Object Physical Model
+C1 Precheck Detail Physical Design: FROZEN_FOR_IMPLEMENTATION
+C2 Doris Institution Scope Replace Design: FROZEN_FOR_IMPLEMENTATION
+C3 P0 Support Object Physical Model: FROZEN_FOR_IMPLEMENTATION
+Target Model: FROZEN
+Implementation Authorization: YES
+Signoff Baseline: 938566a6659fbf445e00f472ba932fe446d1d886
 ```
 
-目标模型状态推进为 `READY_FOR_SIGNOFF`。这只表示评审材料完整，不表示已签字。用户明确批准前：
+签字范围和变更治理见 `PHASE1_TARGET_MODEL_SIGNOFF.md`。
+
+## 14. 2026-08-17 D1 OpenAPI 3.1 完成
+
+已生成：
 
 ```text
-Implementation Authorization: NO
-Flyway V1: NOT_AUTHORIZED
-OpenAPI: NOT_GENERATED
-Backend API: NOT_IMPLEMENTED
+spec/openapi/dfetl-api-v1.json
+scripts/generate_openapi_v1.py
+.github/workflows/openapi-check.yml
 ```
 
-签字范围和实施顺序见 `PHASE1_TARGET_MODEL_SIGNOFF.md`。
+验证结果：
+
+```text
+OpenAPI Version: 3.1.0
+Operation Count: 167
+Markdown Method/Path Coverage: EXACT MATCH
+Idempotency-Key on Commands: PASS
+If-Match on PATCH/PUT: PASS
+Contract SHA-256 Binding: PASS
+```
+
+下一工作包为 D2：物理表字典和 Flyway V1。
