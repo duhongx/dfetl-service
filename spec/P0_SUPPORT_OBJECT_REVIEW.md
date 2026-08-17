@@ -1,6 +1,6 @@
 # P0 支撑对象 Review
 
-> 状态：阶段 1 FK + Unique + Status/CHECK + Delete Behavior Matrix 已确认并收口  
+> 状态：阶段 1 技术模型已冻结；P-002 管理员账号入口已确认  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > FK：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
@@ -47,6 +47,36 @@ STATE_ONLY
 不提供物理 DELETE，不增加 `deleted_at`；当前用户不能停用自己，最后一个启用账号不能停用。停用/重置密码使 Refresh Token 失效。
 
 普通审计 User FK 可 `SET NULL`，运行责任 User FK 使用 `RESTRICT`，但这不改变产品上账号不可删除的规则。
+
+### 2.1 管理员账号前端入口
+
+P-002 已确认，最终信息架构固定为：
+
+```text
+系统设置
+└── 账号管理
+```
+
+即：
+
+```text
+系统设置 → 账号管理
+```
+
+`账号管理` 页面固定提供：
+
+```text
+列表
+新增
+启用 / 停用
+重置密码
+```
+
+不建设角色、权限、机构级数据权限或 RBAC 配置页面。
+
+个人中心只维护当前登录账号自身资料与修改密码，不替代系统级账号管理页面。
+
+本节确认的是**产品入口和页面职责**；页面实际实现、URL、状态/空态/错误态及交互仍由前端 100% 验收任务确认。
 
 ## 3. `audit_log`
 
@@ -264,6 +294,8 @@ requested_by/requested_by_user_id/confirmed_by/triggered_by/cancel_requested_by
 ## 10. 验收
 
 - User/External Client 无删除入口，只启停。
+- 管理员账号管理入口固定为 `系统设置 → 账号管理`。
+- 账号管理只提供列表、新增、启停、重置密码，不建设 RBAC。
 - System Setting 无自由 DELETE。
 - Alert Rule/Channel 可物理删且 Snapshot 保持历史可解释。
 - Event/Delivery 永久保留。
