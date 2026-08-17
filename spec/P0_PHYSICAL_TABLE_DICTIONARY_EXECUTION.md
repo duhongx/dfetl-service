@@ -1,11 +1,13 @@
 # P0 物理表字典：Execution、Batch、Precheck、Validation 与 Message Outbox
 
-> 状态：阶段 1 FK Matrix 已确认并收口  
+> 状态：阶段 1 FK + Unique + Status/Enum/CHECK Matrix 已确认并收口  
 > 最近更新：2026-08-17  
 > Task 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_TASKS_WATERMARK.md`  
 > Route 字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md`  
 > Validation：`spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md`  
 > FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
+> Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
+> Status/CHECK 基线：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
 > Delete Snapshot：`spec/P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`。
 
@@ -20,35 +22,17 @@ validation_run
 message_outbox
 ```
 
-明确不建立：
+明确不建立 Task Version、Multi-Institution Route、Execution Checkpoint、Validation Segment、行级 Precheck Issue、Message Attempt/分页进度等旧对象。
 
-```text
-sync_task_version
-collection_route_version_institution
-execution_checkpoint
-execution_reconciliation
-validation_run_segment
-validation_difference_summary
-Precheck 行级 Issue 表
-message_delivery_attempt
-Message 分页进度/逐条消息表
-异步导出任务表
-```
+运行模型统一原则：
 
-核心原则：
-
-- Task 保存当前配置；Execution/Validation 创建时固定不可变启动上下文。
-- Route 为单机构对象，运行层统一使用 Route Version 四元身份。
-- Watermark/Validation 必须由数据库证明 Execution 属于同一 Task。
-- External API Execution 必须由数据库证明来源于同一 Client 的真实 `external_api_request`。
-- Outbox 只使用父 Execution 强复合身份 FK。
-- 历史运行对象全部 `ON DELETE RESTRICT`。
+- `SUCCEEDED` 表示同步/批次/发布等业务动作真正成功。
+- `COMPLETED + result` 表示 Precheck/Validation 等检查流程技术完成，最终结果单独表达。
+- 历史运行使用 RESTRICT FK 和启动快照。
 
 ## 2. `sync_execution`
 
-职责：一次真实同步运行的 Task 身份、启动配置快照、固定范围、状态、统计和错误摘要。
-
-### 2.1 字段
+### 2.1 核心字段
 
 ```text
 id bigint identity PK
@@ -76,10 +60,8 @@ status varchar(20) NOT NULL DEFAULT 'PENDING'
 execution_scope varchar(24) NOT NULL
 target_prepare_mode varchar(40) NOT NULL DEFAULT 'NONE'
 
-window_lower timestamptz NULL
-window_upper timestamptz NULL
-key_lower jsonb NULL
-key_upper jsonb NULL
+window_lower/window_upper timestamptz NULL
+key_lower/key_upper jsonb NULL
 watermark_before timestamptz NULL
 watermark_commit_expected boolean NOT NULL DEFAULT false
 
@@ -96,9 +78,7 @@ validation_contract_forced boolean NOT NULL DEFAULT false
 message_policy_snapshot jsonb NOT NULL DEFAULT '{}'
 checksum_protocol_version varchar(64) NOT NULL
 
-source_row_count bigint NOT NULL DEFAULT 0
-loaded_row_count bigint NOT NULL DEFAULT 0
-rejected_row_count bigint NOT NULL DEFAULT 0
+source_row_count/loaded_row_count/rejected_row_count bigint NOT NULL DEFAULT 0
 batch_count integer NOT NULL DEFAULT 0
 engine_job_id varchar(128) NULL
 
@@ -107,22 +87,12 @@ cancel_requested_by bigint NULL
 cancel_reason varchar(1000) NULL
 error_code varchar(100) NULL
 error_message varchar(2000) NULL
-started_at timestamptz NULL
-finished_at timestamptz NULL
+started_at/finished_at timestamptz NULL
 revision bigint NOT NULL DEFAULT 0
-created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
-updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+created_at/updated_at timestamptz NOT NULL
 ```
 
-不保存：
-
-```text
-task_version_id
-validation_policy_snapshot
-execution_contract_hash
-```
-
-### 2.2 受控值
+### 2.2 枚举
 
 ```text
 operation_type: NORMAL / RECOLLECT / BACKFILL
@@ -134,434 +104,297 @@ validation_method: ROW_COUNT / ROW_COUNT_CHECKSUM
 validation_source: GLOBAL / DATASET / TASK / CONTRACT
 ```
 
-Task 三种固定组合必须与 `sync_task` 一致。
+`sync_execution.validation_source` 不允许 `FIXED`。
 
-### 2.3 FK：Task 身份
-
-```text
-FOREIGN KEY (task_id,institution_id,dataset_id)
-REFERENCES sync_task(id,institution_id,dataset_id)
-ON DELETE RESTRICT
-```
-
-### 2.4 FK：Route/Dataset Version
+### 2.3 FK
 
 ```text
-FOREIGN KEY (
-  route_version_id,
-  institution_id,
-  dataset_id,
-  dataset_version_id
-)
-REFERENCES collection_route_version(
-  id,
-  institution_id,
-  dataset_id,
-  dataset_version_id
-)
-ON DELETE RESTRICT
+(task_id,institution_id,dataset_id)
+→ sync_task(id,institution_id,dataset_id) RESTRICT
+
+(route_version_id,institution_id,dataset_id,dataset_version_id)
+→ collection_route_version(id,institution_id,dataset_id,dataset_version_id) RESTRICT
+
+(dataset_version_id,incremental_field_code)
+→ standard_dataset_field(dataset_version_id,field_code) RESTRICT
+
+(external_client_id,external_request_id)
+→ external_api_request(client_id,request_id) RESTRICT
+
+requested_by_user_id/cancel_requested_by
+→ app_user(id) RESTRICT
 ```
 
-不再额外建立 Route/Dataset/Institution 的重复单列 FK。
-
-### 2.5 FK：Incremental Field
+### 2.4 Trigger CHECK
 
 ```text
-FOREIGN KEY (dataset_version_id,incremental_field_code)
-REFERENCES standard_dataset_field(dataset_version_id,field_code)
-ON DELETE RESTRICT
+SCHEDULED
+→ schedule_fire_time IS NOT NULL
+→ requested_by_user_id IS NULL
+→ external_client_id/external_request_id IS NULL
+
+MANUAL
+→ requested_by_user_id IS NOT NULL
+→ schedule_fire_time IS NULL
+→ external_client_id/external_request_id IS NULL
+
+EXTERNAL_API
+→ external_client_id/external_request_id IS NOT NULL
+→ requested_by_user_id IS NULL
+→ schedule_fire_time IS NULL
 ```
 
-可空时不触发。
-
-### 2.6 FK：External API Request
-
-External API Execution 必须关联真实幂等请求：
+### 2.5 Operation CHECK
 
 ```text
-FOREIGN KEY (external_client_id,external_request_id)
-REFERENCES external_api_request(client_id,request_id)
-ON DELETE RESTRICT
+BACKFILL
+→ trigger_type='MANUAL'
+→ execution_scope IN ('BACKFILL_TIME','BACKFILL_KEY')
+→ watermark_commit_expected=false
+
+RECOLLECT
+→ trigger_type='MANUAL'
+→ execution_scope IN ('FULL','INITIAL_FULL','INCREMENTAL')
+
+NORMAL
+→ trigger_type IN ('SCHEDULED','MANUAL','EXTERNAL_API')
+→ execution_scope IN ('FULL','INITIAL_FULL','INCREMENTAL')
 ```
 
-固定 CHECK 语义：
+### 2.6 Range CHECK
 
 ```text
-trigger_type='EXTERNAL_API'
-→ external_client_id/external_request_id 均非空
+INCREMENTAL/BACKFILL_TIME
+→ window_lower/window_upper 均非空
+→ window_lower < window_upper
+→ key_lower/key_upper 均为空
 
-trigger_type<>'EXTERNAL_API'
-→ external_client_id/external_request_id 均为空
+BACKFILL_KEY
+→ window_lower/window_upper 均为空
+→ key_lower/key_upper 均非空
+
+FULL/INITIAL_FULL
+→ window_lower/window_upper/key_lower/key_upper 均为空
 ```
 
-因此不会出现 Execution 写了 Client A，却引用 Client B 的 Request ID。
-
-### 2.7 责任用户 FK
+### 2.7 Terminal / Cancel CHECK
 
 ```text
-requested_by_user_id → app_user(id) ON DELETE RESTRICT
-cancel_requested_by  → app_user(id) ON DELETE RESTRICT
+PENDING/RUNNING/LOADING/VALIDATING → finished_at IS NULL
+SUCCEEDED/FAILED/CANCELLED          → finished_at IS NOT NULL
+
+SUCCEEDED
+→ rejected_row_count=0
+→ error_code/error_message IS NULL
+
+FAILED
+→ error_code IS NOT NULL
+
+cancel_requested_at IS NULL  → cancel_requested_by IS NULL
+cancel_requested_at IS NOT NULL → cancel_requested_by IS NOT NULL
+CANCELLED → cancel_requested_at IS NOT NULL
 ```
 
-MANUAL Execution 必须有 `requested_by_user_id`；SCHEDULED/EXTERNAL_API 不要求本地用户。
+`CANCELLED` 只表示明确取消，不承担技术失败语义。
 
-### 2.8 Parent Unique / Index
+### 2.8 Unique / Index
 
 ```text
 UNIQUE(execution_uuid)
 UNIQUE(id,task_id)
 UNIQUE(id,task_id,dataset_id,institution_id)
-```
 
-用途：
-
-- `(id,task_id)`：Watermark/Validation 同 Task Execution FK；
-- 四列：Outbox 身份 FK。
-
-并发：
-
-```text
 UNIQUE INDEX uk_sync_execution_active_task
 ON sync_execution(task_id)
 WHERE status IN ('PENDING','RUNNING','LOADING','VALIDATING')
 ```
 
-查询/FK 子索引：
-
-```text
-INDEX idx_sync_execution_task_history
-ON sync_execution(task_id,created_at DESC,id DESC)
-
-INDEX idx_sync_execution_route_version
-ON sync_execution(route_version_id,created_at DESC,id DESC)
-
-INDEX idx_sync_execution_status
-ON sync_execution(status,created_at,id)
-
-INDEX idx_sync_execution_dataset_history
-ON sync_execution(dataset_id,institution_id,created_at DESC,id DESC)
-
-INDEX idx_sync_execution_engine_job
-ON sync_execution(engine_job_id)
-WHERE engine_job_id IS NOT NULL
-
-INDEX idx_sync_execution_external_request
-ON sync_execution(external_client_id,external_request_id)
-WHERE external_client_id IS NOT NULL
-```
-
-### 2.9 状态/范围边界
-
-- INCREMENTAL/BACKFILL_TIME 使用时间范围。
-- BACKFILL_KEY 使用 Key Range。
-- FULL/INITIAL_FULL 不制造伪业务窗口。
-- BACKFILL 固定 `watermark_commit_expected=false`。
-- 活动态 `finished_at=NULL`；终态必须有 `finished_at`。
-- SUCCEEDED 必须 `rejected_row_count=0`；FAILED 必须有 `error_code`。
-- Cancel 不新增 CANCELLING；先确认在途 Doris Label，再收敛为 CANCELLED。
+并保留 Task History、Route Version、Status、Dataset、Engine Job、External Request 查询索引。
 
 ## 3. `load_batch`
 
-字段：
+核心字段：Execution、Batch No、游标、行数、Payload Checksum、Doris Label/Txn/State、Probe、时间和错误摘要。
 
 ```text
-id bigint identity PK
-execution_id bigint NOT NULL
-batch_no integer NOT NULL
-status varchar(20) NOT NULL DEFAULT 'PENDING'
-cursor_lower/cursor_upper jsonb NULL
-source_row_count/loaded_row_count/rejected_row_count bigint NOT NULL DEFAULT 0
-payload_checksum varchar(128) NULL
-doris_label varchar(128) NOT NULL
-doris_txn_id bigint NULL
-doris_state varchar(32) NULL
-probe_count integer NOT NULL DEFAULT 0
-last_probed_at/submitted_at/visible_at timestamptz NULL
-error_code/error_message
-created_at/updated_at
+status:
+PENDING / LOADING / PROBING / SUCCEEDED / FAILED / CANCELLED
+
+doris_state:
+UNKNOWN / PREPARE / COMMITTED / VISIBLE / ABORTED
 ```
 
 FK：
 
 ```text
-FOREIGN KEY (execution_id)
-REFERENCES sync_execution(id)
-ON DELETE RESTRICT
+execution_id → sync_execution(id) RESTRICT
 ```
 
-`UNIQUE(execution_id,batch_no)` 已覆盖 FK 子列。
-
-状态：
+Unique：
 
 ```text
-PENDING/LOADING/PROBING/SUCCEEDED/FAILED/CANCELLED
-Doris: UNKNOWN/PREPARE/COMMITTED/VISIBLE/ABORTED
+UNIQUE(execution_id,batch_no)
+UNIQUE(doris_label)
 ```
 
-只有 VISIBLE + rejected=0 才成功。响应不明确只探测原 Label，不自动新 Label 重投。
+CHECK：
+
+```text
+SUCCEEDED
+→ doris_state='VISIBLE'
+→ visible_at IS NOT NULL
+→ rejected_row_count=0
+→ error_code/error_message IS NULL
+
+FAILED → error_code IS NOT NULL
+ABORTED → status='FAILED'
+非 SUCCEEDED → visible_at IS NULL
+```
+
+`COMMITTED` 不是 DFETL 成功终态；不明确结果只探测原 Label。
 
 ## 4. `precheck_run`
 
-职责：一次单机构 Route 的人工全量 Precheck。
-
-核心字段：
-
 ```text
-id/run_uuid
-route_id/route_version_id
-institution_id/institution_code
-dataset_id/dataset_version_id
-execution_status/result_status/current_phase
-source_structure_hash/field_resolution_hash/dataset_definition_hash
-extracted_row_count/checked_row_count/issue_row_count/issue_summary_count
-raw_retention_deadline/raw_cleanup_status/raw_cleaned_at/raw_cleanup_error
-cancel_requested_at
-requested_by
-error_code/error_message
-started_at/finished_at/created_at/updated_at
+execution_status:
+PENDING / EXTRACTING / VALIDATING / COMPLETED / FAILED / CANCELLED
+
+result_status:
+PASS / ISSUES
+
+current_phase:
+STRUCTURE / EXTRACT / VALIDATE / COMPLETE
+
+raw_cleanup_status:
+NOT_READY / PENDING / CLEANED / FAILED
 ```
 
 FK：
 
 ```text
-FOREIGN KEY (route_id,route_version_id)
-REFERENCES collection_route_version(route_id,id)
-ON DELETE RESTRICT
+(route_id,route_version_id)
+→ collection_route_version(route_id,id) RESTRICT
 
-FOREIGN KEY (
-  route_version_id,
-  institution_id,
-  dataset_id,
-  dataset_version_id
-)
-REFERENCES collection_route_version(
-  id,
-  institution_id,
-  dataset_id,
-  dataset_version_id
-)
-ON DELETE RESTRICT
+(route_version_id,institution_id,dataset_id,dataset_version_id)
+→ collection_route_version(id,institution_id,dataset_id,dataset_version_id) RESTRICT
+
+requested_by → app_user(id) RESTRICT
 ```
 
-两条复合 FK 分别证明：Version 属于 Route、运行身份属于该 Version，不属于重复单列 FK。
-
-责任用户：
+CHECK：
 
 ```text
-requested_by → app_user(id) ON DELETE RESTRICT
+PENDING/EXTRACTING/VALIDATING
+→ result_status IS NULL
+→ finished_at IS NULL
+
+COMPLETED
+→ result_status IN ('PASS','ISSUES')
+→ current_phase='COMPLETE'
+→ finished_at IS NOT NULL
+→ error_code/error_message IS NULL
+
+FAILED
+→ result_status IS NULL
+→ finished_at IS NOT NULL
+→ error_code IS NOT NULL
+
+CANCELLED
+→ result_status IS NULL
+→ finished_at IS NOT NULL
+→ cancel_requested_at IS NOT NULL
+
+CLEANED → raw_cleaned_at IS NOT NULL
+FAILED cleanup → raw_cleanup_error IS NOT NULL
 ```
 
-Unique/Index：
+结构阶段未产生 RAW 时，终态可直接记 `CLEANED + raw_cleaned_at=finished_at`，不增加 `NOT_REQUIRED`。
 
-```text
-UNIQUE(run_uuid)
-UNIQUE INDEX uk_precheck_run_active_route
-ON precheck_run(route_id)
-WHERE execution_status IN ('PENDING','EXTRACTING','VALIDATING')
-
-INDEX idx_precheck_run_route_history
-ON precheck_run(route_id,created_at DESC,id DESC)
-
-INDEX idx_precheck_run_route_version
-ON precheck_run(route_version_id,created_at DESC,id DESC)
-```
-
-Precheck 只人工启动；终态 RAW 保留 1 天；不作为正式同步业务数据源。
+同 Route 活动 Precheck 继续使用 Partial Unique。
 
 ## 5. `precheck_issue_summary`
 
-字段：
+只保存：
 
 ```text
-id bigint identity PK
-run_id bigint NOT NULL
-rule_scope varchar(20) NOT NULL
-standard_field_code varchar(100) NULL
-rule_code varchar(100) NOT NULL
-rule_definition_version varchar(64) NOT NULL
-checked_rows/affected_rows bigint NOT NULL DEFAULT 0
-observed_metrics jsonb NOT NULL DEFAULT '{}'
-summary varchar(2000) NOT NULL
-created_at timestamptz NOT NULL
+rule_scope: STRUCTURE / FIELD / COMPOSITE
+standard_field_code
+rule_code/rule_definition_version
+checked_rows/affected_rows
+observed_metrics
+summary
 ```
 
-FK：
-
-```text
-FOREIGN KEY (run_id)
-REFERENCES precheck_run(id)
-ON DELETE RESTRICT
-```
-
-业务 Unique 以 `run_id` 为首列，覆盖 FK 子列。
-
-只允许 `STRUCTURE/FIELD/COMPOSITE`，不保存行级问题、业务键、样例或修复状态。
+不保存行号、业务键、样例、原始值、修复值或 Issue 生命周期。
 
 ## 6. `validation_run`
 
-职责：统一保存 SYNC_GATE、Manual Recheck、独立治理 Validation 和 Delete Reconciliation。
-
-核心字段：
+完整枚举和 CHECK 以：
 
 ```text
-id/run_uuid
-task_id/execution_id/task_revision
-context_snapshot/range_snapshot
-validation_scope/trigger_type/validation_method
-validation_source/validation_source_revision/validation_contract_forced
-status/result
-checksum_protocol_version
-source_row_count/target_row_count
-source_checksum/target_checksum
-difference_count/difference_ratio/difference_summary
-baseline_snapshot_run_id/current_snapshot_run_id
-requested_by
-cancel_requested_at/cancel_requested_by
-error_code/error_message
-started_at/finished_at/created_at/updated_at
+spec/P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md
+spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md
 ```
 
-### 6.1 FK
+为权威。
 
-父 Task：
+关键差异：
 
 ```text
-FOREIGN KEY (task_id)
-REFERENCES sync_task(id)
-ON DELETE RESTRICT
+validation_source:
+GLOBAL / DATASET / TASK / CONTRACT / FIXED
 ```
 
-关联 Execution 时必须属于同一 Task：
+`FIXED` 只用于 `DELETE_RECONCILIATION + DELETE_KEY_DIFF`；普通 Sync Validation 仍不使用 FIXED。
 
-```text
-FOREIGN KEY (execution_id,task_id)
-REFERENCES sync_execution(id,task_id)
-ON DELETE RESTRICT
-```
-
-删除对账：
-
-```text
-FOREIGN KEY (baseline_snapshot_run_id,task_id)
-REFERENCES delete_snapshot_run(id,task_id)
-ON DELETE RESTRICT
-
-FOREIGN KEY (current_snapshot_run_id,task_id)
-REFERENCES delete_snapshot_run(id,task_id)
-ON DELETE RESTRICT
-```
-
-责任用户：
-
-```text
-requested_by        → app_user(id) ON DELETE RESTRICT
-cancel_requested_by → app_user(id) ON DELETE RESTRICT
-```
-
-### 6.2 Parent Unique / Index
-
-```text
-UNIQUE(id,task_id)
-UNIQUE(run_uuid)
-```
-
-并发/业务 Unique：
-
-```text
-UNIQUE INDEX uk_validation_sync_gate_execution
-ON validation_run(execution_id)
-WHERE trigger_type='SYNC_GATE'
-
-UNIQUE INDEX uk_validation_run_active_independent_task
-ON validation_run(task_id)
-WHERE trigger_type IN ('MANUAL','MANUAL_RECHECK','SCHEDULED')
-  AND status IN ('PENDING','RUNNING')
-```
-
-FK 子索引：
-
-```text
-INDEX idx_validation_task_history
-ON validation_run(task_id,created_at DESC,id DESC)
-
-INDEX idx_validation_execution
-ON validation_run(execution_id,created_at DESC,id)
-WHERE execution_id IS NOT NULL
-
-INDEX idx_validation_baseline_snapshot
-ON validation_run(baseline_snapshot_run_id,task_id)
-WHERE baseline_snapshot_run_id IS NOT NULL
-```
-
-`current_snapshot_run_id` 由 Delete Reconciliation Partial Unique 覆盖。
+关联 Execution 时使用 `(execution_id,task_id) → sync_execution(id,task_id)`，Delete Reconciliation 两个 Snapshot FK 也固定同 Task。
 
 ## 7. `message_outbox`
 
-职责：Execution 成功收尾事务中保存一条小型 RabbitMQ 发布指令。
-
-核心字段：
-
 ```text
-id/event_id
-execution_id/task_id/dataset_id/institution_id
-status/available_at/attempt_count/max_attempts
-policy_revision/publish_scope
-source_system/tenant_id/routing_key/topic/key_template
-rate_limit_per_second/page_size
-range_snapshot
-last_attempt_at/published_at
-last_error_code/last_error_message
-created_at/updated_at
+status:
+PENDING / PUBLISHING / PUBLISHED / DEAD_LETTER
+
+publish_scope:
+FULL / INCREMENTAL
 ```
 
-### 7.1 只保留父 Execution 强复合 FK
+父身份只保留：
 
 ```text
-FOREIGN KEY (
-  execution_id,
-  task_id,
-  dataset_id,
-  institution_id
-)
-REFERENCES sync_execution(
-  id,
-  task_id,
-  dataset_id,
-  institution_id
-)
-ON DELETE RESTRICT
+(execution_id,task_id,dataset_id,institution_id)
+→ sync_execution(id,task_id,dataset_id,institution_id) RESTRICT
 ```
 
-不再创建：
-
-```text
-execution_id → sync_execution(id)
-task_id → sync_task(id)
-dataset_id → standard_dataset(id)
-institution_id → institution(id)
-```
-
-这些关系已被父 Execution 复合 FK 完全覆盖。
-
-### 7.2 Unique / Index
+Unique：
 
 ```text
 UNIQUE(event_id)
 UNIQUE(execution_id)
-
-INDEX idx_message_outbox_scan(status,available_at,id)
-INDEX idx_message_outbox_publishing_recovery(status,last_attempt_at,id)
-  WHERE status='PUBLISHING'
-INDEX idx_message_outbox_task_history(task_id,created_at DESC,id DESC)
 ```
 
-状态：
+CHECK：
 
 ```text
-PENDING → PUBLISHING → PUBLISHED / DEAD_LETTER
+max_attempts > 0
+0 <= attempt_count <= max_attempts
+
+PENDING → published_at IS NULL
+PUBLISHING → last_attempt_at IS NOT NULL + published_at IS NULL
+PUBLISHED → published_at IS NOT NULL + last_error_* IS NULL
+DEAD_LETTER → published_at IS NULL + last_error_code IS NOT NULL
 ```
 
-Outbox 失败不回滚已成功 Execution/Watermark；人工重发重读当前 Doris，不保存业务 Payload/分页进度。
+人工重发：
+
+```text
+PUBLISHED/DEAD_LETTER
+→ PENDING
+→ attempt_count=0
+→ published_at=NULL
+→ clear last_error_*
+```
+
+Event ID 继续沿用；不保存业务 Payload、分页进度或逐次 Attempt。
 
 ## 8. 成功收尾事务
 
@@ -580,11 +413,9 @@ Outbox 失败不回滚已成功 Execution/Watermark；人工重发重读当前 D
 
 ## 9. 验收
 
-- Execution 的 Task/Institution/Dataset 由复合 FK 固定。
-- Execution 的 Route/Dataset Version 使用四元强 FK。
-- External API Execution 必须引用同一 Client 的真实 `external_api_request`。
-- `sync_execution(id,task_id)` 可供 Watermark/Validation 使用。
-- Validation 不可能引用其他 Task 的 Execution。
-- Outbox 不可能保存与父 Execution 不一致的 Task/Dataset/Institution。
-- 所有运行历史 FK 使用 RESTRICT。
-- 责任用户使用 RESTRICT；普通审计用户由各配置字典按 SET NULL 处理。
+- Execution Trigger/Operation/Range/Terminal/Cancel 组合由 CHECK 阻止非法半状态。
+- Load Batch 只有 `VISIBLE` 才 SUCCEEDED。
+- Precheck 使用 `COMPLETED + PASS/ISSUES`。
+- Validation 使用 `COMPLETED + PASS/MISMATCH`，Delete Reconciliation 来源为 FIXED。
+- Outbox 的状态、时间、错误和 Attempt 组合无歧义。
+- 基础 Count/JSON/时间/Hash CHECK 统一遵守 Status Matrix。
