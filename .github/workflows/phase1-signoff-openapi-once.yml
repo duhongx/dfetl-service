@@ -86,17 +86,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F '状态：`SIGNED_AND_AUTHORIZED`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
-          grep -F '当前实施授权：`YES`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
-          grep -F '签字基线 Commit：`938566a6659fbf445e00f472ba932fe446d1d886`' spec/PHASE1_TARGET_MODEL_SIGNOFF.md
-          grep -F '状态：`FROZEN`' spec/TARGET_METADATA_MODEL.md
-          grep -F '实施授权：`YES`' spec/TARGET_METADATA_MODEL.md
-          grep -F -- '- [x] `D1`' spec/TASKS.md
-          grep -F -- '- [ ] `D2`' spec/TASKS.md
-          grep -F '后端实现状态：`OPENAPI_GENERATED`' spec/FRONTEND_API_CONTRACT_V1.md
-          test -f .github/workflows/openapi-check.yml
-          test -f spec/openapi/README.md
-          test -f scripts/generate_openapi_v1.py
+          python - <<'PY'
+          from pathlib import Path
+
+          checks = {
+              "spec/PHASE1_TARGET_MODEL_SIGNOFF.md": [
+                  "SIGNED_AND_AUTHORIZED",
+                  "当前实施授权：`YES`",
+                  "938566a6659fbf445e00f472ba932fe446d1d886",
+                  "OpenAPI: GENERATED_AND_VALIDATED",
+              ],
+              "spec/TARGET_METADATA_MODEL.md": [
+                  "状态：`FROZEN`",
+                  "实施授权：`YES`",
+                  "Doris 明细面",
+                  "OpenAPI: GENERATED_AND_VALIDATED",
+              ],
+              "spec/TASKS.md": [
+                  "阶段 2",
+                  "实施授权：`YES`",
+                  "- [x] `D1`",
+                  "- [ ] `D2`",
+              ],
+              "spec/FRONTEND_API_CONTRACT_V1.md": [
+                  "FROZEN_FOR_IMPLEMENTATION",
+                  "spec/openapi/dfetl-api-v1.json",
+                  "OPENAPI_GENERATED",
+              ],
+              "spec/DATABASE_MIGRATION_BASELINE.md": [
+                  "FROZEN_FOR_IMPLEMENTATION",
+                  "实施授权：`YES`",
+                  "export_job",
+              ],
+          }
+          for file_name, needles in checks.items():
+              content = Path(file_name).read_text(encoding="utf-8")
+              for needle in needles:
+                  assert needle in content, f"{file_name}: missing {needle}"
+          for file_name in [
+              ".github/workflows/openapi-check.yml",
+              "spec/openapi/README.md",
+              "scripts/generate_openapi_v1.py",
+          ]:
+              assert Path(file_name).is_file(), file_name
+          print("Signed documentation and D1 artifact invariants passed")
+          PY
 
       - name: Commit signed baseline and D1 artifacts
         shell: bash
