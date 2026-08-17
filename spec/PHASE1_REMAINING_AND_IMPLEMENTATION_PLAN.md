@@ -1,6 +1,6 @@
 # 阶段 1 剩余 Review 与后续实施规划
 
-> 状态：PostgreSQL 表清单 + FK Matrix 已确认；前端优先 + Unique Matrix 待 Review  
+> 状态：PostgreSQL 表清单 + FK Matrix + Unique Matrix 已确认；前端优先 + Status/Enum/CHECK Matrix 待 Review  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`
@@ -25,12 +25,11 @@
 - [x] Quartz 官方表：11。
 - [x] V1 表数量口径：50；Flyway History 不计。
 - [x] 全量 FK Matrix。
+- [x] Business / Concurrency Unique Matrix。
 
 ## 3. FK Matrix 已确认
 
 权威文件：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`。
-
-原则：
 
 ```text
 最强复合 FK
@@ -72,23 +71,46 @@ Execution(id,task,dataset,institution)
 → Outbox
 ```
 
-`route_field_resolution.field_code` 已删除。
+## 4. Unique Matrix 已确认
 
-## 4. 工作包 B：最终物理一致性矩阵
+权威文件：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`。
+
+分类：
+
+```text
+Business Unique
+Concurrency / Safety Partial Unique
+FK Support Unique
+```
+
+固定结论：
+
+- 稳定 Code/ID、父内 Version No、不可变内容 Hash、业务关系 Pair 使用 Business Unique。
+- FK Support Unique 不重复算产品业务唯一。
+- Dataset/Route 历史相同 Hash 直接复用旧不可变 Version；新 Hash 才新增 Version No。
+- Current Route / Current Task 使用 `deleted_at IS NULL` Partial Business Unique。
+- 活动 Execution/Precheck/Independent Validation/Delete Snapshot 使用 Partial Unique。
+- 一个 Execution 最多一个 SYNC_GATE/Outbox；一个 Candidate 最多一个 Delete Reconciliation。
+- External Client 只 `client_id` 唯一，`client_name` 可重复。
+- Alert Channel/Rule 因没有独立 Code，Name 继续大小写不敏感唯一。
+- Delete Apply 使用一条 `uk_delete_apply_effective` 覆盖 PENDING/RUNNING/SUCCEEDED；成功后不可再次真实 Apply。
+- Sync vs Independent Validation 跨表互斥不新增 Lock/Slot 表。
+
+## 5. 工作包 B：最终物理一致性矩阵
 
 按用户确认顺序：
 
 1. [x] PostgreSQL 最终表清单 + 数量。
 2. [x] 全量 FK Matrix。
-3. [ ] **Business / Concurrency Unique Matrix。**
-4. [ ] Status / Enum / CHECK Matrix。
+3. [x] Business / Concurrency Unique Matrix。
+4. [ ] **Status / Enum / CHECK Matrix。**
 5. [ ] Delete Behavior Matrix。
 6. [ ] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 7. [ ] `PHASE1_FINAL_REVIEW.md`。
 
 Doris Table List、Sensitive Field/Secret Boundary 在最终物理 Review 中同步核对，但不打乱上述讨论顺序。
 
-## 5. 前端产品完成 100%
+## 6. 前端产品完成 100%
 
 当前最高开发优先级。
 
@@ -113,7 +135,7 @@ Doris Table List、Sensitive Field/Secret Boundary 在最终物理 Review 中同
 - [ ] Alert/Log/Audit/System Settings 完整。
 - [ ] URL/lint/build/逐页原型验收。
 
-## 6. 前端之后
+## 7. 前端之后
 
 1. API Contract；
 2. Final P0 Flyway V1；
@@ -124,13 +146,14 @@ Doris Table List、Sensitive Field/Secret Boundary 在最终物理 Review 中同
 7. Multi-instance/Large Batch Reliability；
 8. Production Acceptance/Cutover。
 
-## 7. 阶段门槛
+## 8. 阶段门槛
 
 ```text
 Active Spec 无冲突
 + Table List 完成
 + FK Matrix 完成
-+ Unique/Status/Delete/Snapshot Matrix 完成
++ Unique Matrix 完成
++ Status/Delete/Snapshot Matrix 完成
 + Frontend Model 确认
 + PHASE1_FINAL_REVIEW
 + 用户签字
