@@ -50,7 +50,7 @@ export const permissionGroups: Array<{ domain: string; permissions: string[] }> 
     "system_instance.view", "system_instance.create", "system_instance.update", "system_instance.bind_institution",
     "system_instance.bind_datasource", "system_instance.status", "system_instance.delete",
     "datasource.view", "datasource.source.create", "datasource.source.update", "datasource.target.create",
-    "datasource.target.update", "datasource.test", "datasource.status", "datasource.delete",
+    "datasource.target.update", "datasource.test", "datasource.status", "datasource.credential.rotate", "datasource.delete",
   ] },
   { domain: "数据集与链路", permissions: [
     "dataset.view", "dataset.sync_definition", "dataset.policy.sync.update", "dataset.policy.validation.update",
@@ -65,14 +65,20 @@ export const permissionGroups: Array<{ domain: string; permissions: string[] }> 
     "precheck.view", "precheck.run", "precheck.run_batch", "precheck.cancel", "precheck.summary.view",
     "precheck.summary.export", "precheck.detail.view", "precheck.detail.reveal", "precheck.detail.export",
     "precheck.detail.export_sensitive", "validation.view", "validation.run", "validation.recheck", "validation.export",
+    "validation.delete_reconciliation.run", "validation.delete_apply.dry_run", "validation.delete_apply.execute",
   ] },
-  { domain: "运维与安全", permissions: [
-    "alert.view", "alert.rule.manage", "alert.channel.manage", "log.view", "log.export", "audit.view", "audit.export",
+  { domain: "告警、日志与审计", permissions: [
+    "alert.view", "alert.delivery.retry", "alert.rule.manage", "alert.rule.status", "alert.rule.delete",
+    "alert.channel.manage", "alert.channel.test", "alert.channel.status", "alert.channel.delete",
+    "log.view", "log.sensitive.view", "log.export", "audit.view", "audit.export",
+  ] },
+  { domain: "系统设置与安全", permissions: [
     "setting.view", "setting.global.update", "registry.view", "registry.update", "registry.test",
     "validation_policy.view", "validation_policy.update", "doris_table.view", "doris_table.ddl.preview",
     "doris_table.create", "doris_table.rebuild", "external_client.view", "external_client.create",
-    "external_client.update", "external_client.secret.reset", "type_mapping.view", "type_mapping.generic.create",
-    "type_mapping.generic.update", "security.account.view", "security.account.create", "security.account.update",
+    "external_client.update", "external_client.status", "external_client.secret.reset", "external_client.delete",
+    "type_mapping.view", "type_mapping.generic.create", "type_mapping.generic.update", "type_mapping.generic.delete",
+    "type_mapping.contract.publish", "security.account.view", "security.account.create", "security.account.update",
     "security.account.status", "security.account.password.reset", "security.permission.assign",
     "security.role.manage", "security.role.delete",
   ] },
