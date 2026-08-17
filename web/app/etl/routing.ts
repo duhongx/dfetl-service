@@ -1,6 +1,6 @@
 import type { AppPage } from "./model";
 
-export const pagePaths: Record<Exclude<AppPage, "taskDetail" | "precheckDetail">, string> = {
+export const pagePaths: Record<Exclude<AppPage, "taskDetail" | "precheckDetail" | "executionDetail">, string> = {
   dashboard: "/dashboard",
   institutions: "/access-resources/institutions",
   businessCatalogs: "/access-resources/business-catalogs",
@@ -30,6 +30,8 @@ export function parseLocation(pathname: string): { page: AppPage; id?: string } 
   if (task) return { page: "taskDetail", id: decodeURIComponent(task[1]) };
   const precheck = clean.match(/^\/tasks\/precheck\/([^/]+)$/);
   if (precheck) return { page: "precheckDetail", id: decodeURIComponent(precheck[1]) };
+  const execution = clean.match(/^\/tasks\/executions\/([^/]+)$/);
+  if (execution) return { page: "executionDetail", id: decodeURIComponent(execution[1]) };
   const match = (Object.entries(pagePaths) as Array<[AppPage, string]>).find(([, path]) => path === clean);
   return { page: match?.[0] ?? "dashboard" };
 }
@@ -37,5 +39,6 @@ export function parseLocation(pathname: string): { page: AppPage; id?: string } 
 export function pathFor(page: AppPage, id?: string): string {
   if (page === "taskDetail") return `/tasks/sync/${encodeURIComponent(id ?? "")}`;
   if (page === "precheckDetail") return `/tasks/precheck/${encodeURIComponent(id ?? "")}`;
+  if (page === "executionDetail") return `/tasks/executions/${encodeURIComponent(id ?? "")}`;
   return pagePaths[page];
 }
