@@ -24,7 +24,12 @@ jobs:
           set -euo pipefail
           mkdir -p scripts
           cat .phase1-openapi/generator.part* | base64 -d | gzip -d > scripts/generate_openapi_v1.py
-          cat .phase1-openapi/signoff.part* | base64 -d | gzip -d > scripts/finalize_phase1_signoff.py
+          cat \
+            .phase1-openapi/signoff.segment00 \
+            .phase1-openapi/signoff.segment01 \
+            .phase1-openapi/signoff.part01 \
+            .phase1-openapi/signoff.part02 \
+            | base64 -d | gzip -d > scripts/finalize_phase1_signoff.py
           echo "10d82200b28fe296cf8243e1a1b4c24cbb5431f7c221133ae89192c2e801167e  scripts/generate_openapi_v1.py" | sha256sum -c -
           echo "216768c7d2d366bf27d474f51f13949db90a838aa0cb43e596935c2f4efba1a5  scripts/finalize_phase1_signoff.py" | sha256sum -c -
           python -m py_compile scripts/generate_openapi_v1.py scripts/finalize_phase1_signoff.py
