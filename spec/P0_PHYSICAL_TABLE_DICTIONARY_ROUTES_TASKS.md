@@ -1,620 +1,335 @@
-# P0 物理表字典：采集链路、任务、治理覆盖与水位
+# P0 物理表字典：机构采集路由、任务关联与水位
 
-> 状态：阶段 1 物理模型第四批 Review 进行中  
-> 日期：2026-08-14  
-> 总体规划：`spec/PHASE1_REMAINING_AND_IMPLEMENTATION_PLAN.md`  
+> 状态：阶段 1 Route/Task 关系模型收口完成  
+> 更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 逻辑模型：`spec/TARGET_METADATA_MODEL.md`  
-> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
+> 任务模型专项：`spec/P0_MUTABLE_TASK_MODEL_REVIEW.md`  
+> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`。
 
-## 1. 本批次范围
+## 1. 当前对象
 
 ```text
 collection_route
 collection_route_version
-collection_route_version_institution
 route_field_resolution
-
 sync_task
-sync_task_version
-task_validation_policy
 task_watermark
 ```
 
-## 2. 已确认：链路覆盖机构的唯一事实
-
-不建立独立、可变的 `collection_route_institution` 当前关系表。
-
-链路当前覆盖机构统一通过以下关系取得：
+明确不建立：
 
 ```text
-collection_route.current_version_id
-→ collection_route_version
-→ collection_route_version_institution
-```
-
-固定理由和约束：
-
-1. 链路覆盖机构属于版本化配置内容，覆盖集合发生变化时生成新的不可变链路版本。
-2. `collection_route_version_institution` 同时承担历史快照和当前版本覆盖集合；当前集合由 `current_version_id` 唯一确定。
-3. 不复制第二套“当前覆盖关系”，避免当前关系表与当前版本快照不一致。
-4. 页面、Repository 和任务创建均按当前链路版本查询可选机构。
-5. `sync_task_version` 必须保存明确的 `route_version_id` 和 `institution_id`，并通过复合外键保证该机构属于所引用链路版本的覆盖集合。
-6. 历史任务版本继续引用创建时使用的历史链路版本，不因链路产生新版本而改写历史。
-7. 如需高频查询当前覆盖机构，使用明确 SQL、Repository 查询或只读数据库视图，不建立重复业务表。
-
-目标关系：
-
-```text
-collection_route
-  └─ current_version_id
-       └─ collection_route_version
-            └─ collection_route_version_institution
-
-sync_task
-  └─ current_version_id
-       └─ sync_task_version
-            ├─ route_version_id
-            └─ institution_id
-```
-
-版本覆盖关系约束：
-
-```text
-PRIMARY KEY (route_version_id, institution_id)
-
-FOREIGN KEY (business_system_instance_id, institution_id)
-REFERENCES business_system_instance_institution
-ON DELETE RESTRICT
-```
-
-任务版本使用：
-
-```text
-FOREIGN KEY (route_version_id, institution_id)
-REFERENCES collection_route_version_institution(route_version_id, institution_id)
-ON DELETE RESTRICT
-```
-
-## 3. 已确认：移除覆盖机构时保护当前使用该链路的任务
-
-只要某个“机构 + 数据集”同步任务已经通过管理端或外部 API 创建，且 `sync_task.deleted_at IS NULL`，它就是已有任务。任务即使尚未运行、已经暂停自动调度、最近一次执行失败或当前没有活动执行，仍然是未删除任务并占用业务唯一关系。
-
-任务可以通过新任务版本更换采集链路，因此覆盖机构变更只检查任务的**当前版本**，历史任务版本不作为阻断依据。
-
-当管理员准备创建新的链路版本，并从覆盖集合中移除某个机构时，固定执行以下规则：
-
-1. 计算当前版本覆盖机构与候选版本覆盖机构的差集。
-2. 对每个将被移除的机构，检查是否存在未删除任务，其 `current_version_id` 当前仍引用这条链路下的某个链路版本。
-3. 只要任一被移除机构仍被当前任务版本使用，拒绝创建候选链路版本，也不切换 `collection_route.current_version_id`。
-4. 返回稳定错误码 `ROUTE_INSTITUTION_IN_USE`，同时返回阻断机构和任务的 ID、名称、调度开关及最近执行摘要，便于管理员定位。
-5. 管理员可以先把相关任务切换到另一条覆盖该机构和数据集的链路；也可以暂停任务、等待活动执行结束或受控取消后逻辑删除任务。完成任一处理后，再移除原链路的机构覆盖。
-6. 增加覆盖机构不受该限制；没有当前任务版本使用的机构可以直接从候选版本中移除。
-7. 历史任务版本继续引用旧链路版本，不阻止后续链路配置调整，也不因配置调整被删除或改写。
-8. 链路版本创建、覆盖移除被拒绝、任务切换链路和任务逻辑删除均记录成功或失败操作审计。
-
-该规则属于应用事务约束，不使用数据库 Trigger 隐式修改数据。服务在同一事务中锁定链路身份行，并以一致性查询检查相关未删除任务的当前版本；校验通过后才插入新链路版本、版本覆盖机构及字段解析快照，并切换当前版本指针。
-
-建议查询路径和索引围绕：
-
-```text
-sync_task.current_version_id
-→ sync_task_version.route_version_id
-→ collection_route_version.route_id
-```
-
-不在 `sync_task` 重复保存当前 `route_id`。
-
-## 4. 已确认：任务支持更换采集链路
-
-一个同步任务的长期身份只由以下关系确定：
-
-```text
-institution_id + dataset_id
-```
-
-采集链路属于任务版本的执行配置，不是任务不可修改的身份字段。
-
-固定规则：
-
-1. `sync_task` 不保存 `route_id`；当前使用的链路由 `sync_task.current_version_id → sync_task_version.route_version_id` 推导。
-2. `sync_task_version` 保存明确的 `route_version_id`，历史任务版本继续保留当时使用的链路版本。
-3. 用户可以为原任务选择另一条采集链路，系统创建新的不可变任务版本，并在同一事务中切换 `sync_task.current_version_id`。
-4. 新链路的当前版本必须属于同一标准数据集，并且覆盖任务所属机构；不允许通过自由填写数据源、Schema 或源对象绕过采集链路。
-5. 存在活动 `sync_execution` 时不允许切换任务版本；等待执行结束或受控取消后再操作。
-6. 更换链路时，系统不自行判断业务数据是否需要重新全量、不自动重置或迁移正式水位，也不自动修改删除快照基线。
-7. 用户根据实际情况使用已有操作显式处理：保持当前水位、重置水位、重新采集或按需要处理删除快照基线。所有操作分别展示影响范围并记录审计。
-8. 不建设任务跨链路迁移状态、双链路并行、双水位、自动切换、自动回退或源系统迁移状态机。
-9. 外部 API 的“确保任务存在”在任务已经存在时仍返回 `EXISTS`，不会因为当前链路不同而自动切换；链路变更属于管理端对已有任务的显式配置操作。
-
-目标关系：
-
-```text
-sync_task
-  ├─ institution_id
-  ├─ dataset_id
-  └─ current_version_id
-
+Route 覆盖机构当前关系表
+Route 版本覆盖机构关系表
 sync_task_version
-  ├─ task_id
-  ├─ route_version_id
-  ├─ institution_id
-  └─ dataset_version_id
+task_validation_policy
 ```
 
-任务版本通过以下约束保证所选机构属于所选链路版本：
+## 2. 关系总览
 
 ```text
-FOREIGN KEY (route_version_id, institution_id)
-REFERENCES collection_route_version_institution(route_version_id, institution_id)
-ON DELETE RESTRICT
+institution
+  └── source_datasource
+
+institution + standard_dataset
+  └── collection_route
+       └── collection_route_version
+            └── route_field_resolution
+
+institution + standard_dataset
+  └── sync_task
+       ├── route_version_id
+       └── task_watermark
 ```
 
-任务版本与任务身份、数据集及链路数据集的一致性，在本批次后续完整物理字段和复合外键设计中落实。
+Route 和 Task 都固定是一家机构上下文。
 
-## 5. 设计原则修正
+## 3. `collection_route`
 
-本批次后续 Review 遵循仓库 skills 的约束：
+职责：一家机构一个标准 Dataset 的当前采集映射及当前版本指针。
 
-- 只设计已确认业务能力所需的最小对象和约束；
-- 不因低概率场景自行扩展迁移状态、恢复状态、双写、自动判断或额外生命周期；
-- 使用者能够通过选择链路、重置水位、重新采集等现有操作处理的情况，系统保持灵活并如实记录结果；
-- 只有会破坏既定业务不变量或造成明确数据风险的问题，才增加必要数据库约束或事务校验。
+### 3.1 字段
 
-## 6. `collection_route`
-
-职责：保存采集链路当前可查询配置、当前不可变版本指针和逻辑删除信息。链路不执行任务，不保存运行状态、最近同步、预检结论或任务状态。
-
-`collection_route` 中的实例、数据源、源对象和目标字段是**当前配置投影**，不是禁止修改的永久身份。用户修改链路配置时生成新的 `collection_route_version`，并在同一事务中更新当前投影和 `current_version_id`。
-
-### 6.1 字段
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
+| 列 | 类型 | 空值/默认 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `bigint GENERATED BY DEFAULT AS IDENTITY` | PK | 链路主键 |
-| `dataset_id` | `bigint` | NOT NULL | 当前标准数据集，FK `standard_dataset(id)`，`ON DELETE RESTRICT` |
-| `business_system_instance_id` | `bigint` | NOT NULL | 当前业务系统实例，FK，`ON DELETE RESTRICT` |
-| `source_datasource_id` | `bigint` | NOT NULL | 当前源数据源，FK，`ON DELETE RESTRICT` |
-| `source_schema` | `varchar(128)` | NULL | 当前源 Schema；不支持 Schema 的数据库可以为空 |
-| `source_object` | `varchar(256)` | NOT NULL | 当前源表、视图或物化视图真实名称 |
+| `id` | `bigint identity` | PK | Route ID |
+| `institution_id` | `bigint` | NOT NULL | 当前机构 |
+| `dataset_id` | `bigint` | NOT NULL | 标准 Dataset |
+| `source_datasource_id` | `bigint` | NOT NULL | 当前源端数据源 |
+| `source_schema` | `varchar(128)` | NULL | 当前 Schema |
+| `source_object` | `varchar(256)` | NOT NULL | 当前真实对象 |
 | `source_object_type` | `varchar(32)` | NOT NULL | `TABLE/VIEW/MATERIALIZED_VIEW` |
-| `target_datasource_id` | `bigint` | NOT NULL | 当前目标 Doris 逻辑数据源，FK，`ON DELETE RESTRICT` |
-| `current_version_id` | `bigint` | NULL | 当前不可变链路版本；创建事务结束前必须非空 |
-| `revision` | `bigint` | NOT NULL DEFAULT `0` | 当前投影和版本指针的乐观锁版本 |
-| `deleted_at` | `timestamptz` | NULL | 逻辑删除时间 |
-| `deleted_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 创建时间 |
-| `created_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
-| `updated_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 更新时间 |
-| `updated_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
+| `target_datasource_id` | `bigint` | NOT NULL | 当前目标 Doris |
+| `status` | `varchar(16)` | NOT NULL DEFAULT `'DISABLED'` | `DISABLED/ENABLED` |
+| `structure_status` | `varchar(24)` | NOT NULL DEFAULT `'NOT_CHECKED'` | `NOT_CHECKED/PASSED/FAILED/OUTDATED` |
+| `structure_checked_at` | `timestamptz` | NULL | 最近结构核对完成时间 |
+| `structure_error_summary` | `jsonb` | NULL | 小型结构问题摘要 |
+| `current_version_id` | `bigint` | NULL | 当前不可变 Route version |
+| `revision` | `bigint` | NOT NULL DEFAULT `0` | 乐观锁 |
+| `deleted_at` | `timestamptz` | NULL | 逻辑删除 |
+| `deleted_by` | `bigint` | NULL | 删除人 |
+| `created_at/created_by` |  |  | 创建审计 |
+| `updated_at/updated_by` |  |  | 更新审计 |
 
-不保存：
+### 3.2 关键约束
 
 ```text
-status
-enabled
-validation_status
-last_validated_at
-last_sync_status
-last_execution_id
-target_table
+FK institution_id → institution(id) ON DELETE RESTRICT
+FK dataset_id → standard_dataset(id) ON DELETE RESTRICT
+FK source_datasource_id → source_datasource(id) ON DELETE RESTRICT
+FK target_datasource_id → target_datasource(id) ON DELETE RESTRICT
+
+CHECK source_object_type IN ('TABLE','VIEW','MATERIALIZED_VIEW')
+CHECK status IN ('DISABLED','ENABLED')
+CHECK structure_status IN ('NOT_CHECKED','PASSED','FAILED','OUTDATED')
+CHECK revision >= 0
 ```
 
-ODS/RAW 表名由标准数据集编码和固定命名规则生成，不允许链路自由填写。
-
-### 6.2 约束和外键
+源数据源机构一致性使用复合外键：
 
 ```text
-CHECK (source_schema IS NULL OR btrim(source_schema) <> '')
-CHECK (btrim(source_object) <> '')
-CHECK (source_object_type IN ('TABLE','VIEW','MATERIALIZED_VIEW'))
-CHECK (revision >= 0)
-CHECK ((deleted_at IS NULL AND deleted_by IS NULL) OR deleted_at IS NOT NULL)
-```
-
-业务系统实例和源数据源必须已经建立关联：
-
-```text
-FOREIGN KEY (business_system_instance_id, source_datasource_id)
-REFERENCES business_system_instance_datasource
+FOREIGN KEY (source_datasource_id,institution_id)
+REFERENCES source_datasource(id,institution_id)
 ON DELETE RESTRICT
 ```
 
-当前版本同父约束：
+因此 `source_datasource` 必须提供 `UNIQUE(id,institution_id)`。
+
+### 3.3 唯一性
+
+当前产品一所机构一个 Dataset 只维护一条未删除 Route：
 
 ```text
-FOREIGN KEY (id, current_version_id)
-REFERENCES collection_route_version(route_id, id)
-DEFERRABLE INITIALLY DEFERRED
+UNIQUE INDEX uk_collection_route_active_identity
+ON collection_route(institution_id,dataset_id)
+WHERE deleted_at IS NULL
 ```
 
-首次创建时可以先插入身份行，再插入版本和子表，事务结束前必须完成 `current_version_id` 切换。读取到未删除链路但 `current_version_id IS NULL` 时，服务视为元数据损坏并拒绝创建任务或执行预检。
+切换 Source/Schema/Object/Target 时不创建第二条并行 Route，而是更新当前投影并生成新 `collection_route_version`。
 
-当前投影必须与当前版本内容一致。该一致性由创建/更新服务在锁定链路行后计算规范化合同并在同一事务更新，不使用数据库 Trigger 隐式同步。
+### 3.4 生命周期
 
-### 6.3 唯一与索引
+- 新建 Route 默认 `DISABLED + NOT_CHECKED`；
+- 结构核对通过只把 `structure_status` 置为 `PASSED`，不自动启用；
+- 用户显式启用后才变为 `ENABLED`；
+- Dataset 或源结构变化可标记 `OUTDATED`；
+- 已被未删除 Task 使用时不能物理删除，只允许逻辑删除条件满足后保留历史引用；
+- Route 不保存任务运行状态、最近执行或预检问题明细。
 
-未删除链路使用当前规范化配置建立业务唯一性：
+## 4. `collection_route_version`
 
-```text
-UNIQUE INDEX uk_collection_route_active
-    ON collection_route (
-        business_system_instance_id,
-        source_datasource_id,
-        dataset_id,
-        lower(coalesce(source_schema, '')),
-        lower(source_object)
-    )
-    WHERE deleted_at IS NULL
-```
+职责：一次规范化 Route 配置的不可变快照。
 
-该约束防止同一系统实例、数据源、数据集和源对象被按机构重复建立多条链路。覆盖多个机构仍使用同一链路版本的机构集合。
-
-查询索引：
-
-```text
-INDEX idx_collection_route_dataset
-    ON collection_route (dataset_id, deleted_at, id)
-
-INDEX idx_collection_route_instance
-    ON collection_route (business_system_instance_id, deleted_at, id)
-
-INDEX idx_collection_route_source
-    ON collection_route (source_datasource_id, deleted_at, id)
-
-INDEX idx_collection_route_target
-    ON collection_route (target_datasource_id, deleted_at, id)
-```
-
-### 6.4 删除
-
-- 链路使用逻辑删除。
-- 链路当前版本仍被未删除任务当前版本使用时拒绝删除。
-- 历史任务版本引用旧链路版本不阻止逻辑删除链路；历史版本和运行记录继续保留。
-- 逻辑删除不级联删除链路版本、覆盖机构、字段解析、任务版本、执行、预检或审计。
-- 被逻辑删除的链路不能用于新任务版本，但历史查询仍可展示。
-
-## 7. `collection_route_version`
-
-职责：保存一次规范化链路配置、源元数据读取结果、字段解析结果及覆盖机构集合的不可变版本头。
-
-链路版本允许如实记录结构问题。字段缺失、额外字段、类型不支持或 JDBC 元数据暂时不可读取，都不阻止保存链路版本；正式执行在读取前发现合同不完整时明确失败。
-
-### 7.1 字段
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
+| 列 | 类型 | 空值/默认 | 说明 |
 | --- | --- | --- | --- |
-| `id` | `bigint GENERATED BY DEFAULT AS IDENTITY` | PK | 版本主键 |
-| `route_id` | `bigint` | NOT NULL | FK `collection_route(id)`，`ON DELETE RESTRICT` |
-| `version_no` | `integer` | NOT NULL | 链路内从 1 递增 |
-| `dataset_id` | `bigint` | NOT NULL | 数据集身份快照 |
-| `dataset_version_id` | `bigint` | NOT NULL | 不可变数据集版本 |
-| `business_system_instance_id` | `bigint` | NOT NULL | 系统实例快照 |
-| `source_datasource_id` | `bigint` | NOT NULL | 源数据源快照 |
-| `source_schema` | `varchar(128)` | NULL | 源 Schema 快照 |
-| `source_object` | `varchar(256)` | NOT NULL | 源对象名称快照 |
-| `source_object_type` | `varchar(32)` | NOT NULL | `TABLE/VIEW/MATERIALIZED_VIEW` |
-| `target_datasource_id` | `bigint` | NOT NULL | 目标 Doris 逻辑数据源快照 |
-| `ods_table_name` | `varchar(256)` | NOT NULL | 按数据集编码生成的固定 ODS 表名快照 |
-| `raw_table_name` | `varchar(256)` | NOT NULL | 按数据集编码生成的固定 RAW 表名快照 |
-| `source_metadata_status` | `varchar(20)` | NOT NULL | `COMPLETE/ISSUES/UNAVAILABLE` |
-| `source_structure_hash` | `char(64)` | NULL | JDBC 源列集合规范化 SHA-256；元数据不可用时为空 |
-| `source_columns_snapshot` | `jsonb` | NOT NULL DEFAULT `'[]'::jsonb` | JDBC 返回的完整源列只读快照，不含数据样例 |
-| `extra_source_fields` | `jsonb` | NOT NULL DEFAULT `'[]'::jsonb` | 标准合同以外的额外源字段摘要 |
-| `field_resolution_hash` | `char(64)` | NOT NULL | 全部标准字段解析行规范化 SHA-256 |
-| `resolution_issue_count` | `integer` | NOT NULL DEFAULT `0` | 非 `MATCHED` 标准字段数量加额外字段数量 |
-| `institution_count` | `integer` | NOT NULL | 本版本覆盖机构数 |
-| `contract_hash` | `char(64)` | NOT NULL | 完整规范化链路合同 SHA-256 |
-| `change_summary` | `varchar(1000)` | NULL | 用户或系统生成的小型差异摘要 |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 创建时间 |
-| `created_by` | `bigint` | NULL | FK `app_user(id)`，`ON DELETE SET NULL` |
+| `id` | `bigint identity` | PK | 版本 ID |
+| `route_id` | `bigint` | NOT NULL | FK `collection_route(id)` |
+| `version_no` | `integer` | NOT NULL | Route 内递增 |
+| `institution_id` | `bigint` | NOT NULL | 机构快照 |
+| `dataset_id` | `bigint` | NOT NULL | Dataset 身份快照 |
+| `dataset_version_id` | `bigint` | NOT NULL | Dataset 定义版本 |
+| `source_datasource_id` | `bigint` | NOT NULL | Source 快照 |
+| `source_schema` | `varchar(128)` | NULL | Schema |
+| `source_object` | `varchar(256)` | NOT NULL | 源对象 |
+| `source_object_type` | `varchar(32)` | NOT NULL | 对象类型 |
+| `target_datasource_id` | `bigint` | NOT NULL | Target 快照 |
+| `structure_hash` | `char(64)` | NOT NULL | 实际源结构 Hash |
+| `contract_hash` | `char(64)` | NOT NULL | 规范化 Route/字段解析合同 Hash |
+| `created_at` | `timestamptz` | NOT NULL | 创建时间 |
+| `created_by` | `bigint` | NULL | 创建人 |
 
-`source_columns_snapshot` 只保存列名、JDBC 类型、数据库类型名、可空性和顺序等结构信息，不保存源数据、账号、密码或完整 JDBC URL。
-
-### 7.2 约束和外键
+唯一/支撑约束：
 
 ```text
-CHECK (version_no > 0)
-CHECK (source_schema IS NULL OR btrim(source_schema) <> '')
-CHECK (btrim(source_object) <> '')
-CHECK (source_object_type IN ('TABLE','VIEW','MATERIALIZED_VIEW'))
-CHECK (btrim(ods_table_name) <> '')
-CHECK (btrim(raw_table_name) <> '')
-CHECK (source_metadata_status IN ('COMPLETE','ISSUES','UNAVAILABLE'))
-CHECK (source_structure_hash IS NULL OR source_structure_hash ~ '^[0-9a-f]{64}$')
-CHECK (field_resolution_hash ~ '^[0-9a-f]{64}$')
-CHECK (contract_hash ~ '^[0-9a-f]{64}$')
-CHECK (jsonb_typeof(source_columns_snapshot) = 'array')
-CHECK (jsonb_typeof(extra_source_fields) = 'array')
-CHECK (resolution_issue_count >= 0)
-CHECK (institution_count > 0)
-CHECK (
-  (source_metadata_status = 'UNAVAILABLE' AND source_structure_hash IS NULL)
-  OR
-  (source_metadata_status IN ('COMPLETE','ISSUES') AND source_structure_hash IS NOT NULL)
-)
+UNIQUE(route_id,version_no)
+UNIQUE(route_id,contract_hash)
+UNIQUE(route_id,id)
+UNIQUE(id,institution_id,dataset_id)
 ```
 
-数据集版本归属：
+版本创建后只读，不因 Route 后续编辑而修改。
+
+## 5. `route_field_resolution`
+
+职责：Route version 下标准字段到 JDBC 实际字段的解析快照。
+
+建议字段：
 
 ```text
-FOREIGN KEY (dataset_id, dataset_version_id)
-REFERENCES standard_dataset_version(dataset_id, id)
+route_version_id
+standard_field_id
+field_code
+source_column_name
+source_ordinal
+source_jdbc_type
+source_type_name
+resolved_at
+```
+
+约束：
+
+```text
+PRIMARY KEY(route_version_id,standard_field_id)
+UNIQUE(route_version_id,field_code)
+UNIQUE(route_version_id,lower(source_column_name))
+```
+
+不保存目标字段改名、表达式、默认值或人工转换规则。
+
+## 6. Route 结构核对
+
+结构核对属于 Route 配置事实，至少验证：
+
+- Source 连接可用；
+- Schema/Object 存在且类型允许；
+- 标准字段与源字段集合严格一致；
+- 大小写不敏感唯一匹配；
+- 源类型可由当前字段合同处理；
+- 机构代码字段、业务主键和增量字段能正确解析；
+- 目标 Doris 当前结构可与预期合同对比。
+
+输出更新 `structure_status/structure_checked_at/structure_error_summary`；不自动启用 Route。
+
+## 7. `sync_task`
+
+任务采用“固定身份 + 当前配置覆盖”，不建立任务版本表。
+
+### 7.1 固定身份
+
+```text
+institution_id
+dataset_id
+```
+
+创建后不可修改。
+
+### 7.2 当前配置
+
+至少保存：
+
+```text
+id
+institution_id
+dataset_id
+dataset_version_id
+route_version_id
+name
+task_kind
+write_mode
+doris_key_model
+incremental_field_code
+fetch_size
+upper_bound_delay_minutes
+schedule_mode
+schedule_interval_hours
+schedule_cron
+schedule_timezone
+schedule_source
+schedule_source_revision
+schedule_enabled
+validation_method_override
+revision
+deleted_at/deleted_by
+created_*/updated_*
+```
+
+未删除唯一：
+
+```text
+UNIQUE INDEX uk_sync_task_active_identity
+ON sync_task(institution_id,dataset_id)
+WHERE deleted_at IS NULL
+```
+
+### 7.3 Route version 一致性
+
+`collection_route_version` 提供：
+
+```text
+UNIQUE(id,institution_id,dataset_id)
+```
+
+Task 使用：
+
+```text
+FOREIGN KEY (route_version_id,institution_id,dataset_id)
+REFERENCES collection_route_version(id,institution_id,dataset_id)
 ON DELETE RESTRICT
 ```
 
-实例—源数据源关系：
+这样数据库直接保证任务不能引用其他机构或其他 Dataset 的 Route version。
+
+`dataset_version_id` 同样必须属于 `dataset_id`。
+
+### 7.4 编辑并发
+
+存在活动同步执行：
 
 ```text
-FOREIGN KEY (business_system_instance_id, source_datasource_id)
-REFERENCES business_system_instance_datasource
-ON DELETE RESTRICT
+PENDING/RUNNING/LOADING/VALIDATING
 ```
 
-目标数据源使用普通 FK `ON DELETE RESTRICT`。数据源连接地址、密码和 FE 端点仍由数据源对象维护；链路版本不复制敏感连接配置。
+时禁止编辑任务，返回 `TASK_EXECUTION_ACTIVE`。
 
-### 7.3 唯一和支撑约束
+活动独立校验不阻止普通任务配置编辑；独立校验使用启动快照。
+
+## 8. 三种标准任务组合
 
 ```text
-UNIQUE (route_id, version_no)
-UNIQUE (route_id, contract_hash)
-UNIQUE (route_id, id)
-UNIQUE (id, dataset_id)
-UNIQUE (id, dataset_version_id)
-UNIQUE (id, business_system_instance_id)
+无真实业务主键:
+FULL_ONLY + REPLACE_INSTITUTION_SCOPE + DUPLICATE_KEY
+
+有真实业务主键 + 增量字段:
+FULL_THEN_INCREMENTAL + UPSERT + UNIQUE_KEY
+
+有真实业务主键、无增量字段:
+FULL_ONLY + UPSERT + UNIQUE_KEY
 ```
 
-查询索引：
+无主键任务只清理当前机构范围，不清空其他机构数据，不生成假主键。
+
+## 9. `task_watermark`
+
+职责：任务当前正式增量水位。
+
+建议字段：
 
 ```text
-INDEX idx_route_version_history
-    ON collection_route_version (route_id, version_no DESC)
-
-INDEX idx_route_version_dataset
-    ON collection_route_version (dataset_id, created_at DESC, id)
-
-INDEX idx_route_version_source
-    ON collection_route_version (source_datasource_id, created_at DESC, id)
+task_id PK
+watermark_value
+source_execution_id
+updated_at
 ```
 
-### 7.4 版本 Hash
+规则：
 
-`contract_hash` 至少覆盖：
+- 只属于 Task，不属于 Task version；
+- 成功同步且阻断校验通过后才推进；
+- 空增量窗口成功也可推进；
+- 补采不修改；
+- 任务切换 Route 不自动重置；
+- 不建立水位历史表，历史范围从 Execution 查询。
 
-```text
-dataset_id + dataset_version_id
-business_system_instance_id
-source_datasource_id + source_schema + source_object + source_object_type
-target_datasource_id
-ods_table_name + raw_table_name
-按稳定顺序排列的覆盖机构 ID 和机构编码
-source_metadata_status + source_structure_hash
-field_resolution_hash
-extra_source_fields
-```
+## 10. Task 创建与 Route 状态
 
-重复核对且 Hash 未变化时不生成新版本，只记录审计。Hash 变化时才插入新版本和完整子表，并切换当前指针。
+管理端新建 Task 时：
 
-### 7.5 不可变性
+1. 选择机构和 Dataset；
+2. 只列出同一机构、同一 Dataset 的 Route；
+3. Route 必须处于当前允许创建任务的业务状态；
+4. 保存 Task 当前 `route_version_id/dataset_version_id`；
+5. 形成固定 `institution_id + dataset_id` 身份。
 
-- 版本头、覆盖机构和字段解析行在创建事务完成后只读。
-- 已提交版本不修改、不删除；错误通过新版本修正。
-- 是否当前只由 `collection_route.current_version_id` 表达，不保存 `PUBLISHED/SUPERSEDED` 状态。
-- 任务版本、预检和历史执行均可长期引用历史链路版本。
+数据预检问题作为风险信息展示，不把预检中间结果写入 Task。
 
-## 8. `collection_route_version_institution`
+## 11. 验收
 
-职责：保存一个链路版本覆盖的机构集合和机构编码快照。
-
-### 8.1 字段
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
-| --- | --- | --- | --- |
-| `route_version_id` | `bigint` | PK 组成 | 链路版本 |
-| `business_system_instance_id` | `bigint` | NOT NULL | 约束辅助列，必须与链路版本系统实例一致 |
-| `institution_id` | `bigint` | PK 组成 | 覆盖机构 |
-| `institution_code` | `varchar(100)` | NOT NULL | 当时机构编码快照，保持原始大小写 |
-| `ordinal_no` | `integer` | NOT NULL | 稳定排序，从 1 开始 |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 创建时间 |
-
-### 8.2 约束和外键
-
-```text
-PRIMARY KEY (route_version_id, institution_id)
-UNIQUE (route_version_id, ordinal_no)
-CHECK (btrim(institution_code) <> '')
-CHECK (ordinal_no > 0)
-```
-
-保证系统实例与版本一致：
-
-```text
-FOREIGN KEY (route_version_id, business_system_instance_id)
-REFERENCES collection_route_version(id, business_system_instance_id)
-ON DELETE RESTRICT
-```
-
-保证机构属于业务系统实例覆盖范围：
-
-```text
-FOREIGN KEY (business_system_instance_id, institution_id)
-REFERENCES business_system_instance_institution
-ON DELETE RESTRICT
-```
-
-`institution_count` 与实际子表行数、`ordinal_no=1..N` 连续性由版本创建服务在提交前核对。
-
-### 8.3 索引
-
-```text
-INDEX idx_route_version_institution_reverse
-    ON collection_route_version_institution
-       (institution_id, route_version_id)
-```
-
-任务创建和任务换链路时，按当前链路版本及任务机构直接使用主键查询。
-
-## 9. `route_field_resolution`
-
-职责：保存一个链路版本中，每个标准字段到 JDBC 真实字段名的只读解析结果。
-
-每个标准字段固定一行。额外源字段不伪造 `dataset_field_id` 行，统一保存在 `collection_route_version.extra_source_fields` 和完整结构快照中。
-
-### 9.1 字段
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
-| --- | --- | --- | --- |
-| `id` | `bigint GENERATED BY DEFAULT AS IDENTITY` | PK | 解析行主键 |
-| `route_version_id` | `bigint` | NOT NULL | FK 链路版本，`ON DELETE RESTRICT` |
-| `dataset_version_id` | `bigint` | NOT NULL | 约束辅助列 |
-| `dataset_field_id` | `bigint` | NOT NULL | 对应不可变标准字段 |
-| `standard_field_code` | `varchar(100)` | NOT NULL | 标准字段编码快照，大写 |
-| `standard_ordinal_no` | `integer` | NOT NULL | 标准字段顺序快照 |
-| `jdbc_field_name` | `varchar(256)` | NULL | 唯一命中时的 JDBC 真实字段名 |
-| `jdbc_type_code` | `integer` | NULL | `java.sql.Types` 编码 |
-| `jdbc_type_name` | `varchar(128)` | NULL | 源库返回的类型名 |
-| `jdbc_nullable` | `boolean` | NULL | 源字段可空性 |
-| `jdbc_ordinal_no` | `integer` | NULL | JDBC 元数据列顺序 |
-| `doris_field_name` | `varchar(100)` | NOT NULL | 固定为标准字段编码小写 |
-| `conversion_contract_version` | `varchar(64)` | NOT NULL | 字段转换合同版本快照 |
-| `match_status` | `varchar(32)` | NOT NULL | 解析状态 |
-| `diagnostic_code` | `varchar(64)` | NULL | 稳定诊断编码 |
-| `diagnostic_message` | `varchar(1000)` | NULL | 不含敏感值的诊断摘要 |
-| `candidate_fields` | `jsonb` | NOT NULL DEFAULT `'[]'::jsonb` | `AMBIGUOUS` 时的候选列摘要 |
-| `created_at` | `timestamptz` | NOT NULL DEFAULT `CURRENT_TIMESTAMP` | 创建时间 |
-
-`match_status`：
-
-```text
-MATCHED
-MISSING
-AMBIGUOUS
-TYPE_UNSUPPORTED
-METADATA_UNAVAILABLE
-```
-
-`TYPE_UNSUPPORTED` 表示源字段已唯一命中，但源类型与标准字段转换合同不能形成可执行读取合同；它与数据集字段自身的 `conversion_status=UNSUPPORTED` 均会使正式执行在读取前失败。
-
-### 9.2 约束和外键
-
-```text
-CHECK (standard_field_code = upper(btrim(standard_field_code)))
-CHECK (standard_ordinal_no > 0)
-CHECK (doris_field_name = lower(standard_field_code))
-CHECK (match_status IN
-       ('MATCHED','MISSING','AMBIGUOUS','TYPE_UNSUPPORTED','METADATA_UNAVAILABLE'))
-CHECK (jsonb_typeof(candidate_fields) = 'array')
-CHECK (jdbc_ordinal_no IS NULL OR jdbc_ordinal_no > 0)
-```
-
-状态与 JDBC 字段组合：
-
-```text
-CHECK (
-  (match_status IN ('MATCHED','TYPE_UNSUPPORTED')
-    AND jdbc_field_name IS NOT NULL
-    AND jdbc_type_code IS NOT NULL
-    AND jdbc_type_name IS NOT NULL
-    AND jdbc_nullable IS NOT NULL
-    AND jdbc_ordinal_no IS NOT NULL)
-  OR
-  (match_status IN ('MISSING','AMBIGUOUS','METADATA_UNAVAILABLE')
-    AND jdbc_field_name IS NULL
-    AND jdbc_type_code IS NULL
-    AND jdbc_type_name IS NULL
-    AND jdbc_nullable IS NULL
-    AND jdbc_ordinal_no IS NULL)
-)
-```
-
-版本和数据集字段归属：
-
-```text
-FOREIGN KEY (route_version_id, dataset_version_id)
-REFERENCES collection_route_version(id, dataset_version_id)
-ON DELETE RESTRICT
-
-FOREIGN KEY (dataset_version_id, dataset_field_id)
-REFERENCES standard_dataset_field(dataset_version_id, id)
-ON DELETE RESTRICT
-```
-
-最终一致性 Review 需在 `standard_dataset_field` 补充 `UNIQUE(dataset_version_id, id)`，作为第二个复合外键的支撑约束。
-
-### 9.3 唯一与索引
-
-```text
-UNIQUE (route_version_id, dataset_field_id)
-UNIQUE (route_version_id, standard_field_code)
-UNIQUE (route_version_id, standard_ordinal_no)
-
-UNIQUE INDEX uk_route_resolution_jdbc_field_ci
-    ON route_field_resolution
-       (route_version_id, lower(jdbc_field_name))
-    WHERE match_status IN ('MATCHED','TYPE_UNSUPPORTED')
-
-INDEX idx_route_resolution_status
-    ON route_field_resolution
-       (route_version_id, match_status, standard_ordinal_no)
-```
-
-### 9.4 使用边界
-
-- 标准字段与源字段只允许大小写差异。
-- 源字段顺序可以不同，Reader 必须按 `standard_ordinal_no` 显式投影。
-- Reader、机构过滤、增量窗口、预检和 Checksum 全部使用同一份解析快照。
-- 不保存 alias、默认值、人工重命名或转换表达式。
-- 解析问题不阻止链路版本、预检或任务创建；正式执行前发现非 `MATCHED` 行时明确失败。
-- 页面可以显示字段解析差异，但不能编辑解析结果。
-
-## 10. 链路版本创建事务
-
-一次新增或修改链路按以下顺序执行：
-
-```text
-规范化当前配置和覆盖机构
-→ 锁定 collection_route 身份行（新建时先建立身份）
-→ 校验实例—数据源关系和机构覆盖关系
-→ 尝试读取 JDBC 元数据并生成源结构快照
-→ 生成每个标准字段的解析行和额外字段摘要
-→ 计算 source_structure_hash / field_resolution_hash / contract_hash
-→ Hash 未变化：不创建版本，只记录审计
-→ Hash 变化：检查被移除机构是否仍被任务当前版本使用
-→ 插入 version、version_institution、field_resolution
-→ 更新 collection_route 当前投影、current_version_id 和 revision
-→ 提交
-```
-
-固定边界：
-
-- JDBC 元数据不可用或字段解析有问题时仍可以创建版本，问题如实保存在版本和解析行中。
-- 版本创建不自动修改已有任务版本、水位、预检结果、删除快照基线或调度开关。
-- 任务是否采用新链路版本，由用户在任务上显式创建新任务版本。
-- 所有成功、失败和被引用阻断的操作写 `audit_log`。
-- 事务不包含 Doris 建表、重建、数据同步或消息发送。
-
-## 11. 已确认：预检只保存和展示事实，不建立策略层级
-
-删除“全局默认 → 数据集覆盖 → 任务覆盖”的预检风险展示策略，不建立任何预检策略表，也不在任务治理表中保存预检策略字段。
-
-固定规则：
-
-```text
-预检事实始终展示
-未执行 / PASS / ISSUES / 已过期始终如实展示
-预检永不作为任务创建或运行门禁
-正式执行按真实结构、字段和数据合同决定成功或失败
-```
-
-具体边界：
-
-1. 预检仍然只能由用户人工启动，每次固定扫描整条采集链路。
-2. 任务创建、任务详情和运行前检查统一展示最近相关预检事实，包括是否存在、结果、是否过期、关联链路版本和合同 Hash。
-3. 未预检、发现问题或结果过期均不需要“风险确认策略”，也不产生任务级覆盖。
-4. 不保存 `WARNING/BLOCKER`、允许/禁止、提示强度或其他没有实际行为差异的枚举。
-5. `sync_task_version` 和 `sync_execution` 只保存追溯所需的预检事实引用或摘要，例如 `precheck_run_id`、链路版本、源结构 Hash、数据集合同 Hash 和运行时是否过期；不保存所谓“最终生效预检策略”。
-6. 旧系统“必须存在已通过预检才能创建或运行任务”的硬门禁明确废止，不能迁移到新服务。
-7. 预检事实发生变化不会自动修改任务版本、水位、调度或消息配置。
-8. `task_validation_policy` 只承担任务级校验覆盖；调度配置进入任务版本，消息仍只存在于数据集级。
-
-该结论减少无业务作用的配置对象，同时保持预检结果、过期判断和审计可追溯。
+- Route 只有单个 `institution_id`；
+- 不存在任何 Route 多机构覆盖表；
+- Source 与 Route 机构一致性由复合外键保证；
+- 一机构一 Dataset 只有一条未删除 Route；
+- Task 一机构一 Dataset 只有一个未删除任务；
+- Task 不存在版本表；
+- Task 的 Route version 不能跨机构、跨 Dataset；
+- 历史运行上下文由 Execution/Validation 快照解释。

@@ -1,314 +1,146 @@
 # 阶段 1 目标模型 Review 状态
 
-> 状态日期：2026-08-14  
-> 当前阶段：阶段 1——P0 目标元数据模型 Review  
-> 老代码基线：`duhongx/datax-lite-jdk21@175a15ff6d7f1f3b258a0422420ea672610933a4`  
+> 状态日期：2026-08-17  
+> 当前阶段：Spec 一致性收口 + 前端产品模型优先  
 > 新系统分支：`duhongx/dfetl-service/main`  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
-## 1. 当前阶段约束
-
-阶段 1 尚未最终签字，因此继续执行以下限制：
-
-- 不创建、命名或固化 Flyway `V1__baseline.sql`；
-- 不修改实体、Repository 或正式数据库结构；
-- 不连接、修改、升级或使用 Flyway 认领老 `df_ygt/df_etl` 数据库；
-- 老系统继续使用原数据库运行，新系统使用完全独立的新 PostgreSQL 数据库；
-- 已在任何环境执行过的 Flyway SQL 不允许修改、重命名或删除；
-- 目标模型最终 Review 通过前不进入阶段 2。
-
-## 2. 已完成的基础审计
-
-### 2.1 Java 代码迁移核对
-
-- 老仓库 `master` 的 485 个 Java 生产文件已经迁入新仓库；
-- 缺失 0、额外 0、内容差异 0；
-- Java 21 编译和跳过测试的可执行 JAR 打包已经验证；
-- 当前阶段的重点不是文件遗漏，而是按新业务基线重构旧模型和实现。
-
-### 2.2 历史 SQL 审计
-
-- `init.sql`、54 个升级脚本和 7 个回滚脚本，共 62 个 SQL 已全部审计；
-- 最终分类：保留 6、废止 15、由新模型替代 28、仅作历史参考 13；
-- 老 SQL 不会直接重命名为 Flyway 迁移重放；
-- 当前 Flyway `V*__*.sql` 仍为 0 个。
-
-## 3. 已确认的核心目标模型
-
-### 3.1 部署、机构、系统实例和数据源
-
-- 一个部署和一套独立 PostgreSQL 元数据库只服务一个医共体；不建立租户表；
-- 医共体名称和编码保存为系统设置；
-- 机构按扁平集合管理，不建立父子层级；
-- 业务系统实例与机构、源数据源分别为多对多；
-- 源数据源支持 `HOST_PORT/JDBC_URL`，凭据不嵌入 URL；
-- Doris 表示一个逻辑部署，支持单机或多个 FE，不管理 BE；
-- 不建立数据源组和任务组。
-
-### 3.2 标准数据集、版本和字段合同
-
-- 标准数据集只允许管理员从医共体模型人工同步；
-- 不允许手工新增，不自动同步；
-- 只有规范化定义内容和 Hash 变化才生成不可变新版本；
-- 数据集身份、版本、字段版本和字段转换合同分离；
-- 标准字段和源字段只允许大小写差异；字段集合必须完全相等；
-- Reader、机构过滤、增量窗口、预检和 Checksum 共用同一只读字段解析快照；
-- 医疗字段转换合同统一服务于 Doris DDL、Reader、预检和 Checksum。
-
-### 3.3 Doris ODS/RAW 固定合同
-
-- 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW；
-- 多机构共享物理表，以标准医疗机构编码隔离；
-- PostgreSQL 不建立 Doris 表登记表或结构版本表；
-- 平台直接读取 Doris 实际元数据；
-- 普通同步只核对结构，不自动建表、补列或改表；
-- ODS 严格执行医疗字段合同；RAW 保存可空字符串原始值用于预检；
-- ODS 和 RAW 不允许互相转换；
-- 建表和重建只能由用户显式发起。
-
-### 3.4 采集链路
-
-- 同一系统实例、数据源、数据集和源对象只建立一条未删除链路；
-- 一条链路可以覆盖多个机构；不因共享视图包含多机构而复制链路；
-- 链路身份与不可变版本分离；只有规范化内容变化才生成版本；
-- 链路不保存运行状态、最近同步和任务状态；
-- 结构检查并入预检第一阶段；结构或预检风险不作为任务创建和运行门禁；
-- 已有未删除任务引用时不得删除链路；链路使用逻辑删除。
-
-### 3.5 同步任务和三种固定组合
-
-- 一个任务只属于一个机构和一个标准数据集；
-- 同一机构、同一数据集只能存在一个未删除任务；
-- 任务身份与不可变任务版本分离；当前版本由 `current_version_id` 指针确定；
-- 任务不保存与执行重复的生命周期状态；暂停只控制后续自动调度；
-- 运行中的任务禁止删除；任务使用逻辑删除并保留全部历史；
-- 无业务主键：`FULL_ONLY + TRUNCATE + DUPLICATE_KEY`，只清理当前机构范围；
-- 有业务主键且有增量字段：`FULL_THEN_INCREMENT + UPSERT + UNIQUE_KEY`；
-- 有业务主键但无增量字段：`FULL_ONLY + UPSERT + UNIQUE_KEY`；
-- 不生成 Hash、自增 ID、`row_number()` 等假主键；不使用 APPEND 作为标准默认写入语义。
-
-### 3.6 调度、执行、批次和水位
-
-- 第一阶段 Reader 固定单并发，Fetch Size 独立配置；
-- 同一任务禁止并发执行；活动执行期间到达的新计划触发直接跳过，不追赶、不补跑；
-- 失败只告警，不自动暂停任务；下一次计划调度正常运行；
-- 不自动重试，不从失败批次继续；普通失败只提供人工重新采集；
-- 重新采集创建新执行，从任务范围起点和第 1 批重新读取；
-- 数据补采是独立命令，不修改正式水位；
-- 取消只终止当前执行，不改变任务调度开关；
-- 不建立 `execution_checkpoint`、`execution_reconciliation`、`task_watermark_history`；
-- Doris 响应不明确时查询确定性 Label，结果直接保存到 `load_batch`；
-- `task_watermark` 只保存当前正式水位，完整写入并通过阻断校验后才推进。
-
-### 3.7 数据预检
-
-- 预检只能人工发起，每次扫描整条采集链路；
-- 同一链路只允许一个活动预检，不同链路并发由全局参数控制；
-- 结构检查是第一阶段，预检不是任务门禁；
-- 执行状态和结果状态分开；发现数据问题是“完成 + 有问题”，不是技术失败；
-- 只保存字段级和组合规则级汇总；
-- 不保存行级问题、业务键、原值、修正值、严重级别和处理状态；
-- RAW 终态后保留 1 天；
-- 汇总直接导出 XLSX/CSV，不建立异步导出任务和长期文件。
-
-### 3.8 数据校验
-
-- 正式同步默认自动执行零容差 `ROW_COUNT`；
-- 有真实业务主键的数据集可由用户配置 `ROW_COUNT_CHECKSUM`；无主键数据集固定使用 `ROW_COUNT`；
-- 默认 `lookbackHours=0`，默认关闭自动复检；
-- Checksum 覆盖数据集版本全部业务字段，排除 `_etl_*`；
-- 不允许因性能、数据量或缺少比对键静默降级；
-- 内部可以分批计算，但只持久化整次最终结果；
-- 不建立校验分段表、行级差异表、字段差异表和自动修复；
-- 小型差异汇总进入 `validation_run.difference_summary JSONB`；
-- 阻断校验通过后才能确认执行成功、推进水位并生成消息 Outbox。
-
-### 3.9 消息通知和 Outbox
-
-- P0 只使用 RabbitMQ，删除 Redis Stream；
-- 消息配置只存在于数据集级，任务不能覆盖；
-- 三个启用消息的数据集固定使用 Exchange `YL` 和完整 Routing Key；
-- 全量发送本次全量全部数据，增量发送本次增量全部数据；
-- 不支持 `SKIP/NOTIFY_ONLY`、完成通知或 TRUNCATE 信号；
-- 每次执行只创建一条小型 `message_outbox` 指令，不保存业务数据、分页进度和逐条消息明细；
-- 状态固定 `PENDING/PUBLISHING/PUBLISHED/DEAD_LETTER`；
-- `messageKey`、空值处理和 27 位 `messageId` 严格沿用旧协议；
-- 重发重新读取当前 Doris，接受后续 UPSERT 导致内容变化；
-- `PUBLISHED/DEAD_LETTER` 长期保留，不自动清理或归档。
-
-## 4. P0 支撑对象 Review 状态
-
-### 4.1 本地账号和审计
-
-- 支持一个或多个同权限管理员账号，通常 1～3 人；
-- 不建设 RBAC，不建立角色、权限及关联表；
-- 系统设置提供账号列表、新增、启停和重置密码；
-- 账号不物理删除；当前账号和最后一个启用账号不能停用；
-- 业务写操作同时审计成功和失败；
-- `audit_log` 保存操作者、来源、受控操作编码、目标快照、结果、请求关联 ID、IP 和脱敏摘要；
-- 普通查询默认不审计，认证失败进入安全日志；
-- 初始化 SQL 不写固定管理员密码。
-
-### 4.2 系统设置
-
-- `system_setting` 只保存应用注册的已知 key；
-- 类型、默认值、是否敏感、允许为空、范围和格式由统一注册表定义；
-- 使用 `revision` 防止覆盖；
-- 医共体名称、编码和规范库连接可维护；规范库密码加密保存并掩码返回；
-- RabbitMQ、应用数据库、JWT 和加密主密钥等部署 Secret 不进入通用设置表；
-- 已有独立领域表的配置不重复塞入通用键值表。
-
-### 4.3 告警
-
-- 保留告警渠道、规则、启停、测试、静默窗口和 Webhook 发送；
-- 每次规则命中生成一条 `alert_event`；每个目标渠道生成一条 `alert_delivery`；
-- 只保存触发事实和汇总投递结果；
-- 不建设确认、认领、处理人、工单、审批或逐次投递明细表；
-- 告警仍属于最终交付范围，但实现优先级最低。
-
-### 4.4 外部任务 API
-
-- 外部 API 属于 P0，用于业务端创建或发布数据集后直接确保 DFETL 任务存在；
-- 请求支持按机构分组的批量 targets，服务端最终拆成“一个机构 + 一个数据集”原子目标；
-- 任务已存在返回 `EXISTS`；`runAfterCreate` 只运行本次新建任务；
-- 支持 `BEST_EFFORT/ALL_OR_NOTHING`；
-- 所有写操作统一要求 `requestId`，按 `(client_id, request_id)` 幂等；
-- client 机构授权支持 `ALL/SELECTED`，`SELECTED` 可关联多家机构；
-- client 不物理删除；secret 重置立即使旧值失效，不使用双密钥；
-- HMAC 时间窗口前后 5 分钟；nonce 保留 1 小时并每小时清理；
-- `external_api_request` 长期保留；
-- 不实现应用层限流；
-- 目标表收敛为 `external_api_client`、`external_api_client_institution`、`external_api_request_nonce`、`external_api_request`。
-
-详细文档：`spec/EXTERNAL_API_REVIEW.md`。
-
-### 4.5 Quartz JDBC JobStore
-
-- 业务任务未删除、`schedule_enabled=true` 和当前版本有效 Cron 是唯一调度事实；
-- Quartz Job/Trigger 只是可重建运行投影；暂停、无 Cron 或逻辑删除时直接删除；
-- 启动和周期对账负责补建、更新和清理投影；
-- misfire 固定跳过，不自动补跑；
-- JobDataMap 只保存 `taskId`；
-- 真实执行并发由 `sync_execution` 数据库约束保证；
-- 新系统使用独立数据库、显式 Schema 前缀、独立连接池和 cluster 模式；
-- 老 Quartz 运行态不迁移。
-
-详细文档：`spec/QUARTZ_JOBSTORE_REVIEW.md`。
-
-## 5. 删除识别模型状态
-
-删除识别的业务规则和存储边界已经确认：
-
-- 完整业务主键快照和删除差异明细保存到 Doris 共享技术表 `_dfetl_key_snapshot`、`_dfetl_delete_diff`；
-- PostgreSQL 只保存 `delete_snapshot_run`、`task_delete_snapshot_state`、删除对账 `validation_run` 和 `delete_apply_run`；
-- 不建立 PostgreSQL `task_snapshot_key`；
-- 支持联合业务主键，按合同顺序生成规范化 `key_payload` 和 SHA-256 `key_hash`；
-- 字符串保持大小写敏感，其他类型复用版本化字段规范化合同；
-- 差集在 Doris 中通过 anti join 完成，不在 Java 内存中处理全量集合；
-- 第一次完整快照只建立基线；失败、不完整或无法规范化的候选不替换基线；
-- 只有候选快照、完整性核对和差异生成全部成功后才切换基线指针；
-- 第一阶段不自动删除 ODS，实际应用必须 dry-run、二次确认和成功/失败审计。
-
-详细文档：`spec/DELETE_SNAPSHOT_MODEL_REVIEW.md`。
-
-## 6. 已明确删除的老功能
-
-新系统不再实现：
-
-- 批量任务模板；
-- 机构数据视图；
-- 数据源组和任务组；
-- 独立结构校验；
-- 可编辑字段重命名；
-- 普通任务 `CUSTOM_SQL`；
-- 普通任务 `ID_RANGE/CUSTOM_WINDOW`；
-- 自动策略推荐；
-- 自动重试、退避重试和从失败批次继续；
-- `execution_checkpoint`、执行对账表和水位历史表；
-- 行级预检问题、业务键明细、原值和修正值；
-- 行级校验差异、字段差异明细和自动修复；
-- 脏数据分流和只同步合规行；
-- 自动扫描并执行 Doris 列类型 ALTER；
-- 可配置 ODS 严格/宽松模式；
-- Redis Stream；
-- 任务级消息配置；
-- 逐条消息发送记录和投递尝试表；
-- `SKIP/NOTIFY_ONLY`、完成通知和 TRUNCATE 信号；
-- 异步导出任务和长期导出文件；
-- PostgreSQL 一行一个业务键的 `task_snapshot_key`；
-- 外部 API 应用层限流表和配额模型。
-
-## 7. 方向已确认但技术设计尚未完成
-
-### 7.1 目标物理表字典
-
-仍需按已确认模型逐表完成：
-
-- 字段类型、长度和空值；
-- 默认值和状态枚举 CHECK；
-- 外键及删除行为；
-- 唯一约束和部分唯一索引；
-- 高频查询索引；
-- 敏感字段加密和掩码；
-- 事务边界和并发处理；
-- Quartz 官方 PostgreSQL 表；
-- Doris 删除快照技术表的键模型、分区、分桶和清理条件。
-
-这些属于技术设计，能从业务基线和实际代码判断的内容直接完成，不逐字段询问。
-
-### 7.2 使用文档入口
-
-旧系统真实存在 `/docs` 页面和 `/api/docs/**`，新文档没有明确删除，因此功能继续保留。最终导航和实施任务仍需补回。
-
-### 7.3 核心文档最终一致性
-
-需要对以下内容执行最终交叉检查：
-
-- `PRODUCT_AND_BUSINESS_DECISIONS.md`；
-- `TARGET_METADATA_MODEL.md`；
-- `LEGACY_SQL_AUDIT.md`；
-- `LEGACY_FUNCTION_ALIGNMENT.md`；
-- `TASKS.md`；
-- 本阶段各专项 Review 文档。
-
-## 8. 阶段 1 尚未完成的最终工作
-
-进入阶段 2 前仍需完成：
-
-1. 完成全部 P0 PostgreSQL 物理表字典；
-2. 完成 Doris 删除快照技术表物理设计；
-3. 补回使用文档导航和任务项；
-4. 执行业务基线、目标模型、历史 SQL 审计、功能对齐和任务清单最终一致性检查；
-5. 由用户明确确认目标模型 Review 通过。
-
-完成并签字后，才能进入阶段 2：生成 Flyway V1、对齐实体和 Repository、隔离历史 SQL，并在独立空 PostgreSQL 中执行 `migrate/validate` 和真实启动验证。
-
-## 9. 当前状态总览
-
-| 范围 | 当前状态 |
-| --- | --- |
-| Java 生产代码迁移完整性 | 已完成 |
-| 历史 SQL 审计 | 已完成 |
-| 核心领域模型 | 已确认 |
-| 数据集、链路和任务版本 | 已确认 |
-| 执行、批次、水位和重新采集 | 已确认 |
-| 数据预检 | 已确认 |
-| 数据校验 | 已确认 |
-| 消息通知和 Outbox | 已全部确认 |
-| 本地账号、审计和系统设置 | 已确认 |
-| 告警最小历史 | 已确认，实施优先级最低 |
-| 外部任务 API | P0 业务范围和接口合同已全部确认 |
-| Quartz JDBC JobStore | 已确认 |
-| 删除识别业务规则 | 已确认 |
-| 删除识别存储模型 | 已确认 |
-| P0 支撑对象物理表字典 | 未完成 |
-| Doris 删除快照技术表物理设计 | 未完成 |
-| 使用文档导航回写 | 未完成 |
-| 核心文档最终一致性检查 | 未完成 |
-| 目标模型最终签字 | 未完成 |
-| Flyway V1 | 尚未开始，当前禁止开始 |
-| 阶段 2 | 尚未开始 |
-
-## 10. 下一项工作
-
-下一步进入目标物理表字典复核。先按已确认模型直接完成字段、约束、外键、状态和索引设计；只有出现文档无法判断的真实业务冲突时，再一次提出一个问题。
+## 1. 阶段约束
+
+阶段 1 尚未最终签字：
+
+- 不创建或固化 Flyway `V1__baseline.sql`；
+- 不修改正式 PostgreSQL 表结构；
+- 不使用新系统 Flyway 认领老 `df_ygt/df_etl`；
+- 老系统和新系统元数据库、Quartz、执行、水位、校验、消息完全隔离；
+- 当前先完成 spec 和前端产品模型，再进入数据库/Java 实施。
+
+## 2. 已完成基础审计
+
+- 老 Java 生产代码迁移完整性已核对；
+- 历史 SQL 已完成审计和分类；
+- 标准 Dataset、医疗字段合同、Doris ODS/RAW 规则已完成多轮 Review；
+- 可变 Task 模型、Execution、Load Batch、Validation、Outbox、删除识别、外部 API、Quartz 等已有专项 Review；
+- 2026-08-17 完成接入资源/机构采集 Route 模型收口。
+
+## 3. 当前已确认的接入资源模型
+
+### 3.1 医疗机构
+
+- 一个部署服务一个医共体；
+- 机构为扁平集合；
+- 机构编码是源端机构范围的稳定业务编码；
+- 不建设机构树和厂商机构编码映射。
+
+### 3.2 业务目录
+
+- HIS/LIS/PACS 等作为全局轻量业务分类；
+- 不表示真实部署实例；
+- 不维护业务目录与机构的多对多覆盖关系。
+
+### 3.3 Source datasource
+
+- 每个 Source 直接属于一家机构 + 一个业务目录；
+- 支持 `HOST_PORT/JDBC_URL`；
+- 凭据与 URL 分离；
+- Source 页面只维护数据库连接，不维护 Dataset ↔ View。
+
+### 3.4 Target Doris
+
+- 全局逻辑资源；
+- 可配置多个 FE；
+- 不管理 BE；
+- 不直接维护 Dataset → Table 映射。
+
+## 4. 当前已确认的机构采集 Route
+
+- Route 固定属于一家机构；
+- 当前机构决定可选择的 Source；
+- Route 保存 Dataset、Source、Schema/Object、Target 和字段解析；
+- 不存在多机构共享 Route 覆盖集合；
+- Route 配置变化生成不可变 Route version；
+- Route 状态与结构核对状态独立；
+- Route 不保存同步运行状态、最近执行或任务状态。
+
+## 5. 标准 Dataset 与 Doris
+
+- Dataset 只能从规范库人工同步；
+- 定义变化生成不可变 Dataset version；
+- 标准字段与 Source 字段只允许大小写差异；
+- Source 字段集合必须和标准集合严格一致；
+- 不提供字段重命名和标准任务 `CUSTOM_SQL`；
+- 医疗字段合同统一服务 DDL、Reader、Precheck、Checksum；
+- 每个 Dataset 在一个 Doris 逻辑部署中共享 ODS/RAW，按机构代码隔离；
+- 普通同步不自动修改 Doris 表。
+
+## 6. Task 当前模型
+
+采用 2026-08-15 已确认的“固定身份 + 当前配置覆盖”：
+
+```text
+任务身份 = institution_id + dataset_id
+```
+
+- 同一机构 + Dataset 一个未删除 Task；
+- 身份创建后不可修改；
+- Task 直接保存当前 Route version、Dataset version、读取、调度和校验覆盖；
+- 不建立 `sync_task_version`；
+- 活动同步执行期间禁止编辑；
+- 活动独立校验期间允许普通编辑；
+- Execution/Validation 保存启动快照解释历史。
+
+## 7. Execution/Watermark/Validation/Message
+
+- 同 Task 禁止并发同步执行；
+- 计划冲突直接跳过，不追赶；
+- 失败不自动重试、不自动暂停、不推进水位；
+- 补采不改正式水位；
+- 重新采集创建新 Execution；
+- 正式同步最低严格 ROW_COUNT，不可关闭；
+- 有真实业务主键可选择 ROW_COUNT_CHECKSUM；
+- 阻断校验通过后才执行成功、推进水位并创建消息 Outbox；
+- 消息只用 RabbitMQ，配置只存在 Dataset 级。
+
+## 8. Precheck
+
+- 人工启动；
+- 同 Route 同时最多一个活动 Precheck；
+- Precheck 与正式同步严格分离；
+- 正式同步重新读取真实 Source；
+- Precheck 用于发现源端数据质量问题，不用其中间结果替代正式数据。
+
+## 9. 2026-08-17 Spec 收口结果
+
+本次已统一：
+
+```text
+PRODUCT_AND_BUSINESS_DECISIONS.md
+TARGET_METADATA_MODEL.md
+P0_PHYSICAL_TABLE_DICTIONARY.md
+P0_PHYSICAL_TABLE_DICTIONARY_RESOURCES.md
+P0_PHYSICAL_TABLE_DICTIONARY_ROUTES_TASKS.md
+TASKS.md
+PHASE1_REVIEW_STATUS.md
+PHASE1_REMAINING_AND_IMPLEMENTATION_PLAN.md
+P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md
+PENDING_DECISIONS.md
+```
+
+收口结果：
+
+- 删除旧系统实例资源中间层；
+- Source 改为直接机构 + 业务目录归属；
+- Route 改为单机构模型；
+- 删除 Route 覆盖机构集合；
+- 保持已确认的可变 Task 模型，不恢复 Task version；
+- 后续前端不得出现旧系统实例入口。
+
+## 10. 仍需完成
+
+- [ ] 继续机械清理数据集/校验等早期字典中已经被 8 月 15 日专项 Review 废止的对象描述；
+- [ ] 核对最终 P0 表清单和总数；
+- [ ] 核对全部复合 FK、唯一键和索引；
+- [ ] 统一状态/枚举；
+- [ ] 按最新产品模型完成前端页面、导航、交互和文案；
+- [ ] 完成 `PHASE1_FINAL_REVIEW.md`；
+- [ ] 用户最终签字后才进入数据库/后端实施。
