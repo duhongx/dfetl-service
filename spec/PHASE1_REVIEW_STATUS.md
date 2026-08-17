@@ -1,7 +1,7 @@
 # 阶段 1 目标模型 Review 状态
 
 > 状态日期：2026-08-17  
-> 当前阶段：PostgreSQL Table + FK + Unique + Status/CHECK + Delete Behavior 已确认；进入 Snapshot 最小充分性 Review  
+> 当前阶段：PostgreSQL Table + FK + Unique + Status/CHECK + Delete + Snapshot 已确认；进入 Phase 1 Final Review  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
 
@@ -28,6 +28,7 @@
 - [x] Business / Concurrency Unique Matrix。
 - [x] Status / Enum / CHECK Matrix。
 - [x] Delete Behavior Matrix。
+- [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 
 ## 3. 当前主模型
 
@@ -37,10 +38,10 @@ Institution + Business Catalog
 → Standard Dataset + Immutable Dataset Version
 → Single-Institution Route + Immutable Route Version
 → Sync Task Fixed Identity + Current Config
-→ Execution / Validation Startup Snapshot
+→ Execution / Validation Runtime Snapshot
 ```
 
-## 4. 已确认物理矩阵
+## 4. 已冻结物理矩阵
 
 ### FK
 
@@ -72,17 +73,49 @@ COMPLETED + result = 检查/分析技术完成
 
 ```text
 Resource: 无引用可物理删，有引用只能停用
-Dataset/Version/Field/Contract: 永久定义历史，VOID/RETIRED 表达失效
+Definition History: 永久保留，VOID/RETIRED 表达失效
 Route/Task: LOGICAL_DELETE
-Watermark: Task 删除不级联，仅显式 Clear 删除当前 Row
+Watermark: 仅显式 Clear 删除当前 Row
 Runtime/Audit/Request/Alert History: 永久 PostgreSQL 元数据
-Alert Rule/Channel: 可物理删，Snapshot + SET NULL 保历史
-User/External Client: 只停用
-System Setting: 无通用 DELETE
-External Nonce: 1 小时 TTL
-Doris RAW/Snapshot/Diff: 按生命周期清理，PostgreSQL Run 保留
+Nonce: 1 小时 TTL
+Doris RAW/Snapshot/Diff: 清理大数据，保留 PostgreSQL Run
 Quartz: 可重建投影
 ```
+
+### Snapshot
+
+```text
+不可变定义只引用
+可变运行事实才快照
+Secret 永不快照
+```
+
+Execution：
+
+```text
+新增 source_runtime_snapshot / target_runtime_snapshot
+删除 precheck_fact_snapshot
+Checksum Protocol 仅 ROW_COUNT_CHECKSUM 保存
+```
+
+Validation：
+
+```text
+SYNC_GATE / MANUAL_RECHECK → 只使用父 Execution Context
+普通独立 Validation → 最小 Context/Range
+DELETE_RECONCILIATION → 只使用 Snapshot Run FK
+```
+
+Outbox：
+
+```text
+显式 Message Policy Snapshot + 最小 Range
+不重复身份/operationType
+不复制 Target Runtime Endpoint
+人工重发读取当前 Doris
+```
+
+所有 Runtime Snapshot 禁止 Secret。
 
 ## 5. Review 顺序
 
@@ -91,10 +124,10 @@ Quartz: 可重建投影
 3. [x] Business / Concurrency Unique Matrix。
 4. [x] Status / Enum / CHECK Matrix。
 5. [x] Delete Behavior Matrix。
-6. [ ] **Execution / Validation / Outbox Snapshot 最小充分性 Review。**
-7. [ ] `PHASE1_FINAL_REVIEW.md`。
+6. [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+7. [ ] **`PHASE1_FINAL_REVIEW.md`。**
 
-下一项只讨论 Snapshot 最小充分性 Review。
+下一项只进行 Phase 1 Final Review。
 
 ## 6. 前端仍为开发优先级
 
@@ -115,7 +148,7 @@ Quartz: 可重建投影
 - [x] Unique Matrix。
 - [x] Status/CHECK Matrix。
 - [x] Delete Behavior Matrix。
-- [ ] Snapshot Review。
+- [x] Snapshot Review。
 - [ ] Frontend 与 Spec 一致。
 - [ ] `PHASE1_FINAL_REVIEW.md`。
-- [ ] 用户最终签字后才进入数据库/后端实施。
+- [ ] 用户明确签字后才进入数据库/后端实施。
