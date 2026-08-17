@@ -1,1 +1,5 @@
-export { default } from "./etl/app-shell";
+import { redirect } from "next/navigation";
+
+export default function HomePage() {
+  redirect("/dashboard");
+}
