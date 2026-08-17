@@ -2,181 +2,150 @@
 
 > 状态：已确认  
 > 首次确认：2026-08-13  
-> 最近更新：2026-08-17  
+> 最近更新：2026-08-14  
 > 适用范围：`dfetl-service` PostgreSQL 元数据库  
-> 业务优先级：与本文冲突时，以 `PRODUCT_AND_BUSINESS_DECISIONS.md` 和更晚已确认专项 Review 为准。
+> 业务优先级：与本文冲突时，以 `PRODUCT_AND_BUSINESS_DECISIONS.md` 为准。
 
-## 1. 部署与隔离边界
+## 1. 已确认的部署边界
 
-1. 老项目继续连接原 `df_ygt` 数据库的 `df_etl` Schema，直到正式切换。
-2. 新项目使用独立、全新的 PostgreSQL 数据库；新系统不连接老库执行调度、同步、预检、校验、水位推进或消息发布。
-3. 老数据库不创建 `flyway_schema_history`，不使用 Flyway `baseline` 接管。
-4. 新项目最终从干净的 `V1__baseline.sql` 开始；后续只通过新的不可变 Flyway 版本升级。
-5. 正式切换只迁移经过明确确认的配置和水位，不整体恢复老元数据库。
+1. 老项目继续连接原 `df_ygt` 数据库的 `df_etl` Schema 并正常运行，直到新项目完成验收和正式替换。
+2. 新项目使用独立、全新的 PostgreSQL 数据库，不连接老库执行调度、同步、预检、校验、水位推进或消息发布。
+3. 老数据库不执行新项目 SQL，不创建 `flyway_schema_history`，不使用 Flyway `baseline` 或 `baseline-on-migrate` 接管。
+4. 新项目从干净的 Flyway `V1__baseline.sql` 开始；以后的新系统版本只通过 Flyway 顺序升级。
+5. 最终替换老项目时只迁移经过确认的配置，不整体恢复老库；迁移范围和切换步骤由 `DB-002` 单独管理。
 
-## 2. 历史结构只读参考
+## 2. 老系统结构快照
 
-老系统结构快照：
+只读参考文件：`spec/reference/legacy/df_ygt_df_etl_schema_20260813.sql`
 
-```text
-spec/reference/legacy/df_ygt_df_etl_schema_20260813.sql
-```
+| 项目 | 结果 |
+|---|---|
+| 来源 | 老系统 `df_ygt` 数据库、`df_etl` Schema |
+| 数据库版本 | PostgreSQL 16.14 |
+| 导出方式 | `pg_dump --schema-only --no-owner --no-privileges` |
+| 文件大小 | 167,869 字节 |
+| 行数 | 5,603 |
+| SHA-256 | `2b2e5d48fa871b7e733914903ef6278e7afff0eb75fe4ab6cb1e9aed3e3c6601` |
+| 对象 | 55 张表、43 个序列、116 个索引、122 个约束、195 条注释 |
+| 数据与凭据 | 不含 `COPY`、`INSERT`、角色、授权或任何密码值；仅包含密码/密钥字段的结构定义 |
 
-该文件只用于：
+快照放在 `spec/reference/legacy`，明确位于 Flyway 扫描目录之外。它只用于：
 
-- 核对历史代码依赖；
-- 设计老配置到新模型的转换；
-- 证明哪些老对象被保留、替代或废止；
-- 切换前进行字段和引用映射检查。
+- 判断历史脚本实际执行到了什么结构；
+- 核对老代码依赖的表、字段、索引和约束；
+- 设计最终配置迁移映射；
+- 证明新 V1 相比老模型主动保留、替代或废止了什么。
 
-不得把旧结构快照直接执行到新数据库，也不得复制后改名为 V1。
+快照不得直接执行到新数据库，也不得复制后改名为 `V1__baseline.sql`。
 
 ## 3. 为什么不能重放历史 SQL
 
-仓库旧 `init.sql`、`migration_*.sql` 和 `rollback_*.sql` 是历史演进过程，不是一条可重复、可验证的线性 Flyway 链。
+仓库当前有旧 `init.sql`、54 个 `migration_*.sql` 和 7 个 `rollback_*.sql`。它们是历史过程记录，不是严格的线性迁移链：
 
-新 V1 必须从**最终业务模型**重新生成，而不是把旧脚本重新排序执行。
+- 旧 `init.sql` 仍创建后来已经删除的 `validation_task`；老库实际已不存在该表。
+- 一些脚本先增加 `group_id`/`task_group`，后续脚本又删除这些结构。
+- 部分脚本包含数据搬迁、停机检查、删除表或删除字段，重复执行具有破坏性。
+- 有些 `ALTER TABLE` 虽然使用 `IF EXISTS/IF NOT EXISTS`，但幂等语句不能证明迁移顺序、数据转换和最终约束正确。
+- 老库当前结构本身仍包含与最终业务基线冲突的历史模型，例如行级预检问题、问题分流、单机构链路以及旧校验默认值。
 
-当前 V1 的资源/Route 主线必须是：
+因此，新 V1 必须从最终业务合同和代码模型重新构建，而不是把历史 SQL 排序后执行。
 
-```text
-institution
-+ business_catalog
-+ source_datasource（直接属于 institution + business_catalog）
-+ target_datasource
-+ standard_dataset/version/field
-+ collection_route（单机构）
-+ collection_route_version
-+ route_field_resolution
-+ sync_task（固定机构+Dataset身份，当前配置）
-+ task_watermark
-+ execution/precheck/validation/outbox 等运行对象
-```
-
-不得从旧文档恢复已经废止的资源中间层、Route 多机构覆盖或 Task version。
+62 个历史文件的逐项处置结论见 `spec/LEGACY_SQL_AUDIT.md`；阶段 1 的 P0 关系模型、状态、约束、索引和现有代码差异见 `spec/TARGET_METADATA_MODEL.md`。目标模型正在逐项 Review，2026-08-14 第一批确认项已经合并；全部 Review 完成前不得创建或固化 `V1__baseline.sql`。
 
 ## 4. Flyway 目录和命名
 
-正式运行时只扫描：
+运行时只扫描：
 
 ```text
 server/src/main/resources/db/migration/
   V1__baseline.sql
-  V2__add_xxx.sql
-  V3__adjust_xxx.sql
+  V2__add_business_system_instance.sql
+  V3__add_task_version_and_identity.sql
 ```
 
-这里的 V2/V3 只说明命名格式，不代表已经分配的真实版本。
+以上 V2/V3 仅用于说明命名格式，不代表已分配的实际版本或实施顺序。正式规则：
 
-规则：
-
-- `V{递增版本}__{snake_case说明}.sql`；
-- 已执行版本不可修改、重命名、调序或删除；
-- 修正已发布结构只能新增更高版本；
-- `R__*.sql` 只用于真正可安全重复创建的派生对象，不用于有状态业务表；
-- 旧脚本必须放在 Flyway 扫描目录之外；
-- 每个迁移围绕一个明确、可验证的结构目标。
+- 版本迁移：`V{递增版本}__{snake_case说明}.sql`。
+- 已执行的版本文件不可修改、覆盖、重命名、调序或删除；修正必须新增更高版本。
+- `R__*.sql` 只用于可安全重复创建的视图或静态派生对象，不用于业务表结构和有状态基础数据。
+- 旧脚本和人工回滚脚本归档在 `server/src/main/resources/db/legacy/`，该目录不加入 Flyway locations。
+- 一个迁移文件围绕一个可说明、可验证的结构目标，禁止把无关业务修改堆在同一版本。
 
 ## 5. V1 基线内容
 
-`V1__baseline.sql` 只在阶段 1 最终签字、前端产品模型和 API 合同稳定后生成。
+`V1__baseline.sql` 必须包含新项目首次运行需要的最终结构：
 
-必须包含：
-
-- `df_etl` Schema；
-- 当前 P0 PostgreSQL 表；
-- 主键、外键、唯一约束、CHECK、必要索引；
-- Quartz JDBC JobStore 官方表；
-- 不含秘密的必要基础配置；
-- 关键业务约束注释。
+- Schema、表、序列、主键、外键、唯一约束、检查约束和必要索引；
+- 与当前实体、枚举、查询条件和最终业务合同一致的默认值；
+- Quartz JDBC JobStore 所需结构；
+- 必要且不含秘密的系统基础配置；
+- 对关键业务约束和只读合同版本字段的数据库注释。
 
 V1 不得包含：
 
-- 老系统运行数据、执行历史、Quartz 状态或消息历史；
-- 已废止的老任务/校验/批量模板/分组对象；
-- 机构树；
-- 独立真实部署系统实例及其机构/数据源多对多关系；
-- Route 覆盖多机构关系表；
-- `sync_task_version` 或任何 `task_version_id`；
-- 数据源组和任务组；
-- 标准任务 `CUSTOM_SQL`；
-- Redis Stream P0 配置；
-- 任务级消息配置；
-- PostgreSQL Doris 物理表登记/结构版本表；
-- `execution_checkpoint`、跨执行恢复检查点；
-- `task_watermark_history`；
-- 校验分段/行级差异/自动修复等当前不需要对象；
-- 固定管理员密码、数据库真实密码、JWT/AES 密钥或 RabbitMQ 部署 Secret；
-- 只为兼容老库存在的临时字段。
+- 老库中的运行数据、执行历史、Quartz 状态、预检行级明细或消息发送历史；
+- 已废止的 `validation_task`、`dfetl_task`、`task_group`、行级问题和问题分流模型；
+- 单医共体部署下不需要的 `medical_community`、`community_id` 和机构层级 `parent_id`；
+- PostgreSQL Doris 物理表登记/结构版本表、`execution_checkpoint`、`execution_reconciliation`、独立重试关联/恢复字段、`recollect_of_execution_id` 自关联，以及预检/校验异步导出任务表；
+- 与成功执行窗口和通用审计重复的 `task_watermark_history` 表；
+- 仅服务内部计算分批且不需要恢复的 `validation_run_segment` 表；
+- 可由触发类型、同步执行和通用审计替代的 `validation_run.recheck_of_run_id` 自关联；
+- 可内嵌在 `validation_run.difference_summary JSONB` 的独立 `validation_difference_summary` 表；
+- 与 `message_outbox` 当前投递状态和应用日志重复的 `message_delivery_attempt` 表；
+- 与可重试 `PENDING` 重复的 `message_outbox.status=FAILED` 状态；
+- 与统一“下一次允许投递时间”字段 `message_outbox.available_at` 语义重复的 `next_attempt_at` 字段；
+- 存放批量业务数据的 Outbox payload，以及仅用于恢复消息发布位置的分页进度、分页明细或逐条消息持久化表；新模型每次执行只保存一条小型发布指令，发布数据从 Doris 重新读取；
+- 只能表示单条 RabbitMQ 消息、无法代表整段发布指令的 `message_outbox.provider_message_id` 字段；逐条确认标识写应用日志；
+- 仅用于恢复超时 `PUBLISHING` 的消息发布租约表、工作节点归属字段或额外恢复状态；新模型复用 `last_attempt_at`、全局超时参数和现有状态完成恢复；
+- Redis Stream 专用配置、transport 选择字段及运行时传输切换结构；P0 只使用 RabbitMQ；
+- 从数据集消息策略重复复制出来的任务级 `message_publish_config` 或任务级消息覆盖字段；任务差异通过执行和 Outbox 指令快照表达；
+- 一次执行只有一条发布指令时固定且无区分价值的 `message_outbox.event_type`；直接以 `execution_id` 唯一；
+- RabbitMQ 地址、凭据、连接参数或固定 Exchange `YL` 的数据库配置字段；连接信息属于部署配置，Exchange 由平台按固定契约幂等声明；
+- 消息发布 `full_sync_mode`、`send_truncate_signal` 及 `ALL/SKIP/NOTIFY_ONLY`、`FULL_SYNC_COMPLETE`、TRUNCATE 信号相关结构；新模型始终发布本次同步范围内的全部业务数据；
+- 与执行结果或当前版本指针重复的任务生命周期状态、任务版本状态，以及自动失败阻断字段 `schedule_blocked/block_reason` 和待追赶字段 `catch_up_pending`；
+- 与共享多机构链路、固定 ODS/RAW 合同或最终校验策略冲突的旧结构；
+- 固定管理员密码、真实数据库密码、AES/JWT 密钥或其他环境秘密；
+- 为兼容老库而存在、但新系统不再使用的临时迁移字段。
 
-## 6. 当前关键数据库关系
+## 6. 每次 SQL 变更的维护要求
 
-阶段 1 最终 DDL 至少直接保证：
-
-```text
-source_datasource(id,institution_id) UNIQUE
-collection_route(source_datasource_id,institution_id)
-  FK → source_datasource(id,institution_id)
-
-collection_route active UNIQUE(institution_id,dataset_id)
-
-collection_route_version(id,institution_id,dataset_id) UNIQUE
-sync_task(route_version_id,institution_id,dataset_id)
-  FK → collection_route_version(id,institution_id,dataset_id)
-
-sync_task active UNIQUE(institution_id,dataset_id)
-```
-
-并继续保证：
-
-- 同 Task 一个活动同步 Execution；
-- 同 Route 一个活动 Precheck；
-- 同 Task 一个活动独立 Validation；
-- 同 Execution 最多一条 Message Outbox；
-- 外部 API 幂等和 nonce 防重放。
-
-## 7. 每次 SQL 变更维护要求
-
-涉及实体、Repository、唯一性、状态机或配置的变更，必须同一开发批次完成：
+涉及实体、Repository 查询、唯一性、状态机或基础配置的变更，必须在同一次代码提交中完成：
 
 1. 新增 Flyway 版本 SQL；
-2. 更新 Entity/DTO/Repository/Service；
-3. 更新 API contract 和前端类型；
-4. 记录前置条件、数据转换、锁和停机风险；
-5. 提供迁移后核对 SQL；
-6. 说明失败后的应用回退或前向修复；
-7. 更新 `TASKS.md` 和相关 spec；
-8. 验证空库迁移；
-9. 验证上一正式版本升级；
-10. 验证 Maven 构建、Spring Boot 启动和 Flyway validate。
+2. 更新实体、DTO、Repository 和服务逻辑；
+3. 记录迁移前置条件、数据转换规则和锁/停机风险；
+4. 提供迁移后结构与数据核对 SQL；
+5. 说明失败后的回退方法或更高版本的前向修复方案；
+6. 更新 `TASKS.md` 和相关 Review/业务文档；
+7. 验证空库执行全部迁移；
+8. 验证上一正式版本数据库升级到当前版本；
+9. 验证 `./mvnw -DskipTests package` 和应用启动时的 Flyway 校验。
 
-禁止：
+禁止以下操作：
 
-- 依赖 JPA `ddl-auto` 改生产库；
-- 手工执行未入库 SQL；
-- 修改已经执行过的 Flyway 文件；
-- 用 `IF NOT EXISTS` 掩盖结构不一致；
-- 把真实凭据写入 SQL；
-- Flyway validate 失败仍启动业务服务。
+- 只修改 JPA 实体并依赖 `ddl-auto` 改库；
+- 在生产环境手工执行未进入仓库的 SQL；
+- 修改已经执行过的 Flyway 文件以“修正”历史；
+- 用 `IF NOT EXISTS` 掩盖不一致结构；
+- 把开发、测试或生产的真实凭据写入 SQL；
+- 让应用在 Flyway 校验失败或数据库版本未知时继续运行。
 
-## 8. 破坏性结构调整
+## 7. 破坏性调整
 
-删除字段/表、改类型、收紧非空、替换唯一键等采用：
+删除表/字段、重命名、改类型、收紧非空、替换唯一键等调整采用分阶段方式：
 
-```text
-扩展
-→ 数据迁移与核对
-→ 应用切换
-→ 后续版本收缩
-```
+1. **扩展**：新增兼容结构，旧代码仍可运行。
+2. **迁移**：回填数据并核对数量、空值、重复键和引用完整性。
+3. **切换**：应用改读写新结构并观察一个发布周期。
+4. **收缩**：后续独立版本再删除旧结构。
 
-Flyway 不依赖自动 down migration。紧急回退优先回退应用并保留兼容结构；无法回退的变更必须提前给出备份、恢复和前向修复方案。
+Flyway 不依赖自动 down migration。需要紧急回退时优先回退应用并保留兼容结构；无法回退的结构变化必须在执行前提供备份、恢复时间和前向修复方案。
 
-## 9. 环境验证和正式切换
+## 8. 环境验证和最终切换
 
-- 开发/测试：新系统独立数据库，可反复从空库验证全部迁移；
-- 升级演练：从上一正式版本备份恢复到隔离环境后升级；
-- 老系统：只允许只读导出结构或经批准导出待迁移配置；
-- 正式切换：停止老系统调度，冻结迁移配置，执行已演练转换，核对后启动新系统，避免双调度和重复写入。
+- 开发/测试：使用新项目独立数据库，允许随时重建并验证 V1。
+- 新系统升级演练：从上一正式版本备份恢复到隔离环境，再执行新增迁移。
+- 老系统：只读导出结构或经批准导出待迁移配置；新应用不得连接其生产元数据库运行。
+- 最终切换：停止老系统调度，冻结待迁移配置，执行已演练的转换，核对对象与数量，启动新系统并确认不会形成双调度；失败时按切换方案恢复老系统。
 
-正式迁移配置、水位范围和切换策略在上线专题中单独确认。
+本文只确定数据库治理与隔离原则。具体 V1 结构由 DB-001 按最终业务模型实施；最终配置迁移和切换由 DB-002 实施。
