@@ -41,31 +41,9 @@ jobs:
       - name: Generate and validate OpenAPI 3.1
         shell: bash
         run: |
-          set -uo pipefail
-          : > /tmp/openapi-diagnostic.log
-          python scripts/generate_openapi_v1.py --write >> /tmp/openapi-diagnostic.log 2>&1
-          write_rc=$?
-          if [ "$write_rc" -eq 0 ]; then
-            python scripts/generate_openapi_v1.py --check >> /tmp/openapi-diagnostic.log 2>&1
-            check_rc=$?
-          else
-            check_rc=0
-          fi
-          cat /tmp/openapi-diagnostic.log
-          rc=$write_rc
-          if [ "$rc" -eq 0 ]; then rc=$check_rc; fi
-          if [ "$rc" -ne 0 ]; then
-            git reset --hard HEAD
-            git clean -fd
-            cp /tmp/openapi-diagnostic.log .phase1-openapi/openapi-diagnostic.log
-            git add .phase1-openapi/openapi-diagnostic.log
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore: record OpenAPI generation diagnostic"
-            git push origin HEAD:main
-            exit "$rc"
-          fi
-          set -e
+          set -euo pipefail
+          python scripts/generate_openapi_v1.py --write
+          python scripts/generate_openapi_v1.py --check
           python -m json.tool spec/openapi/dfetl-api-v1.json > /dev/null
           python - <<'PY'
           import json
@@ -76,7 +54,7 @@ jobs:
           operations = sum(1 for item in document["paths"].values() for method in item if method in methods)
           assert document["openapi"] == "3.1.0", document["openapi"]
           assert operations == 167, operations
-          assert document["info"]["x-signoff-baseline"] == "938566a6659fbf445e00f472ba932fe446d1d886"
+          assert document["info"]["x-signoff-baseline-commit"] == "938566a6659fbf445e00f472ba932fe446d1d886"
           print(f"Validated OpenAPI {document['openapi']} with {operations} operations and {len(document['paths'])} paths")
           PY
 
