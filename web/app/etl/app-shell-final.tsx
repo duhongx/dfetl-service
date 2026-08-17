@@ -23,6 +23,18 @@ import { EditorPanelV2, type EditorRequest, type EditorSavePayload, type EditorV
 import { OperationEditor, type OperationLaunch, type OperationRequest } from "./operation-editor";
 import { loadBatchSeed, messageOutboxSeed } from "./runtime-data";
 import { hasPermission, pagePermission, resolvePermissions } from "./permissions";
+import {
+  AlertsManagementPage,
+  AuditManagementPage,
+  DorisTablesPage,
+  ExternalClientsPage,
+  GlobalSettingsPage,
+  LogsManagementPage,
+  RegistrySettingsPage,
+  SecurityManagementPage,
+  TypeMappingPage,
+  ValidationPolicyPage,
+} from "./a3-management-pages";
 import { parseLocation, pathFor } from "./routing";
 
 type NavItem = { page: AppPage; label: string; icon: ReactNode; permission: string };
@@ -135,7 +147,7 @@ export default function AppShellFinal() {
   const [accounts, setAccounts] = useState(accountSeed);
   const [roles, setRoles] = useState(roleSeed);
   const [auditRows, setAuditRows] = useState<AuditRow[]>(auditSeed);
-  const [externalClients] = useState(externalClientSeed);
+  const [externalClients, setExternalClients] = useState(externalClientSeed);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(systemInstanceSeed[0]?.id ?? null);
   const [datasourceTab, setDatasourceTab] = useState<"source" | "target">("source");
   const [securityTab, setSecurityTab] = useState<"accounts" | "roles">("accounts");
@@ -338,26 +350,19 @@ export default function AppShellFinal() {
     return <><PageHeader page={workbench ? "validationWorkbench" : "validationOverview"} actions={workbench ? <><PButton permission="validation.run" tone="primary" onClick={() => setOperation({kind:"INDEPENDENT_VALIDATION"})}>人工校验</PButton><PButton permission="validation.recheck" onClick={() => setOperation({kind:"MANUAL_RECHECK"})}>重新校验</PButton></> : undefined}/><SearchBar query={query} setQuery={setQuery}/><Card><Table headers={["Validation","机构 / Dataset","Scope / Trigger","Method / Source","Execution","Source / Target","Difference","状态 / 结果"]} rows={rows.map((item) => [item.id,<span key="d"><strong>{item.institutionName}</strong><small>{item.datasetCode}</small></span>,`${item.scope} / ${item.trigger}`,`${item.method} / ${item.source}`,item.executionId ?? "独立校验",item.sourceRows === null ? "—" : `${item.sourceRows} / ${item.targetRows}`,item.differenceCount ?? "—",<span key="s"><Badge value={item.status}/><Badge value={item.result}/></span>])}/></Card>{workbench && <Notice>删除对账发现差异不会自动删除 ODS；真实应用需要 Dry Run、阈值、二次确认和审计。</Notice>}</>;
   };
 
-  const alertsPage = () => <><PageHeader page="alerts"/><Card><Table headers={["Event","级别","告警内容","来源","投递","时间"]} rows={alertSeed.map((item) => [item.id,<Badge key="sev" value={item.severity}/>,item.title,item.source,<Badge key="s" value={item.status}/>,item.time])}/></Card><Notice>告警规则与通道的完整编辑器继续沿 A3 权限和审计矩阵实现，当前页面保留事件事实。</Notice></>;
-  const logsPage = () => <><PageHeader page="logs" actions={<PButton permission="log.export" onClick={() => { recordAudit("log.export","LOG_EXPORT","current-filter","SUCCESS",query || "all"); setToast("日志导出任务已创建"); }}>下载日志</PButton>}/><SearchBar query={query} setQuery={setQuery}/><Card><Table headers={["级别","模块","消息","时间","请求 ID"]} rows={[["INFO","execution","EXE-260817-002 成功收尾，Watermark 已推进","08:18:16","req-8d12"],["ERROR","datasource","SRC_ZYY_HIS 连接超时（连接信息已脱敏）","09:04:03","req-7731"],["WARN","validation","VAL-260816-009 COMPLETED + MISMATCH","17:29:40","req-a110"]]}/></Card></>;
-  const auditPage = () => <><PageHeader page="audit" actions={<PButton permission="audit.export" tone="danger" onClick={() => ask("导出审计","审计导出本身也会被审计。",() => { recordAudit("audit.export","AUDIT_LOG_EXPORT","current-filter","SUCCESS",query || "all"); setToast("审计导出任务已创建"); },true,"确认导出")}>导出审计</PButton>}/><SearchBar query={query} setQuery={setQuery}/><Card><Table headers={["Audit","Actor","来源","权限","操作","目标","结果","详情","时间"]} rows={filterRows(auditRows,(item) => `${item.actor} ${item.permissionCode} ${item.operation} ${item.target}`).map((item) => [item.id,item.actor,item.source,<code key="p">{item.permissionCode}</code>,item.operation,item.target,<Badge key="r" value={item.result}/>,item.detail,item.time])}/></Card></>;
+  const managementProps = { can, deny, ask, setToast, recordAudit };
+  const alertsPage = () => <AlertsManagementPage events={alertSeed} tasks={tasks} {...managementProps}/>;
+  const logsPage = () => <LogsManagementPage {...managementProps}/>;
+  const auditPage = () => <AuditManagementPage rows={auditRows} {...managementProps}/>;
+  const globalSettingsPage = () => <GlobalSettingsPage {...managementProps}/>;
+  const registrySettingsPage = () => <RegistrySettingsPage {...managementProps}/>;
+  const validationPolicyPage = () => <ValidationPolicyPage {...managementProps}/>;
+  const dorisTablesPage = () => <DorisTablesPage datasets={datasets} {...managementProps}/>;
+  const externalApiPage = () => <ExternalClientsPage clients={externalClients} setClients={setExternalClients} institutions={institutions} {...managementProps}/>;
+  const mappingPage = () => <TypeMappingPage {...managementProps}/>;
+  const securityPage = () => <SecurityManagementPage accounts={accounts} setAccounts={setAccounts} roles={roles} setRoles={setRoles} currentAccountId={currentAccountId} openCreate={(kind) => openCreate(kind)} openEdit={(kind,id,initial) => openEdit(kind,id,initial)} {...managementProps}/>;
 
-  const settingsPage = (kind: "global" | "registry" | "validation" | "doris") => {
-    if (kind === "global") return <><PageHeader page="globalSettings"/><div className="grid-2"><Card title="调度默认"><div className="form-grid"><label><span>默认同步周期</span><select defaultValue="EVERY_N_HOURS"><option>MANUAL</option><option>EVERY_N_HOURS</option><option>CRON</option></select></label><label><span>默认间隔（小时）</span><input defaultValue="4"/></label></div><PButton permission="setting.global.update" tone="primary" onClick={() => { recordAudit("setting.global.update","GLOBAL_SETTING_UPDATE","schedule","SUCCESS","save"); setToast("已保存"); }}>保存</PButton></Card><Card title="预检并发与保留"><div className="form-grid"><label><span>并发上限</span><input defaultValue="4"/></label><label><span>问题明细默认保留天数</span><input defaultValue="7"/></label></div><Notice>不再写死 RAW 保留 1 天。</Notice></Card></div></>;
-    if (kind === "registry") return <><PageHeader page="registrySettings"/><Card title="医共体数据模型"><div className="form-grid"><label><span>Host</span><input defaultValue="192.168.1.10"/></label><label><span>Port</span><input defaultValue="5432"/></label><label><span>Database</span><input defaultValue="standard_registry"/></label><label><span>Username</span><input defaultValue="df_registry"/></label><label><span>Password</span><input type="password" defaultValue="********"/></label></div><div className="actions"><PButton permission="registry.test" onClick={() => { recordAudit("registry.test","REGISTRY_CONNECTION_TEST","registry","SUCCESS","ok"); setToast("连接成功"); }}>测试连接</PButton><PButton permission="dataset.sync_definition" tone="primary" onClick={() => setToast("已发起人工同步")}>同步数据集</PButton></div></Card></>;
-    if (kind === "validation") return <><PageHeader page="validationPolicy"/><Card title="全局默认校验策略"><div className="form-grid"><label><span>Method</span><select defaultValue="ROW_COUNT"><option>ROW_COUNT</option><option>ROW_COUNT_CHECKSUM</option></select></label><label><span>容差</span><input value="0" readOnly/></label><label><span>Lookback</span><input value="0" readOnly/></label><label><span>自动复检</span><input value="关闭" readOnly/></label></div><PButton permission="validation_policy.update" tone="primary" onClick={() => { recordAudit("validation_policy.update","GLOBAL_VALIDATION_POLICY_UPDATE","global","SUCCESS","next batch"); setToast("已保存") }}>保存</PButton></Card></>;
-    return <><PageHeader page="dorisTables"/><Card><Table headers={["Dataset","期望 ODS","期望 RAW","实际状态","键模型","操作"]} rows={datasets.map((item) => [<span key="d"><strong>{item.name}</strong><small>{item.code}</small></span>,`ods_${item.code.toLowerCase().replace(/^ods_/,"")}`,`raw_${item.code.toLowerCase().replace(/^ods_/,"")}`,<Badge key="s" value={item.code === "ODS_YL_BCCHUYUANJL" ? "MISSING" : "MATCHED"}/>,item.businessKeyCount ? "UNIQUE KEY" : "DUPLICATE KEY",<PButton key="a" permission="doris_table.create" tone="ghost" onClick={() => ask("创建 Doris 表",`Dataset ${item.code}`,() => { recordAudit("doris_table.create","DORIS_TABLE_CREATE",item.code,"SUCCESS","mock"); setToast("建表请求已记录"); },true,"确认创建")}>创建 / 修复</PButton>])}/></Card></>;
-  };
-
-  const externalApiPage = () => <><PageHeader page="externalApi"/><Card><Table headers={["Client ID","展示名称","授权模式","机构范围","状态"]} rows={externalClients.map((item) => [<code key="id">{item.clientId}</code>,item.clientName,item.authorizationMode,item.authorizationMode === "ALL" ? "全部机构" : item.institutions.join("、"),<Badge key="s" value={item.enabled ? "ENABLED" : "DISABLED"}/>])}/></Card></>;
-  const mappingPage = () => <><PageHeader page="mappingRules"/><Card><Table headers={["Profile","Version","Rule Code","Source DB","Source Type","Doris 建议","兼容性"]} rows={[["generic","1","PG_JSONB","POSTGRESQL","jsonb","STRING",<Badge key="c" value="WARN"/>],["generic","1","ORA_CLOB","ORACLE","CLOB","STRING",<Badge key="c" value="PASS"/>]]}/></Card><Notice>Generic Mapping 不覆盖医疗字段转换合同。</Notice></>;
-
-  const securityPage = () => {
-    const accountRows = filterRows(accounts,(item) => `${item.username} ${item.displayName} ${item.roleIds.join(" ")}`); const roleRows = filterRows(roles,(item) => `${item.code} ${item.name} ${item.permissions.join(" ")}`);
-    return <><PageHeader page="security" actions={securityTab === "accounts" ? <PButton permission="security.account.create" tone="primary" icon={<PlusOutlined/>} onClick={() => openCreate("account")}>新增账号</PButton> : <PButton permission="security.role.manage" tone="primary" icon={<PlusOutlined/>} onClick={() => openCreate("role")}>新增角色</PButton>}/><div className="tabs"><button type="button" className={securityTab === "accounts" ? "active" : ""} onClick={() => setSecurityTab("accounts")}>账号</button><button type="button" className={securityTab === "roles" ? "active" : ""} onClick={() => setSecurityTab("roles")}>角色与权限</button></div><SearchBar query={query} setQuery={setQuery}/>{securityTab === "accounts" ? <Card><Table headers={["用户名","显示名称","角色","状态","最近登录","操作"]} rows={accountRows.map((item) => [<code key="u">{item.username}</code>,item.displayName,item.roleIds.map((roleId) => roles.find((role) => role.id === roleId)?.name ?? roleId).join("、"),<Badge key="s" value={item.enabled ? "ENABLED" : "DISABLED"}/>,item.lastLoginAt,<div key="a" className="row-actions"><PButton permission="security.permission.assign" tone="ghost" onClick={() => openEdit("account",item.id,{username:item.username,displayName:item.displayName,password:"********",confirmPassword:"********",roleIds:item.roleIds,enabled:item.enabled})}>分配角色</PButton><PButton permission="security.account.password.reset" tone="ghost" icon={<LockOutlined/>} onClick={() => ask("重置密码","既有会话将失效，密码不进入审计。",() => { recordAudit("security.account.password.reset","ACCOUNT_PASSWORD_RESET",item.id,"SUCCESS","password omitted"); setToast("密码已重置"); },true,"确认重置")}>重置密码</PButton></div>])}/></Card> : <Card><Table headers={["角色","账号数","权限数","权限摘要","内置","操作"]} rows={roleRows.map((item) => [<span key="r"><strong>{item.name}</strong><small>{item.code}</small></span>,accounts.filter((account) => account.roleIds.includes(item.id)).length,item.permissions.includes("*") ? "全部" : item.permissions.length,item.permissions.slice(0,6).join("、") + (item.permissions.length > 6 ? "…" : ""),item.builtIn ? "是" : "否",<PButton key="a" permission="security.role.manage" tone="ghost" onClick={() => openEdit("role",item.id,{code:item.code,name:item.name,permissions:item.permissions})}>编辑权限</PButton>])}/></Card>}<Notice>无页面权限时菜单隐藏，直接访问显示 403；前端权限控制不替代服务端鉴权。</Notice></>;
-  };
-
-  const docsPage = () => <><PageHeader page="docs"/><div className="grid-2"><Card title="配置顺序"><ol className="doc-list"><li>维护机构和独立 Source / Target。</li><li>创建业务系统实例并关联机构与 Source。</li><li>同步 Dataset，创建多机构 Route。</li><li>发起 Precheck，查看汇总与问题明细。</li><li>按机构 + Dataset 创建 Task 与不可变 Task Version。</li></ol></Card><Card title="关键边界"><ul className="doc-list"><li>Business Catalog 已删除。</li><li>Route 不保存 status，也没有独立 structure gate。</li><li>Execution 固定 Task Version。</li><li>无主键任务是“每次全量 · 替换当前机构范围”。</li><li>敏感查看、导出和权限分配必须审计。</li></ul></Card></div></>;
+  const docsPage = () => <><PageHeader page="docs"/><div className="grid-2"><Card title="配置顺序"><ol className="doc-list"><li>维护机构和独立 Source / Target。</li><li>创建业务系统实例并关联机构与 Source。</li><li>同步 Dataset，创建多机构 Route。</li><li>发起 Precheck，查看汇总与问题明细。</li><li>按机构 + Dataset 创建 Task 与不可变 Task Version。</li></ol></Card><Card title="关键边界"><ul className="doc-list"><li>Business Catalog 已删除。</li><li>Route 不保存 status，也没有独立 structure gate。</li><li>Execution 固定 Task Version。</li><li>无主键任务是“每次全量 · 替换当前机构范围”。</li><li>敏感查看、导出和权限分配必须审计。</li><li>真实 REST API 边界见 <code>spec/FRONTEND_API_CONTRACT_V1.md</code>。</li></ul></Card></div></>;
 
   const render = () => {
     if (!can(pagePermission[page])) return <><PageHeader page={page}/><Notice tone="danger">403：当前账号缺少页面权限 <code>{pagePermission[page]}</code></Notice></>;
@@ -380,10 +385,10 @@ export default function AppShellFinal() {
       case "alerts": return alertsPage();
       case "logs": return logsPage();
       case "audit": return auditPage();
-      case "globalSettings": return settingsPage("global");
-      case "registrySettings": return settingsPage("registry");
-      case "validationPolicy": return settingsPage("validation");
-      case "dorisTables": return settingsPage("doris");
+      case "globalSettings": return globalSettingsPage();
+      case "registrySettings": return registrySettingsPage();
+      case "validationPolicy": return validationPolicyPage();
+      case "dorisTables": return dorisTablesPage();
       case "externalApi": return externalApiPage();
       case "mappingRules": return mappingPage();
       case "security": return securityPage();
@@ -400,9 +405,9 @@ export default function AppShellFinal() {
       <button type="button" className="brand" onClick={() => navigate("dashboard")}><span>DF</span><div><strong>DFETL</strong><small>医共体数据采集平台</small></div></button>
       {can("dashboard.view") && <button type="button" className={`nav-home ${activeNavPage === "dashboard" ? "active" : ""}`} onClick={() => navigate("dashboard")}><HomeOutlined/>运行概览</button>}
       <nav>{navGroups.map((group) => { const items = group.items.filter((item) => can(item.permission)); if (!items.length) return null; return <section key={group.title}><h3>{group.icon}{group.title}</h3>{items.map((item) => <button type="button" key={item.page} className={activeNavPage === item.page ? "active" : ""} onClick={() => navigate(item.page)}>{item.icon}<span>{item.label}</span></button>)}</section>; })}</nav>
-      <footer><strong>阶段 1 · IN_PROGRESS</strong><small>前端产品合同实施中；数据库和后端仍未授权</small></footer>
+      <footer><strong>A3 前端产品行为已稳定</strong><small>REST API Contract V1 已冻结；后端与数据库仍未实施</small></footer>
     </aside>
-    <div className="main-shell"><header className="topbar"><div><strong>前端产品整改</strong><span>System Instance · Multi-Institution Route · Task Version · Precheck Detail · RBAC</span></div><div className="top-actions"><button type="button" className="help" onClick={() => navigate("docs")}><QuestionCircleOutlined/>Help</button><span className="top-status"><i/>Mock 数据</span><select value={currentAccountId} onChange={(event) => setCurrentAccountId(event.target.value)} aria-label="切换模拟账号">{accounts.filter((item) => item.enabled).map((item) => <option key={item.id} value={item.id}>{item.username}</option>)}</select><button type="button" className="user" onClick={() => openEdit("profile",currentAccountId,{username:currentAccount?.username ?? "",displayName:currentAccount?.displayName ?? "",currentPassword:"",newPassword:"",confirmPassword:""})}><UserOutlined/><span>{currentAccount?.displayName ?? "未登录"}</span></button></div></header><main>{render()}</main></div>
+    <div className="main-shell"><header className="topbar"><div><strong>前端产品整改</strong><span>System Instance · Multi-Institution Route · Task Version · Precheck Detail · RBAC</span></div><div className="top-actions"><button type="button" className="help" onClick={() => navigate("docs")}><QuestionCircleOutlined/>Help</button><span className="top-status"><i/>Mock 数据</span><select value={currentAccountId} onChange={(event) => setCurrentAccountId(event.target.value)} aria-label="切换模拟账号"><option value="">未登录</option>{accounts.filter((item) => item.enabled).map((item) => <option key={item.id} value={item.id}>{item.username}</option>)}</select>{currentAccount && <button type="button" className="user" onClick={() => openEdit("profile",currentAccountId,{username:currentAccount.username,displayName:currentAccount.displayName,currentPassword:"",newPassword:"",confirmPassword:""})}><UserOutlined/><span>{currentAccount.displayName}</span></button>}{currentAccount && <button type="button" className="help" onClick={() => ask("退出登录","确认退出当前会话？",() => { recordAudit("session.logout","LOGOUT",currentAccountId,"SUCCESS","session cleared"); setCurrentAccountId(""); setToast("已退出登录"); },false,"确认退出")}>退出</button>}</div></header><main>{render()}</main></div>
     {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
     {modal && <div className="modal-mask" role="presentation" onMouseDown={() => setModal(null)}><section className="modal" role="dialog" aria-modal="true" aria-label={modal.title} onMouseDown={(event) => event.stopPropagation()}><header><h2>{modal.title}</h2><button type="button" onClick={() => setModal(null)}>×</button></header><div className="modal-body">{modal.message}</div><footer><Button onClick={() => setModal(null)}>取消</Button>{modal.onConfirm && <Button tone={modal.danger ? "danger" : "primary"} onClick={confirmModal}>{modal.confirmLabel ?? "确认"}</Button>}</footer></section></div>}
     <EditorPanelV2 request={editor} institutions={institutions} systemInstances={systemInstances} sources={sources} targets={targets} datasets={datasets} routes={routes} tasks={tasks} accounts={accounts} roles={roles} alertChannels={[]} onClose={() => setEditor(null)} onSave={saveEditor}/>

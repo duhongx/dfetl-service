@@ -57,12 +57,12 @@ head behind by 0 commits
 | --- | --- | --- |
 | 可信文档清理 | `VERIFIED` | 错误主模型和不可信 Review 文件已清理，可信优先级已恢复。 |
 | 最新流程业务规则 | `CONFIRMED` | 预检问题明细、正式同步、无主键范围替换、校验和 RabbitMQ 规则已确认。 |
-| A1–A3 前端产品合同 | `CONFIRMED` | 预检明细页面、无主键范围替换前端语义、页面—操作—权限—审计矩阵已确认；前端代码尚未实施。 |
+| A1–A3 前端产品合同 | `IMPLEMENTED` | A3 Mock 产品行为已完成并通过 ESLint/Next.js 生产构建；真实 API 和服务端尚未实施。 |
 | 核心文档一致性 | `ALIGNED` | 已同步修订核心文档冲突，并建立 A1–A3 产品合同。 |
 | P0 目标元数据模型 | `IN_REVIEW` | 预检明细物理载体、P0 支撑对象和物理表字典仍待确认。 |
 | Flyway V1 | `NOT_AUTHORIZED` | 目标模型最终签字前不得创建或固化 `V1__baseline.sql`。 |
 | Java 生产代码迁移 | `IMPLEMENTED` | 迁移和 JDK 21 编译完成；真实 PostgreSQL 启动与健康检查尚未验证。 |
-| 前端产品整改 | `PENDING` | 下一工作包按 A1–A3 合同整改路由、菜单、页面、权限公共层和旧模型交互。 |
+| 前端产品整改 | `IMPLEMENTED` | 页面、操作、权限、确认、审计、分页和主要失败/空状态已完成；真实 API 接入进入下一阶段。 |
 | 前后端业务闭环 | `IN_PROGRESS` | Web 仍有 Mock，真实 API、数据库和端到端联调尚未完成。 |
 
 阶段 1 的准确名称是“可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。`CONFIRMED` 不等于技术设计 `FROZEN`，`IMPLEMENTED` 不等于真实环境 `VERIFIED`。当前实施授权为 `NO`。
@@ -73,7 +73,8 @@ head behind by 0 commits
 | --- | --- | --- | --- |
 | `spec/README.md` | 当前有效 | 新增并持续维护 | `spec/` 唯一索引、可信顺序、阶段状态和逐文件处置记录。 |
 | `spec/CURRENT_CONFIRMED_PROCESS_RULES.md` | 当前有效 | 新增 | 只保留后来由用户明确确认的预检、正式同步、校验和 RabbitMQ 数据集级消息规则。 |
-| `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` | 当前有效、产品合同 | 新增 | 冻结 A1 预检问题明细页面、A2 无主键范围替换前端语义和 A3 页面—操作—权限—审计矩阵；代码尚未实施。 |
+| `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` | 当前有效、产品合同 | 新增并持续维护 | 冻结 A1–A3 产品合同；前端 Mock 行为已实现，服务端仍待实施。 |
+| `spec/FRONTEND_API_CONTRACT_V1.md` | 当前有效、API 合同 | 新增 | 冻结页面到 REST API、分页、Revision、幂等、权限、审计、错误码、导出任务和长任务状态合同。 |
 | `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退并对齐 | 恢复可信交接内容，并于 2026-08-17 对齐问题记录级预检和 `REPLACE_INSTITUTION_SCOPE`。 |
 | `spec/TARGET_METADATA_MODEL.md` | 当前有效、Review 中 | 回退并对齐 | 恢复可信 Review 模型并补充问题明细逻辑合同；物理载体未确认，仍未冻结。 |
 | `spec/TASKS.md` | 当前有效 | 回退并对齐 | 恢复可信任务清单，并明确阶段 1 为 `IN_PROGRESS`、实施授权为 `NO`。 |
@@ -221,4 +222,19 @@ B2：实现 A1 预检 Route/Run/汇总/明细页面
 B3：统一 A2 无主键任务文案和确认交互
 B4：建立权限指令、危险确认和审计调用的前端公共层
 B5：按 A3 矩阵逐页消除空按钮和旧模型交互
+```
+
+## 12. 2026-08-17 A3 交互与 API 合同完成
+
+本次完成 A3 剩余逐页交互，并新增 `FRONTEND_API_CONTRACT_V1.md`。前端产品行为已经稳定，可以进入 Mock Service → 真实 API 的逐领域替换阶段。
+
+状态边界：
+
+```text
+前端产品交互：IMPLEMENTED
+REST API 合同：FROZEN_FOR_IMPLEMENTATION
+Java 后端接口：NOT_IMPLEMENTED
+服务端鉴权与审计：NOT_IMPLEMENTED
+PostgreSQL / Doris / RabbitMQ：NOT_IMPLEMENTED
+Flyway V1：NOT_AUTHORIZED
 ```

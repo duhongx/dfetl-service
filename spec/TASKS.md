@@ -6,7 +6,7 @@
 > 阶段状态：`IN_PROGRESS`  
 > 实施授权：`NO`；目标模型最终签字前不创建 Flyway V1，不按 Review 草案批量改造数据库和后端  
 > 已验证：Java 生产代码迁移及 JDK 21 编译打包、老库结构快照、62 个历史 SQL 审计、可信 `spec/` 清理  
-> A1–A3 产品合同：`CONFIRMED`；前端代码实施：`PENDING`；权威合同见 `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md`  
+> A1–A3 产品合同：`CONFIRMED`；前端产品交互：`IMPLEMENTED`，真实 API/后端：`NOT_IMPLEMENTED`；权威合同见 `spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md` 和 `spec/FRONTEND_API_CONTRACT_V1.md`  
 > 测试策略：当前阶段不迁移、不补写原单元测试和接口测试；主业务流程跑通并稳定后，再按本清单补接口测试。
 
 ## 1. 项目目标
@@ -1230,7 +1230,7 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 
 > 权威合同：`spec/FRONTEND_PRODUCT_CONTRACTS_A1_A3.md`  
 > 产品状态：`CONFIRMED`  
-> 前端实现状态：`PENDING`  
+> 前端实现状态：`IMPLEMENTED`；A3 页面交互、权限、确认、审计和分页已完成，真实 API 接入未完成  
 > 边界：本工作包只确认页面、交互、权限和审计语义，不代表 API、数据库、Doris 物理方案或 Flyway 已冻结。
 
 ### A1：数据预检问题明细页面合同
@@ -1265,13 +1265,14 @@ DFETL 将两种操作定义为不同的业务命令，不提供独立重试：
 
 ### 下一前端实施工作包
 
-- [ ] `B1`：按目标信息架构整改路由和菜单。
-- [ ] `B2`：实现 A1 预检 Route/Run/汇总/明细页面。
-- [ ] `B3`：统一 A2 无主键任务文案和确认交互。
-- [ ] `B4`：建立权限指令、危险确认和审计调用的前端公共层。
-- [ ] `B5`：按 A3 矩阵逐页消除空按钮和旧模型交互。
+- [x] `B1`：按目标信息架构整改路由和菜单。
+- [x] `B2`：实现 A1 预检 Route/Run/汇总/明细页面。
+- [x] `B3`：统一 A2 无主键任务文案和确认交互。
+- [x] `B4`：建立权限指令、危险确认和审计调用的前端公共层。
+- [x] `B5`：按 A3 矩阵逐页消除空按钮和旧模型交互。
+- [x] `API-001`：生成并冻结 `spec/FRONTEND_API_CONTRACT_V1.md`，覆盖分页、Revision、幂等、权限、审计、导出任务和长任务状态。
 
-A1–A3 勾选完成只表示产品合同完成；B1–B5 未完成前，不得将前端状态标记为 `IMPLEMENTED` 或 `VERIFIED`。
+A1–A3 与 B1–B5 已完成前端 Mock 产品行为实现，并以 ESLint 和 Next.js 生产构建验证；真实 REST API、服务端鉴权/审计、数据库和外部组件尚未实施，因此只能标记前端产品交互为 `IMPLEMENTED`，不能标记端到端系统为 `VERIFIED`。
 
 
 ---
