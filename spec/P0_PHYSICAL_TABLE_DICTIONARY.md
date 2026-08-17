@@ -1,6 +1,6 @@
 # P0 物理表字典总索引
 
-> 状态：阶段 1 物理模型一致性收口中  
+> 状态：阶段 1 P0 PostgreSQL 最终表清单已冻结；进入 FK Matrix Review  
 > 最近更新：2026-08-17  
 > 适用数据库：新系统独立 PostgreSQL 元数据库 + Doris 技术表  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
@@ -30,12 +30,17 @@
 | Validation 配置/门禁 | `P0_PHYSICAL_TABLE_DICTIONARY_VALIDATION_POLICY.md` |
 | Execution / Batch / Precheck / Validation / Outbox | `P0_PHYSICAL_TABLE_DICTIONARY_EXECUTION.md` |
 | 删除识别 | `P0_DELETE_SNAPSHOT_PHYSICAL_REVIEW.md` |
+| 支撑对象 | `P0_SUPPORT_OBJECT_REVIEW.md` |
 | External API | `EXTERNAL_API_REVIEW.md` |
 | Quartz | `QUARTZ_JOBSTORE_REVIEW.md` |
 
 发生冲突时，以用户最新确认及日期更晚的已确认专项 Review 为准。
 
-## 3. 当前核心 PostgreSQL 主链
+## 3. P0 PostgreSQL 最终表清单
+
+### 3.1 DFETL 领域/控制表：39 张
+
+#### 接入资源：5
 
 ```text
 institution
@@ -43,7 +48,11 @@ business_catalog
 source_datasource
 target_datasource
 target_datasource_fe_endpoint
+```
 
+#### Dataset / 字段合同 / Dataset 配置：8
+
+```text
 standard_dataset
 standard_dataset_version
 standard_dataset_field
@@ -52,14 +61,21 @@ field_conversion_rule
 generic_jdbc_type_mapping
 dataset_sync_policy
 dataset_message_policy
+```
 
+#### Route / Task / Watermark：5
+
+```text
 collection_route
 collection_route_version
 route_field_resolution
-
 sync_task
 task_watermark
+```
 
+#### Execution / Precheck / Validation / Message：6
+
+```text
 sync_execution
 load_batch
 precheck_run
@@ -68,19 +84,72 @@ validation_run
 message_outbox
 ```
 
-以及支撑对象：
+#### 删除识别：3
+
+```text
+delete_snapshot_run
+task_delete_snapshot_state
+delete_apply_run
+```
+
+`DELETE_RECONCILIATION` 继续复用统一 `validation_run`，不重复增加删除校验表。
+
+#### 账号 / Audit / Setting / Alert / External API：12
 
 ```text
 app_user
 audit_log
 system_setting
-alert_* 
-external_api_*
-delete_snapshot_run
-task_delete_snapshot_state
-delete_apply_run
-Quartz 官方 qrtz_* 表
+
+alert_channel
+alert_rule
+alert_rule_channel
+alert_event
+alert_delivery
+
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
 ```
+
+`alert_rule_channel` 明确保留，用于 Alert Rule 与 Channel 的结构化多对多关系，不使用 JSON Channel ID 数组替代。
+
+### 3.2 Quartz JDBC JobStore：11 张
+
+Quartz 官方 PostgreSQL JobStore 表单独统计：
+
+```text
+qrtz_job_details
+qrtz_triggers
+qrtz_simple_triggers
+qrtz_cron_triggers
+qrtz_simprop_triggers
+qrtz_blob_triggers
+qrtz_calendars
+qrtz_paused_trigger_grps
+qrtz_fired_triggers
+qrtz_scheduler_state
+qrtz_locks
+```
+
+这 11 张属于 Quartz 运行基础设施，不计入 DFETL 39 张领域/控制表；阶段 2 生成 V1 时按当前 Quartz 版本对应的官方 PostgreSQL Schema 建立，不自行发明业务字段。
+
+### 3.3 数量口径
+
+```text
+DFETL P0 领域/控制表       39
+Quartz JDBC JobStore       11
+--------------------------------
+Flyway V1 负责创建         50
+```
+
+`flyway_schema_history` 由 Flyway 自身创建和管理：
+
+- 不计入 DFETL P0 39 张；
+- 不计入 Quartz 11 张；
+- 不计入 V1 自己定义的 50 张表；
+- 新空库首次 migrate 后实际可看到该额外 Flyway 管理表。
 
 ## 4. 当前模型主关系
 
@@ -133,16 +202,7 @@ collection_route_version(
 ) UNIQUE
 ```
 
-Task/Execution/Delete Snapshot 使用该四元身份，直接保证：
-
-```text
-Route Version
-+ Institution
-+ Dataset
-+ Dataset Version
-```
-
-属于同一不可变 Route Snapshot。
+Task/Execution/Precheck/Delete Snapshot 使用该四元身份，直接保证 Route Version + Institution + Dataset + Dataset Version 属于同一不可变 Route Snapshot。
 
 不再建立/引用：
 
@@ -239,7 +299,10 @@ auto revalidate/fail_block
 - 标准 Task `CUSTOM_SQL`；
 - Redis Stream P0 通道；
 - 行级 Precheck/Validation Issue；
-- 跨 Execution Resume/Checkpoint 状态表。
+- 跨 Execution Resume/Checkpoint 状态表；
+- Scheduler Reconciliation 表；
+- External API 应用层 Rate Limit/Quota 表；
+- RBAC Role/Permission 表。
 
 ## 8. Doris 技术表
 
@@ -254,15 +317,27 @@ _dfetl_delete_diff
 
 PostgreSQL 不重复维护 Doris 业务表结构登记表。
 
-## 9. 阶段 1 最终验收重点
+Doris 最终业务/技术表清单与数量将在后续最终物理一致性 Review 中单独核对，不改变本节已经冻结的 PostgreSQL `39 + 11` 口径。
 
-- 当前表清单与 `TARGET_METADATA_MODEL.md` 一致。
-- Source 直接属于 Institution + Business Catalog。
-- Route 为单机构模型。
-- Route Version 四元身份 FK 在 Task/Execution/Delete Snapshot 统一使用。
-- Task 为固定身份 + 当前配置模型，不存在 Task Version。
-- Validation 只存在三层值，不存在 Policy 表。
-- Execution/Validation 历史由启动快照解释。
-- 所有 FK 父列有唯一约束，子列有必要索引。
-- 状态、删除行为和并发唯一约束无冲突。
-- 最终 `PHASE1_FINAL_REVIEW.md` 完成并由用户签字后，才能进入 Flyway V1。
+## 9. 阶段 1 当前验收重点
+
+已完成：
+
+- [x] P0 DFETL PostgreSQL 领域/控制表清单冻结为 39 张。
+- [x] Quartz PostgreSQL JobStore 清单冻结为 11 张。
+- [x] V1 创建表数量口径冻结为 50 张。
+- [x] `flyway_schema_history` 明确不计入 P0/V1 表数量。
+
+下一项：
+
+- [ ] 完整 FK Matrix：Child Columns / Parent Unique / ON DELETE / Child Index。
+
+后续仍需：
+
+- [ ] Business/Concurrency Unique Matrix。
+- [ ] Status/Enum/CHECK Matrix。
+- [ ] Delete Behavior Matrix。
+- [ ] Execution/Validation/Outbox Snapshot 最小充分性 Review。
+- [ ] `PHASE1_FINAL_REVIEW.md`。
+
+最终 `PHASE1_FINAL_REVIEW.md` 完成并由用户签字后，才能进入 Flyway V1。
