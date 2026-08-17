@@ -11,6 +11,7 @@ export type AppPage =
   | "precheck"
   | "precheckDetail"
   | "monitor"
+  | "executionDetail"
   | "validationOverview"
   | "validationWorkbench"
   | "alerts"
