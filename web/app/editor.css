@@ -1,0 +1,28 @@
+.editor-modal { width: min(940px, 100%); }
+.editor-modal > header > div { min-width: 0; }
+.editor-modal > header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin-bottom: 16px; }
+.editor-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.editor-field > span, .editor-readonly > span { color: #596a82; font-size: 10px; font-weight: 700; }
+.editor-field > span b { margin-left: 3px; color: var(--red); }
+.editor-field input, .editor-field select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--text); outline: 0; }
+.editor-field input:focus, .editor-field select:focus { border-color: #8ba1e5; box-shadow: 0 0 0 3px rgba(49,87,213,.07); }
+.editor-field input:disabled, .editor-field select:disabled { background: #f1f4f8; color: #718096; cursor: not-allowed; }
+.editor-field small, .editor-readonly small { color: #8996aa; font-size: 9px; line-height: 1.45; }
+.editor-readonly { min-height: 68px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.editor-readonly strong { color: #33445f; font-size: 11px; }
+.editor-subtitle, .section-title { margin: 18px 0 10px; color: #3c4d66; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.editor-note { margin: 10px 0 16px; padding: 10px 12px; border: 1px solid #dbe4f4; border-radius: 8px; background: #f7f9ff; color: #53627b; font-size: 10px; line-height: 1.6; }
+.editor-error { margin-top: 10px; padding: 9px 11px; border: 1px solid #efc5c9; border-radius: 8px; background: var(--red-soft); color: var(--red); font-size: 10px; }
+.check-line { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; color: #52627b; font-size: 10px; }
+.choice-list { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); }
+.choice-list > strong { margin-bottom: 3px; font-size: 10px; color: #506079; }
+.choice-list label { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #44546b; }
+.choice-list label small { margin-left: 5px; color: #8a97aa; }
+.section-actions { margin: 0 0 12px; }
+.grid-2 > div > .table-wrap table { min-width: 620px; }
+
+@media (max-width: 900px) {
+  .editor-grid { grid-template-columns: 1fr; }
+  .editor-modal { width: min(680px, 100%); }
+}
