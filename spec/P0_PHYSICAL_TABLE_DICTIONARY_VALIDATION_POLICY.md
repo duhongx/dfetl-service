@@ -1,23 +1,20 @@
-# P0 物理表字典：正式同步校验策略与严格门禁
+# P0 物理表字典：正式同步 Validation 配置与严格 Gate
 
-> 状态：阶段 1 工作包 3 一致性 Review 已确认  
-> 日期：2026-08-15  
+> 状态：当前权威 Validation 物理模型；旧 Policy Table 清理已完成  
+> 首次 Review：2026-08-15  
+> 最近收口：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> 任务模型：`spec/P0_MUTABLE_TASK_MODEL_REVIEW.md`  
-> 数据集覆盖：`spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md`  
-> 全局默认：`spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md`  
-> 一致性 Review：`spec/P0_PHYSICAL_MODEL_CONSISTENCY_REVIEW.md`  
-> 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`，不得修改实体、Repository 或数据库结构。
+> Task：`spec/P0_MUTABLE_TASK_MODEL_REVIEW.md`  
+> Dataset Override：`spec/P0_DATASET_VALIDATION_OVERRIDE_REVIEW.md`  
+> Global Default：`spec/P0_GLOBAL_VALIDATION_SETTING_REVIEW.md`
 
-## 1. 文档定位
-
-本文是正式同步校验配置和门禁的当前权威物理字典，覆盖：
+## 1. 当前唯一 Validation 配置模型
 
 ```text
 system_setting[validation.default_method]
 standard_dataset.validation_method_override
 sync_task.validation_method_override
-sync_execution 校验快照
+sync_execution Validation Snapshot
 SYNC_GATE validation_run
 ```
 
@@ -27,236 +24,158 @@ SYNC_GATE validation_run
 global_validation_policy
 dataset_validation_policy
 task_validation_policy
-校验开关表
-校验容差表
-校验回看策略表
-自动复检策略表
+Validation Enable Table
+Tolerance Table
+Validation Lookback Policy
+Auto Revalidate Policy
 ```
 
-以下旧字段和对象不能进入 Flyway V1：
+## 2. 固定正式同步 Gate
+
+每次正式同步：
 
 ```text
-enabled
-row_tolerance
-tolerance_rows
-tolerance_percent
-lookback_hours
-global_validation_policy
-dataset/task validation override_mode
-```
-
-## 2. 固定业务语义
-
-每次正式同步都必须执行同步后门禁校验：
-
-```text
-全部 load_batch 已 SUCCEEDED + VISIBLE
-→ 创建或完成唯一 SYNC_GATE validation_run
-→ 至少执行 ROW_COUNT
+全部 load_batch = SUCCEEDED + VISIBLE
+→ 唯一 SYNC_GATE validation_run
+→ 最低严格 ROW_COUNT
 → 必须 COMPLETED + PASS
-→ sync_execution 才能进入 SUCCEEDED
-→ 按需推进 task_watermark
-→ 按需创建 message_outbox
+→ sync_execution 才能 SUCCEEDED
+→ 按规则推进 task_watermark
+→ 按 Dataset Message Policy 创建 message_outbox
 ```
 
 固定规则：
 
-1. 正式同步校验不能关闭。
-2. 最低方式始终为 `ROW_COUNT`。
-3. `ROW_COUNT` 要求源端和目标端行数严格相等，差异 1 行也失败。
-4. 不支持绝对容差、百分比容差或动态放宽。
-5. `ROW_COUNT_CHECKSUM` 必须同时满足行数严格相等和业务字段 Checksum 一致。
-6. 正式门禁只校验本次执行精确机构范围和数据范围。
-7. 不保存、不展示、不接受 `lookback_hours`。
-8. 无真实业务主键的数据集最终只能使用 `ROW_COUNT`。
-9. 有真实业务主键的数据集可以选择 `ROW_COUNT_CHECKSUM`，但不能在执行中静默降级。
-10. 默认不自动复检；人工重新校验创建独立 `validation_run`，不覆盖原门禁记录和原执行结果。
+1. Validation 不能关闭。
+2. 最低方法 ROW_COUNT。
+3. ROW_COUNT 必须严格相等，差 1 行也 MISMATCH。
+4. 不支持绝对/百分比容差。
+5. ROW_COUNT_CHECKSUM 同时要求 Row Count + Checksum 一致。
+6. Gate 只验证本次 Execution 固定范围。
+7. 不保存/接受 Validation `lookback_hours`。
+8. 无真实业务主键 Dataset 只能 ROW_COUNT。
+9. 有真实业务主键可选择 ROW_COUNT_CHECKSUM，不允许运行中静默降级。
+10. 不自动复检；人工 Recheck 创建独立 `validation_run`。
 
-## 3. 校验回看与增量读取回看
+## 3. 增量读取 Lookback 与 Validation Lookback 分离
 
-正式同步校验回看字段已删除：
+保留：
+
+```text
+dataset_sync_policy.lookback_seconds
+sync_task.lookback_seconds
+sync_execution.lookback_seconds
+```
+
+它们只改变 Source 实际读取范围。
+
+删除：
 
 ```text
 validation lookback_hours
 ```
 
-增量读取回看继续保存在：
+Gate 严格按 Execution 最终固定范围校验。
 
-```text
-dataset_sync_policy.lookback_seconds
-sync_task.lookback_seconds
-sync_execution 执行快照
-```
-
-`lookback_seconds` 会改变本次实际读取范围；校验严格使用执行最终固定的真实范围，不再额外向历史范围扩展。
-
-## 4. 全局默认：`system_setting[validation.default_method]`
-
-全局默认校验方式使用已经确认的 `system_setting`，不建立独立单例表。
-
-注册项：
+## 4. Global Default
 
 ```text
 setting_key = validation.default_method
 ```
 
-允许值：
+允许：
 
 ```text
 ROW_COUNT
 ROW_COUNT_CHECKSUM
 ```
 
-注册默认值：
+注册默认：
 
 ```text
 ROW_COUNT
 ```
 
-固定规则：
+Setting Row 不存在时使用注册默认，不建立固定单例 Global Policy Row。
 
-- 设置注册表定义类型、默认值、允许枚举、是否敏感和中文说明；
-- 该设置为非敏感枚举；
-- 数据库中没有对应设置行时，应用使用注册默认值 `ROW_COUNT`；
-- 第一次由管理员保存时插入设置行；后续使用 `system_setting.revision` 乐观锁更新；
-- 未注册 key 和非法枚举值必须拒绝；
-- Flyway V1 不要求预插入固定单例策略行。
-
-不保存：
+## 5. Dataset Override
 
 ```text
-enabled
-row_tolerance
-lookback_hours
-revalidate_enabled
-revalidate_delay
-fail_block
-auto_repair
+standard_dataset.validation_method_override varchar(32) NULL
 ```
 
-无业务主键任务解析到全局 `ROW_COUNT_CHECKSUM` 时，根据数据集合同明确强制为唯一支持的 `ROW_COUNT`，并在执行快照中记录 `CONTRACT` 来源。这是合同能力解析，不是执行中静默降级。
-
-## 5. `standard_dataset.validation_method_override`
-
-数据集级覆盖直接合并到数据集身份行：
-
 ```text
-validation_method_override varchar(32) NULL
+NULL                = 继承 Global
+ROW_COUNT           = 严格行数
+ROW_COUNT_CHECKSUM  = 严格行数 + Checksum
 ```
 
-语义：
+- NULL 就是 INHERIT，不保存 `override_mode`。
+- 共用 `standard_dataset.revision/updated_*` 和 Audit。
+- Dataset Definition Sync 不覆盖管理员 Override。
+- 无真实业务主键时拒绝保存 ROW_COUNT_CHECKSUM。
 
-| 值 | 含义 |
-| --- | --- |
-| `NULL` | 数据集不覆盖，使用全局默认。 |
-| `ROW_COUNT` | 数据集默认使用严格行数校验。 |
-| `ROW_COUNT_CHECKSUM` | 数据集默认使用严格行数和内容 Checksum。 |
-
-约束：
+## 6. Task Override
 
 ```text
-CHECK (validation_method_override IS NULL OR
-       validation_method_override IN ('ROW_COUNT','ROW_COUNT_CHECKSUM'))
+sync_task.validation_method_override varchar(32) NULL
 ```
 
-固定规则：
+语义与 Dataset Override 相同。
 
-- 不保存 `override_mode`；`NULL` 就是继承。
-- 不维护独立策略 revision、时间和一对一策略行。
-- 使用 `standard_dataset.revision/updated_at/updated_by` 和通用 `audit_log`。
-- 数据集定义同步不得覆盖该管理员配置。
-- 当前数据集合同无真实业务主键时，拒绝保存 `ROW_COUNT_CHECKSUM`。
-- 不为该低选择度字段单独建立索引。
+- 共用 `sync_task.revision/updated_*` 和 Audit。
+- 活动同步 Execution 期间禁止修改。
+- 无真实业务主键时拒绝 ROW_COUNT_CHECKSUM。
+- Task 创建不插入任何 Policy Row。
 
-## 6. `sync_task.validation_method_override`
-
-任务级覆盖直接合并到当前任务：
+## 7. 最终解析
 
 ```text
-validation_method_override varchar(32) NULL
-```
-
-语义：
-
-| 值 | 含义 |
-| --- | --- |
-| `NULL` | 任务不覆盖，继续解析数据集覆盖和全局默认。 |
-| `ROW_COUNT` | 任务明确使用严格行数校验。 |
-| `ROW_COUNT_CHECKSUM` | 任务明确使用严格行数和内容 Checksum。 |
-
-约束：
-
-```text
-CHECK (validation_method_override IS NULL OR
-       validation_method_override IN ('ROW_COUNT','ROW_COUNT_CHECKSUM'))
-```
-
-固定规则：
-
-- 不保存 `override_mode`。
-- 不维护独立策略 revision、时间和一对一策略行。
-- 使用 `sync_task.revision/updated_at/updated_by` 和通用 `audit_log`。
-- 活动执行期间禁止修改。
-- 无真实业务主键时拒绝保存 `ROW_COUNT_CHECKSUM`。
-- 任务创建时不插入额外策略行。
-
-## 7. 最终策略解析
-
-每次执行启动前按以下顺序解析：
-
-```text
-sync_task.validation_method_override 非空
-→ standard_dataset.validation_method_override 非空
+Task Override 非空
+→ Dataset Override 非空
 → system_setting[validation.default_method]
-→ 注册默认值 ROW_COUNT
-→ 数据集合同能力强制
+→ 注册默认 ROW_COUNT
+→ Dataset 合同能力强制
 ```
 
-解析结果包含：
+解析结果：
 
 ```text
 validation_method
-source_level
-source_revision
-contract_forced
+validation_source
+validation_source_revision
+validation_contract_forced
 ```
 
-其中：
+来源：
 
-- `source_level`：`GLOBAL/DATASET/TASK/CONTRACT`；
-- 来源为 `GLOBAL` 且存在设置行：`source_revision=system_setting.revision`；
-- 来源为注册默认值且设置行不存在：`source_revision=NULL`；
-- 来源为 `DATASET`：`source_revision=standard_dataset.revision`；
-- 来源为 `TASK`：`source_revision=sync_task.revision`；
-- 来源为 `CONTRACT`：revision 为空且 `contract_forced=true`。
+```text
+GLOBAL
+DATASET
+TASK
+CONTRACT
+```
 
-运行中执行始终使用启动时快照，不受后续设置修改影响。
+运行中只使用 Execution Snapshot，不重新动态读取当前配置。
 
-## 8. `sync_execution` 校验快照
+## 8. `sync_execution` Snapshot
 
-`sync_execution` 保存本次实际采用的最小校验快照：
-
-| 列 | PostgreSQL 类型 | 空值/默认 | 说明 |
-| --- | --- | --- | --- |
-| `validation_method` | `varchar(32)` | NOT NULL | `ROW_COUNT/ROW_COUNT_CHECKSUM` |
-| `validation_source` | `varchar(16)` | NOT NULL | `GLOBAL/DATASET/TASK/CONTRACT` |
-| `validation_source_revision` | `bigint` | NULL | 来源 revision；注册默认值或合同强制时可为空 |
-| `validation_contract_forced` | `boolean` | NOT NULL DEFAULT `false` | 是否由数据集合同强制收敛 |
+```text
+validation_method varchar(32) NOT NULL
+validation_source varchar(16) NOT NULL
+validation_source_revision bigint NULL
+validation_contract_forced boolean NOT NULL DEFAULT false
+```
 
 约束：
 
 ```text
-CHECK (validation_method IN ('ROW_COUNT','ROW_COUNT_CHECKSUM'))
-CHECK (validation_source IN ('GLOBAL','DATASET','TASK','CONTRACT'))
-CHECK (validation_source_revision IS NULL OR validation_source_revision >= 0)
-CHECK (
-  (validation_source = 'CONTRACT'
-    AND validation_contract_forced = true
-    AND validation_source_revision IS NULL)
-  OR
-  (validation_source <> 'CONTRACT'
-    AND validation_contract_forced = false)
-)
+validation_method IN ('ROW_COUNT','ROW_COUNT_CHECKSUM')
+validation_source IN ('GLOBAL','DATASET','TASK','CONTRACT')
+validation_source_revision IS NULL OR validation_source_revision >= 0
+
+CONTRACT → forced=true + revision=NULL
+非 CONTRACT → forced=false
 ```
 
 不保存：
@@ -270,28 +189,17 @@ dataset_policy_id
 task_policy_id
 ```
 
-本次校验范围来自执行固定快照：
-
-```text
-execution_scope
-window_lower/window_upper
-key_lower/key_upper
-institution_id
-dataset_id/dataset_version_id
-route_version_id
-```
-
 ## 9. `SYNC_GATE validation_run`
 
-每次正式同步执行必须且只能有一条同步门禁校验：
+每个正式 Execution 必须且只能有一条：
 
-```text
-UNIQUE INDEX uk_validation_sync_gate_execution
-    ON validation_run (execution_id)
-    WHERE trigger_type = 'SYNC_GATE'
+```sql
+CREATE UNIQUE INDEX uk_validation_sync_gate_execution
+ON validation_run(execution_id)
+WHERE trigger_type='SYNC_GATE';
 ```
 
-门禁结果固定为：
+PASS：
 
 ```text
 ROW_COUNT:
@@ -304,61 +212,53 @@ AND difference_count = 0
 AND source_checksum = target_checksum
 ```
 
-范围规则：
-
-| 执行类型 | 门禁校验范围 |
-| --- | --- |
-| `INITIAL_FULL` | 当前机构本次全量 |
-| `INCREMENTAL` | 本次固定 `[watermark, upper)` |
-| `FULL` | 当前机构本次全量 |
-| `BACKFILL_TIME` | 用户明确指定的历史时间范围 |
-| `BACKFILL_KEY` | 用户明确指定的主键范围 |
-| `RECOLLECT` | 本次重新采集的实际范围 |
-
-人工重新校验和定期治理校验需要历史范围时，在运行请求和 `validation_run.range_snapshot` 中显式保存，不通过策略中的隐式回看窗口表达。
+Execution Scope 对应本次实际范围，不再通过隐式 Policy Lookback 扩展。
 
 ## 10. 成功收尾
 
-执行成功收尾短事务固定检查：
+短事务检查：
 
 ```text
-全部 load_batch = SUCCEEDED
-AND 全部 doris_state = VISIBLE
-AND rejected_row_count = 0
-AND 唯一 SYNC_GATE validation_run = COMPLETED + PASS
+全部 Batch SUCCEEDED + VISIBLE
+AND rejected_row_count=0
+AND SYNC_GATE COMPLETED + PASS
 ```
 
-满足后才允许：
+之后才允许：
 
 ```text
-sync_execution → SUCCEEDED
-按规则推进 task_watermark
-按数据集消息策略插入唯一 message_outbox
+Execution → SUCCEEDED
+推进 Watermark
+创建 Outbox
 ```
 
-该事务内不调用 Doris、RabbitMQ 或其他远程服务。
+事务内不调用 Doris/RabbitMQ。
 
-## 11. 旧模型处置
+## 11. 旧模型清理完成状态
 
-以下对象、字段和能力不迁移到新系统：
+以下对象/字段/能力不进入新系统：
 
 ```text
 global_validation_policy
 dataset_validation_policy
 task_validation_policy
 global/dataset/task override_mode
-validation enabled/disabled
-tolerance_rows
-tolerance_percent
-row_tolerance
-lookback_hours
-revalidate_enabled
-revalidate_delay
-auto_repair
-fail_block
-SAMPLE
-ALL
+Validation enabled/disabled
+tolerance_rows/tolerance_percent/row_tolerance
+Validation lookback_hours
+revalidate_enabled/revalidate_delay
+auto_repair/fail_block
+SAMPLE/ALL
 独立 CHECKSUM 方法
 ```
 
-其他文档中残留的三张独立校验策略表，由本文及对应专项 Review 覆盖；阶段 1 最终一致性清理时机械删除，不再重新讨论。
+2026-08-17 已完成 Active Spec 的机械迁移；这些名称后续只允许出现在“历史/已废止/明确不建立”语境。
+
+## 12. 验收
+
+- P0 无三张 Validation Policy Table。
+- 配置只存在 System Setting + Dataset Override + Task Override。
+- NULL 表示继承。
+- 正式同步最低严格 ROW_COUNT，不能关闭、无容差、无 Validation Lookback。
+- Execution 保存实际最终 Method/Source Snapshot。
+- SYNC_GATE PASS 才能成功收尾。
