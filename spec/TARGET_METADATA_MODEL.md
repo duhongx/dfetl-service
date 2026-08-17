@@ -1,6 +1,7 @@
 # P0 目标元数据模型
 
-> 状态：阶段 1 目标模型 Review 进行中；本轮确认项已合并；尚未固化为 Flyway `V1`  
+> 状态：`IN_REVIEW`；正在对齐问题记录级预检和无主键机构范围替换；尚未固化为 Flyway `V1`  
+> 实施授权：`NO`；本文件未最终签字，不得据此创建 V1 或批量改造后端  
 > 日期：2026-08-14  
 > 适用范围：新系统独立 PostgreSQL 元数据库  
 > 最终业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
@@ -16,7 +17,7 @@
 5. 同步任务身份与任务版本分离。未删除任务按机构和数据集唯一；任务没有重复的生命周期状态，当前版本由 `current_version_id` 唯一确定。
 6. 正式水位属于长期任务运行态。载入批次只记录单次执行进度和 Doris 最终状态，不提供跨执行断点续跑；普通失败后由人工从第 1 批重新采集。
 7. 每个标准数据集在一个逻辑 Doris 部署中固定共用一张 ODS 和一张 RAW。PostgreSQL 不登记 Doris 物理表或结构版本，直接读取 Doris 实际元数据并与数据集版本生成的期望合同核对。
-8. 预检每次扫描整条采集链路，只持久化运行记录和字段级/组合规则级汇总，不保存问题行、业务键明细、样例、严重级别或修复状态。
+8. 预检每次扫描整条采集链路；运行记录及字段级/组合规则级汇总长期持久化，同时必须提供可定位具体记录和非法字段的问题明细。问题明细的物理载体、保留期和导出方式仍待 Review，不保留严重级别或平台内修复状态。
 9. 阻断校验通过后，执行成功、正式水位推进和 outbox 事件在同一 PostgreSQL 事务内提交；消息投递失败不回滚同步成功。
 10. 本文遵循满足已确认流程的最小模型，不为暂未发生的多租户、机构层级、Doris 表登记或大文件异步导出预建扩展。Review 通过前不创建 `V1__baseline.sql`。
 
@@ -237,12 +238,14 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 
 该事务不包含 Doris 或 MQ 网络调用。
 
-## 9. 数据预检运行和问题汇总
+## 9. 数据预检运行、汇总与问题明细
+
+### 9.1 已确认的 PostgreSQL 运行与汇总模型
 
 | 表 | 关键字段 | 约束和说明 |
 | --- | --- | --- |
-| `precheck_run` | `id`, `run_uuid`, `route_id`, `route_version_id`, `execution_status`, `result_status`, structure/resolution snapshot hashes, phase/progress, extracted/checked/issue row counts, raw retention deadline/cleaned time, error, trigger/operator/timestamps | 人工发起并固定扫描整条链路；重新预检新建行。不提供单机构运行范围。`result_status` 只在完成时为 `PASS/ISSUES`。 |
-| `precheck_issue_summary` | `id`, `run_id`, optional `institution_id`, `rule_scope`, optional `standard_field_code`, `rule_code`, `rule_definition_version`, `affected_rows`, `observed_metrics` JSON, `summary`, timestamps | 只保存字段级和组合规则级聚合；不含业务键、原始行、样例、severity、处理/修复状态。 |
+| `precheck_run` | `id`, `run_uuid`, `route_id`, `route_version_id`, `execution_status`, `result_status`, structure/resolution snapshot hashes, phase/progress, extracted/checked/issue row counts, detail retention deadline/cleaned time, error, trigger/operator/timestamps | 人工发起并固定扫描整条链路；重新预检新建行。不提供单机构运行范围。运行记录长期保留。 |
+| `precheck_issue_summary` | `id`, `run_id`, optional `institution_id`, `rule_scope`, optional `standard_field_code`, `rule_code`, `rule_definition_version`, `affected_rows`, `observed_metrics` JSON, `summary`, timestamps | 保存字段级、规则级、组合规则级和机构级聚合，用于列表、趋势、筛选和长期审计；汇总不替代问题明细。 |
 
 `execution_status` 固定：`PENDING/EXTRACTING/VALIDATING/COMPLETED/FAILED/CANCELLED`；`result_status` 固定：`PASS/ISSUES`。完整扫描发现不合格数据是 `COMPLETED + ISSUES`，不是技术失败。
 
@@ -251,11 +254,38 @@ PENDING -> RUNNING -> LOADING -> VALIDATING -> SUCCEEDED
 - `route_id WHERE execution_status IN ('PENDING','EXTRACTING','VALIDATING')` 部分唯一，保证同链路只有一个活动预检。
 - 全局并发上限由系统设置和加锁队列控制；不同链路可以并发。
 - 索引 `precheck_run(route_id, created_at DESC)`、`precheck_issue_summary(run_id, institution_id, standard_field_code)`。
-- RAW 数据由 Doris 的 `precheck_run_id + route_id` 隔离，终态后保留 1 天；PostgreSQL 只记录清理截止时间和结果。
+- 预检运行不被任何任务创建或运行外键作为准入条件；界面展示事实和风险，但不存在预检通过才允许运行的数据库约束。
 
-预检运行不被任何任务创建/运行外键作为准入条件。界面可查询最新结果并展示风险，但不存在 `validation_status=PASSED` 才允许启用链路的约束。
+### 9.2 问题明细逻辑合同（物理设计待 Review）
 
-问题汇总支持按机构和筛选条件直接生成 XLSX/CSV；不导出行级详情或样例，不建立异步导出任务表，不长期保存导出文件，导出操作写入通用审计日志。
+问题明细必须能够表达：
+
+- `run_id`、链路版本、数据集版本、机构代码；
+- 记录定位类型和记录定位值；
+- 标准字段、规则代码、规则版本；
+- 实际值或脱敏值、期望规则、问题原因；
+- 同一问题记录下的多个字段问题；
+- 创建时间、保留截止时间和清理状态。
+
+记录定位分为：
+
+1. `BUSINESS_KEY`：数据集存在真实业务主键时，使用机构代码和标准业务主键；
+2. `RUN_SCOPED`：无真实业务主键时，使用只在本次运行内有效的 `run_row_id`、行指纹或等价技术定位符。
+
+`RUN_SCOPED` 定位符不得进入同步任务业务主键、Doris 键模型、增量游标、删除对账或逐行 Checksum 合同。
+
+本轮不提前决定问题明细必须落在 PostgreSQL、Doris 专用结果结构还是对象存储，也不提前固定表名。确定物理载体前必须 Review：预计问题量、分页/筛选路径、敏感字段脱敏、原值查看权限、导出规模、清理成本和运行历史可追溯性。若采用 PostgreSQL 明细表，必须再单独确认分区、索引、VACUUM 和容量边界；若采用 Doris 或对象存储，也必须保证规则版本和本次运行结果不可被后续重算悄然改变。
+
+### 9.3 保留、查询和导出
+
+- `precheck_run` 和 `precheck_issue_summary` 长期保留。
+- 问题明细及用于还原问题上下文的原始预检数据限期保留，默认值和最大值后续确认；不再把固定 1 天视为已冻结物理结论。
+- 汇总和明细分别支持按机构、字段、规则和运行筛选；页面从汇总下钻到问题记录，再查看该记录的字段问题。
+- 明细默认脱敏；查看原值和导出明细使用独立权限并记录 `audit_log`。
+- 小结果可同步导出；大结果是否使用异步导出及对象存储，由产品和容量 Review 决定，当前模型不得预先禁止。
+- 明细到期清理后，长期汇总仍可查询，并明确记录明细清理时间。
+
+该部分完成物理 Review 前，阶段 1 目标模型不能最终签字，也不得将“没有问题明细表”固化进 Flyway V1。
 
 ## 10. 校验策略和校验运行
 
@@ -340,7 +370,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | 执行 | `TaskExecution` 不引用任务版本，快照仅覆盖少数字段，并含 `SUCCESS_WITH_DIRTY_ROWS`。 | 执行引用不可变任务版本并保存最终有效配置；移除分流成功状态。 | 执行组装器和监控 DTO 按版本/执行快照读取。 |
 | 水位 | `SyncTask.incrementalCheckpoint` 同时被当作展示、窗口起点和水位；首次全量标志也在任务行。 | 当前正式水位进入 `task_watermark`；成功执行窗口和通用审计分别承担正常推进、人工重置追溯。 | `WatermarkService` 改为独立事务边界；不建立 `execution_checkpoint` 或 `task_watermark_history`，失败后从头重新采集。 |
 | 批次 | 现有 chunk/range 多为文本，Label 和游标约束不完整。 | 每批保存确定性 Label、真实业务键/时间/机构范围和 Doris 最终状态。 | Writer 以批次为幂等单元；失败后的新执行从第 1 批重新采集。 |
-| 预检 | `DfetlPrecheckRun` 混合状态；issue/dirty 表保存问题行、severity、主键和处理状态。 | 整条链路运行，状态与结果分开，仅保存字段/组合规则汇总。 | 删除单机构运行、dirty/issue 行查询与修复 API；汇总直接导出。 |
+| 预检 | `DfetlPrecheckRun` 混合状态；旧 issue/dirty 表保存严重级别、原始值和处理状态。 | 运行状态与结果状态分离；长期保存运行和汇总，同时提供限期问题明细，支持业务键或运行内定位。 | 重写预检服务和查询 API；删除平台内脏数据修复语义，明细物理载体在容量与安全 Review 后确定。 |
 | 校验 | `TaskValidationConfig`、`DfetlValidationPolicy`、`ValidationRun` 和 `etl_verify_*` 并存；`legacy_exec_id` 暴露旧身份。 | 全局/数据集/任务三层策略和统一 `validation_run`；执行 ID 为正式关系，差异汇总内嵌 JSONB。 | 合并策略解析器和运行查询；去除 legacy identity，不持久化内部计算分段或独立差异表。 |
 | 消息 | `DfetlMessagePolicy` 已按数据集保存策略；任务创建时 `DatasetTaskSnapshotAssembler` 再复制为 `MessagePublishConfig`，执行器读取这份任务副本；同时存在 Redis Stream/RabbitMQ 两套发布器、publish log 和 send record。 | 仅 RabbitMQ；只保留数据集消息策略、执行/Outbox 指令快照和单一 outbox，不保留任务级消息配置或覆盖。 | 数据集参数对该数据集所有任务一致；机构、Doris 目标、批次和窗口从任务/执行上下文取得。完成事务插入指令，独立 RabbitMQ 发布器消费，旧 config/log/send-record/recovery 路径退出。 |
 | 已移除功能 | 实体仍含 batch template、dirty row/field、task group 痕迹和 auto retry 配置。 | 不进入新 `V1`。 | Java 实体、Repository、Controller 和不可达页面在对应实现阶段删除。 |
@@ -393,7 +423,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 | `institution_dataset_route` | 由 `collection_route*` 和覆盖/解析快照替代。 |
 | `sync_task`, `task_view_config` | 由任务身份/版本/治理覆盖替代；字段映射不再可编辑。 |
 | `task_execution`, task chunk/batch/checkpoint fields | 由 execution/load batch/watermark 体系替代；不保留跨执行恢复检查点，失败后从头重新采集。 |
-| `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 只保留 run/summary；行级、修复和异步导出任务模型废止。 |
+| `dfetl_precheck_*`, `medical_dirty_*`, `dirty_record` | 保留 run/summary 语义；问题记录明细按新的限期、脱敏和记录定位合同重建，不沿用旧严重级别、修复状态或脏数据分流模型。 |
 | `validation_run`, `etl_verify_*`, validation configs | 合并为分层策略和统一 `validation_run`；内部计算分批和小型差异汇总不拆成独立表。 |
 | message policy/config/log/send record | 合并为策略、执行快照和单一 outbox；逐次投递详情只写应用日志。 |
 | `validation_task`, `dfetl_task`, `task_group`, batch template | 新 `V1` 不创建。 |
@@ -406,5 +436,7 @@ P0 不建立 Outbox 自动清理、归档任务或保留期配置。`PUBLISHED` 
 - 不移动历史 SQL，避免把“归档位置调整”误当成已建立 Flyway 链；
 - 不修改当前实体去适配尚未 Review 的物理表名；
 - 不连接、修改或 Flyway baseline 老 `df_ygt/df_etl` 数据库。
+
+Review 通过前还必须确认问题明细的物理载体、保留期、查询/导出和权限边界，并完成与 `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TASKS.md` 的一致性检查。
 
 Review 通过后，阶段 2 应一次完成：物理 DDL、Flyway/配置、legacy 隔离、实体和 Repository 对齐、迁移前检查、迁移后验证、失败回退/前向修复说明，以及独立空 PostgreSQL 的 `migrate/validate` 和真实启动验证。

@@ -2,6 +2,7 @@
 
 > 状态：当前有效  
 > 清理日期：2026-08-17  
+> 一致性对齐：2026-08-17  
 > 清理前 `main`：`5268dc54aaf3abef0785d3cd336ce87271404964`  
 > 可信交接提交：`341e3b5d070e5b2a242457c74d325ca7639c43d4`  
 > 范围：仅清理 `spec/` 文档；不修改 Java、TypeScript、SQL、Flyway 或数据库结构。
@@ -46,15 +47,29 @@ head behind by 0 commits
 
 `TARGET_METADATA_MODEL.md` 仍处于 Review 进行中，不代表最终签字，不授权创建 Flyway V1 或批量修改后端。
 
+## 2.1 当前阶段与实施授权
+
+| 项目 | 当前状态 | 说明 |
+| --- | --- | --- |
+| 可信文档清理 | `VERIFIED` | 错误主模型和不可信 Review 文件已清理，可信优先级已恢复。 |
+| 最新流程业务规则 | `CONFIRMED` | 预检问题明细、正式同步、无主键范围替换、校验和 RabbitMQ 规则已确认。 |
+| 核心文档一致性 | `ALIGNED` | 本次已同步修订 `PRODUCT_AND_BUSINESS_DECISIONS.md`、`TARGET_METADATA_MODEL.md` 和 `TASKS.md` 的三处冲突。 |
+| P0 目标元数据模型 | `IN_REVIEW` | 预检明细物理载体、P0 支撑对象和物理表字典仍待确认。 |
+| Flyway V1 | `NOT_AUTHORIZED` | 目标模型最终签字前不得创建或固化 `V1__baseline.sql`。 |
+| Java 生产代码迁移 | `IMPLEMENTED` | 迁移和 JDK 21 编译完成；真实 PostgreSQL 启动与健康检查尚未验证。 |
+| 前后端业务闭环 | `IN_PROGRESS` | Web 仍有 Mock，真实 API、数据库和端到端联调尚未完成。 |
+
+阶段 1 的准确名称是“可信需求恢复、核心文档一致性修订与 P0 目标模型 Review”，总体状态为 `IN_PROGRESS`。`CONFIRMED` 不等于技术设计 `FROZEN`，`IMPLEMENTED` 不等于真实环境 `VERIFIED`。当前实施授权为 `NO`。
+
 ## 3. 当前有效：保留、回退改写或新增
 
 | 文件 | 分类 | 本次处置 | 说明 |
 | --- | --- | --- | --- |
 | `spec/README.md` | 当前有效 | 新增 | `spec/` 唯一索引、可信顺序和逐文件处置记录。 |
 | `spec/CURRENT_CONFIRMED_PROCESS_RULES.md` | 当前有效 | 新增 | 只保留后来由用户明确确认的预检、正式同步、校验和 RabbitMQ 数据集级消息规则。 |
-| `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退改写 | 恢复可信交接提交中的文件内容，删除后续错误主模型改写。 |
-| `spec/TARGET_METADATA_MODEL.md` | 当前有效 | 回退改写 | 恢复可信交接提交中的 Review 进行中模型，不把后续 39+11 表设计视为已冻结。 |
-| `spec/TASKS.md` | 当前有效 | 回退改写 | 恢复可信交接提交中的实际任务清单和阶段状态。 |
+| `spec/PRODUCT_AND_BUSINESS_DECISIONS.md` | 当前有效 | 回退并对齐 | 恢复可信交接内容，并于 2026-08-17 对齐问题记录级预检和 `REPLACE_INSTITUTION_SCOPE`。 |
+| `spec/TARGET_METADATA_MODEL.md` | 当前有效、Review 中 | 回退并对齐 | 恢复可信 Review 模型并补充问题明细逻辑合同；物理载体未确认，仍未冻结。 |
+| `spec/TASKS.md` | 当前有效 | 回退并对齐 | 恢复可信任务清单，并明确阶段 1 为 `IN_PROGRESS`、实施授权为 `NO`。 |
 | `spec/DATABASE_MIGRATION_BASELINE.md` | 当前有效 | 回退改写 | 恢复可信数据库隔离、Flyway 治理和迁移规则。 |
 
 ## 4. 历史审计：保留或归档保留
@@ -145,8 +160,8 @@ spec/CURRENT_CONFIRMED_PROCESS_RULES.md
 主要包括：
 
 - 预检仅人工启动、同链路互斥、重新预检从头执行；
-- 预检必须能定位问题记录及具体非法字段；
-- 正式同步重新读取真实源对象，不使用预检暂存结果；
+- 预检必须能定位问题记录及具体非法字段；汇总长期保留，问题明细和原始数据限期保留；
+- 正式同步重新读取真实源对象，不使用预检暂存结果；无主键任务统一使用 `REPLACE_INSTITUTION_SCOPE` 业务语义，禁止整表 `TRUNCATE`/`DROP_DATA`；
 - 正式同步与同步后校验、水位提交的成功边界；
 - RabbitMQ 是 P0 唯一消息通道；
 - 消息只在数据集级配置，不允许任务级覆盖；
@@ -164,3 +179,13 @@ spec/CURRENT_CONFIRMED_PROCESS_RULES.md
 - 未修改 Flyway；
 - 未执行历史批量清理脚本；
 - 未把文档清理解释为数据库、后端或前端实施授权。
+
+## 10. 2026-08-17 核心文档一致性对齐
+
+本次只修改 `spec/` 文档，消除三处冲突：
+
+1. **预检问题明细**：从“只保存汇总”统一为“长期汇总 + 限期问题明细”，要求定位具体记录、非法字段和原因；物理载体、保留期及大数据量导出继续 Review。
+2. **无主键写入语义**：统一为 `FULL_ONLY + REPLACE_INSTITUTION_SCOPE + DUPLICATE_KEY`；旧 `TRUNCATE` 仅为历史术语，禁止解释为清空共享 ODS 全表。
+3. **阶段状态**：阶段 1 为 `IN_PROGRESS`，目标模型未冻结，Flyway V1 和数据库/后端批量实施仍未授权。
+
+本次未修改 Java、TypeScript、SQL、Flyway、Doris 表或 PostgreSQL 结构，也没有替预检明细选择具体物理存储方案。
