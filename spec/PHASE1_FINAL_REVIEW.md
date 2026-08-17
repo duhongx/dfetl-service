@@ -1,6 +1,6 @@
 # Phase 1 Final Review
 
-> 状态：技术模型 Review 通过；P-002 已确认；Phase 1 总体等待前端验收、P-003 与最终签字  
+> 状态：技术模型 Review 通过；P-002/P-003 已确认；Phase 1 总体等待前端验收与最终签字  
 > 日期：2026-08-17  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
@@ -18,7 +18,7 @@ DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 1. **P0 目标元数据/物理模型技术 Review 是否完成**；
 2. **Phase 1 总体是否已经满足进入数据库/后端实施的门槛**。
 
-当前结论：技术模型已经完成并冻结；Phase 1 总体尚未最终签字。
+当前结论：技术模型已经完成并冻结；P-002/P-003 产品入口决策已经收口；Phase 1 总体尚未最终签字，因为前端还未完成 100% 对齐验收。
 
 ## 2. 技术模型 Review：PASS
 
@@ -150,9 +150,9 @@ Execution Resume/Checkpoint Table
 
 ## 5. 当前未放行原因：Frontend Acceptance
 
-技术模型已完成，但当前 Phase 1 总体仍未满足最终签字条件。
+技术模型和当前产品入口决策已完成，但当前 Phase 1 总体仍未满足最终签字条件。
 
-当前前端仍需完成并逐页验收：
+前端仍需完成并逐页验收：
 
 ```text
 Navigation / Information Architecture
@@ -162,6 +162,7 @@ Task Current Config UI
 Precheck / Validation / Operations
 Alert / Log / Audit / System Settings
 账号管理实际落页
+顶部右侧 Help 与 /docs 实际落页
 所有菜单真实 URL
 lint / build
 逐页原型、状态、空态、错误态、危险确认
@@ -189,7 +190,7 @@ G-001 = PENDING_FINAL_SIGNOFF
 目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
 ```
 
-只有完成前端产品模型 100% 对齐并收口剩余产品入口决策后，用户再次明确确认该签字语句，才能：
+只有完成前端产品模型 100% 对齐后，用户再次明确确认该签字语句，才能：
 
 ```text
 PHASE1_OVERALL = PASS
@@ -202,11 +203,11 @@ DATABASE_BACKEND_IMPLEMENTATION = AUTHORIZED
 - 不按最终模型批量整改 Java Entity/Repository/Service；
 - 不把“技术模型 PASS”解释成数据库/后端实施授权。
 
-## 7. 当前必须在最终签字前收口的产品事项
+## 7. 当前产品入口决策：全部收口
 
 ### P-002：管理员账号管理前端入口——已确认
 
-最终入口固定：
+最终入口：
 
 ```text
 系统设置 → 账号管理
@@ -216,19 +217,22 @@ DATABASE_BACKEND_IMPLEMENTATION = AUTHORIZED
 
 个人中心只维护当前账号自身资料和修改密码，不替代系统级账号管理页面。
 
-P-002 的产品决策已经完成；账号管理页面仍须在前端 100% 验收中实际落页。
+### P-003：使用文档/帮助入口——已确认
 
-### P-003：使用文档/帮助入口——待确认
-
-当前建议：
+最终入口：
 
 ```text
 顶部右侧 Help → /docs
 ```
 
-不占用核心业务左侧导航。
+固定：
 
-因此当前产品决策层面只剩 P-003 未收口。
+- Help 位于全局顶部右侧；
+- 左侧业务导航不增加“使用文档”；
+- 点击 Help 进入真实 `/docs` URL；
+- `/docs` 必须支持刷新/回退。
+
+P-002/P-003 的产品决策均已完成；两项实际页面仍须在前端 100% 验收中落地。
 
 ## 8. 不阻塞当前技术模型冻结的 Pending Decisions
 
@@ -246,8 +250,9 @@ P-002 的产品决策已经完成；账号管理页面仍须在前端 100% 验�
 当前唯一正确推进顺序：
 
 ```text
-确认 P-003 Help/Docs 入口
-→ 完成前端页面/导航/交互/文案 100%
+完成前端页面/导航/交互/文案 100%
+→ 验证 系统设置 → 账号管理 已真实落页
+→ 验证 顶部右侧 Help → /docs 已真实落页
 → 核对 Frontend 与已冻结 Spec 一致
 → 执行 G-001 最终签字
 → 才允许冻结 API Contract / Flyway V1 / Java 后端实施
@@ -255,4 +260,4 @@ P-002 的产品决策已经完成；账号管理页面仍须在前端 100% 验�
 
 ## 10. Final Review 结论
 
-> 阶段 1 的目标元数据/物理模型技术 Review 已经通过，不再继续新增表/FK/Unique/Status/Delete/Snapshot 设计问题。P-002 已确认采用“系统设置 → 账号管理”；但 Phase 1 总体尚未最终签字，因为前端产品模型与 Spec 的 100% 对齐尚未完成，且 P-003 仍待确认。当前仍不得创建 Flyway V1 或推进 Java 后端实施。待 P-003 与前端完成后，再执行 G-001 最终签字。
+> 阶段 1 的目标元数据/物理模型技术 Review 已经通过，不再继续新增表/FK/Unique/Status/Delete/Snapshot 设计问题。P-002/P-003 产品入口决策均已收口；但 Phase 1 总体尚未最终签字，因为前端产品模型与 Spec 的 100% 对齐尚未完成。当前仍不得创建 Flyway V1 或推进 Java 后端实施。待前端完成后，再执行 G-001 最终签字。
