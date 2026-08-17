@@ -1,6 +1,6 @@
 # 阶段 1 剩余 Review 与后续实施规划
 
-> 状态：技术模型 Review 已通过；当前只剩前端 100% 对齐与 G-001 最终签字  
+> 状态：技术模型 Review 已通过；P-002 已确认；当前只剩 P-003、前端 100% 对齐与 G-001 最终签字  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > Final Review：`spec/PHASE1_FINAL_REVIEW.md`
@@ -30,6 +30,7 @@ DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
 - [x] Delete Behavior Matrix。
 - [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
 - [x] `PHASE1_FINAL_REVIEW.md` 技术总验收。
+- [x] P-002 管理员账号管理入口：`系统设置 → 账号管理`。
 
 ## 3. 已冻结物理基线
 
@@ -55,7 +56,8 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 - [ ] 独立 Institution Route。
 - [ ] 不出现 Business System Instance。
 - [ ] Task / Precheck / Validation / Operations 分工清晰。
-- [ ] P-002 管理员账号管理入口确认并落页。
+- [x] P-002 产品入口决策：`系统设置 → 账号管理`。
+- [ ] 账号管理页面按该入口实际落页并验收。
 - [ ] P-003 Help/Docs 入口确认并落页。
 
 ### 4.2 页面/交互
@@ -68,6 +70,7 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 - [ ] Precheck 与正式同步分离。
 - [ ] Watermark / Backfill / Recollect / Cancel 文案正确。
 - [ ] Alert / Log / Audit / System Settings 完整。
+- [ ] 账号管理：列表、新增、启停、重置密码；不建设 RBAC。
 
 ### 4.3 前端验收
 
@@ -77,16 +80,16 @@ Final Gate    → PHASE1_FINAL_REVIEW.md
 - [ ] 逐页核对原型、状态、空态、错误态、处理中和危险确认。
 - [ ] 页面字段与已冻结 Spec 一致。
 
-## 5. P-002 / P-003
-
-当前推荐：
+## 5. 当前入口决策状态
 
 ```text
-P-002: 系统设置 → 账号管理
-P-003: 顶部右侧 Help → /docs
+P-002: 已确认 → 系统设置 → 账号管理
+P-003: 待确认 → 当前建议：顶部右侧 Help → /docs
 ```
 
-两项必须在 G-001 最终签字前确认并落到最终前端信息架构。
+P-002 的产品决策已经收口，但实际页面仍需完成。
+
+当前唯一尚未确认的前端入口决策是 P-003。
 
 ## 6. 不阻塞当前技术模型冻结的事项
 
@@ -99,11 +102,12 @@ P-003: 顶部右侧 Help → /docs
 
 ## 7. G-001 最终签字
 
-前端全部完成后再次核对：
+P-003 和前端全部完成后再次核对：
 
 ```text
 Frontend 与 Spec 100% 一致
-+ P-002/P-003 已确认
++ P-002 已按确认入口落页
++ P-003 已确认并落页
 + PHASE1_FINAL_REVIEW 仍无新增阻塞
 ```
 
