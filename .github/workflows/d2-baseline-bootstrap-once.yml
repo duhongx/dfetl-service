@@ -1,0 +1,171 @@
+name: One-time D2 PostgreSQL baseline materialization
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/d2-baseline-bootstrap-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dfetl_v1
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dfetl_v1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: dfetl_v1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Materialize signed D2 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xJf .d2-baseline/bundle.tar.xz
+          chmod +x scripts/validate_database_baseline.py
+          python scripts/validate_database_baseline.py
+
+      - name: Execute V1 against a clean PostgreSQL 16 database
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql --set=ON_ERROR_STOP=1 --file=server/src/main/resources/db/migration/V1__baseline.sql
+
+          [[ "$(psql -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='df_etl' AND c.relkind IN ('r','p');")" == "79" ]]
+          [[ "$(psql -Atc "SELECT count(*) FROM df_etl.security_permission;")" == "106" ]]
+          [[ "$(psql -Atc "SELECT count(*) FROM df_etl.security_role WHERE built_in;")" == "4" ]]
+          [[ "$(psql -Atc "SELECT count(*) FROM df_etl.user_account;")" == "0" ]]
+          [[ "$(psql -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='df_etl' AND c.relkind='r' AND c.relname LIKE 'qrtz_%';")" == "11" ]]
+
+      - name: Align authoritative status documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          tasks_path = Path("spec/TASKS.md")
+          tasks = tasks_path.read_text(encoding="utf-8")
+          tasks = replace_once(
+              tasks,
+              "> A1–A3：`FROZEN`；C1–C3：`FROZEN_FOR_IMPLEMENTATION`；目标模型：`FROZEN`；D1 OpenAPI：`GENERATED_AND_VALIDATED`  ",
+              "> A1–A3：`FROZEN`；C1–C3：`FROZEN_FOR_IMPLEMENTATION`；目标模型：`FROZEN`；D1：`COMPLETE`；D2：`COMPLETE`；D3：`NEXT`  ",
+              "TASKS top D2 status",
+          )
+          tasks = replace_once(
+              tasks,
+              "- [ ] `D2`：生成完整 PostgreSQL 物理表字典和 `server/src/main/resources/db/migration/V1__baseline.sql`。",
+              "- [x] `D2`：生成完整 PostgreSQL 物理表字典和 `server/src/main/resources/db/migration/V1__baseline.sql`；静态校验并在 PostgreSQL 16 空库直接执行通过。",
+              "TASKS D2 checkbox",
+          )
+          tasks = replace_once(
+              tasks,
+              """D1: COMPLETE
+          D2: NEXT
+          Backend API: NOT_IMPLEMENTED
+          Flyway V1: AUTHORIZED_NOT_CREATED
+          End-to-End: NOT_VERIFIED""",
+              """D1: COMPLETE
+          D2: COMPLETE
+          D3: NEXT
+          Backend API: NOT_IMPLEMENTED
+          Flyway V1: GENERATED_POSTGRES16_CI_VALIDATED
+          End-to-End: NOT_VERIFIED""",
+              "TASKS gate",
+          )
+          tasks_path.write_text(tasks, encoding="utf-8")
+
+          readme_path = Path("spec/README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          readme = replace_once(
+              readme,
+              "`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用户签字并进入 `FROZEN`；实施授权为 `YES`，D1 OpenAPI 已生成，D2 Flyway V1 尚未创建。",
+              "`TARGET_METADATA_MODEL.md` 已在 `938566a6659fbf445e00f472ba932fe446d1d886` 完成用户签字并进入 `FROZEN`；D1 OpenAPI 和 D2 PostgreSQL 物理字典/V1 已生成，D3 Flyway 空库 migrate/validate 为下一门槛。",
+              "README stage sentence",
+          )
+          readme = replace_once(
+              readme,
+              "| Flyway V1 | `AUTHORIZED_NOT_CREATED` | D2 将生成物理字典和 V1，D3 在独立空库验证。 |",
+              "| Flyway V1 | `GENERATED_POSTGRES16_CI_VALIDATED` | D2 已生成并在 PostgreSQL 16 空库直接执行；D3 使用应用最终 Flyway 配置执行 migrate/validate。 |",
+              "README V1 status",
+          )
+          readme = replace_once(
+              readme,
+              "| `.github/workflows/openapi-check.yml` | CI 合同门禁 | 新增 | 合同或生成器变化时验证 OpenAPI 未漂移。 |",
+              """| `.github/workflows/openapi-check.yml` | CI 合同门禁 | 新增 | 合同或生成器变化时验证 OpenAPI 未漂移。 |
+          | `spec/P0_PHYSICAL_TABLE_DICTIONARY_V1.md` | 当前有效、D2 物理字典 | 新增 | 77 张逻辑表、1042 个字段、约束、外键、索引、触发器和基础数据的完整字典。 |
+          | `server/src/main/resources/db/migration/V1__baseline.sql` | 当前有效、Flyway V1 | 新增 | 新系统独立 PostgreSQL 的干净基线；不得执行到老库。 |
+          | `scripts/validate_database_baseline.py` | D2 静态校验工具 | 新增 | 校验对象清单、禁用旧结构、权限/角色种子和不可变合同。 |
+          | `.github/workflows/database-baseline-check.yml` | PostgreSQL V1 CI | 新增 | 在 PostgreSQL 16 空库执行 V1 并核对 79 个物理表对象、权限、角色、Quartz 和无默认用户。 |""",
+              "README D2 file index",
+          )
+          readme = replace_once(
+              readme,
+              "| `spec/TASKS.md` | 当前有效 | 回退并对齐 | 阶段 1 已完成；阶段 2 D1 完成、D2–D10 待实施。 |",
+              "| `spec/TASKS.md` | 当前有效 | 回退并对齐 | 阶段 1 已完成；阶段 2 D1–D2 完成，D3–D10 待实施。 |",
+              "README TASKS summary",
+          )
+          readme += """
+
+          ## 15. 2026-08-18 D2 PostgreSQL 物理基线
+
+          已生成完整物理表字典、`V1__baseline.sql`、静态校验器和 PostgreSQL 16 CI。D2 只证明 V1 可在干净 PostgreSQL 16 数据库直接执行；应用尚未加入最终 Flyway 配置，因此 D3 仍需完成 `flyway migrate/validate`、重复启动、Spring Boot 启动和健康检查。
+          """
+          readme_path.write_text(readme, encoding="utf-8")
+
+          baseline_path = Path("spec/DATABASE_MIGRATION_BASELINE.md")
+          baseline = baseline_path.read_text(encoding="utf-8")
+          baseline = replace_once(
+              baseline,
+              "当前已授权创建新的 `V1__baseline.sql`，但必须先完成 D2 物理字典和 D3 独立空库验证。",
+              "D2 已生成新的 `V1__baseline.sql` 和完整物理字典，并在 PostgreSQL 16 空库直接执行通过；D3 继续使用应用最终 Flyway 配置完成 `migrate/validate`、重复启动和 Spring Boot 健康检查。",
+              "DATABASE_MIGRATION_BASELINE D2 status",
+          )
+          baseline_path.write_text(baseline, encoding="utf-8")
+          PY
+
+      - name: Commit D2 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .d2-baseline
+          rm -f .github/workflows/d2-baseline-bootstrap-once.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status --short
+          git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
+          git push origin HEAD:main
