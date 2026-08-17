@@ -1,16 +1,19 @@
 # 阶段 1 剩余 Review 与后续实施规划
 
-> 状态：Table + FK + Unique + Status/CHECK + Delete + Snapshot 已确认；前端优先 + Phase 1 Final Review 待完成  
+> 状态：技术模型 Review 已通过；当前只剩前端 100% 对齐与 G-001 最终签字  
 > 最近更新：2026-08-17  
-> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
+> 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
+> Final Review：`spec/PHASE1_FINAL_REVIEW.md`
 
-## 1. 执行原则
+## 1. 当前状态
 
-1. 已确认业务规则不重复讨论；旧残留机械清理。
-2. 主线：Resource + Single-Institution Route + Current Task + Minimal Runtime Snapshot。
-3. 前端页面/交互仍优先；技术一致性 Review 只收 Spec。
-4. 阶段 1 最终签字前不创建 Flyway V1、不修改正式数据库。
-5. 新系统只使用独立 PostgreSQL。
+```text
+TECHNICAL_MODEL_REVIEW = PASS
+PHASE1_OVERALL = BLOCKED_BY_FRONTEND_ACCEPTANCE
+DATABASE_BACKEND_IMPLEMENTATION = NOT_AUTHORIZED
+```
+
+已确认业务规则和六项技术矩阵不再重复讨论；旧残留只做机械清理。
 
 ## 2. 已完成
 
@@ -26,6 +29,7 @@
 - [x] Status / Enum / CHECK Matrix。
 - [x] Delete Behavior Matrix。
 - [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
+- [x] `PHASE1_FINAL_REVIEW.md` 技术总验收。
 
 ## 3. 已冻结物理基线
 
@@ -35,92 +39,95 @@ Unique        → P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md
 Status/CHECK  → P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md
 Delete        → P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md
 Snapshot      → P0_SNAPSHOT_MINIMUM_SUFFICIENCY_REVIEW.md
+Final Gate    → PHASE1_FINAL_REVIEW.md
 ```
 
-### Snapshot 关键规则
+普通实现问题不得重新打开已冻结的 Table/FK/Unique/Status/Delete/Snapshot 模型。
 
-```text
-不可变定义只引用
-可变运行事实才快照
-Secret 永不快照
-```
+## 4. 当前剩余工作：Frontend 100%
 
-- Execution 新增非 Secret Source/Target Runtime Snapshot。
-- Execution 删除 `precheck_fact_snapshot`。
-- Dataset/Route/Field Contract 不复制完整定义 JSON。
-- SYNC_GATE/MANUAL_RECHECK 只使用父 Execution Context。
-- 普通独立 Validation 才保存最小 Context/Range。
-- Delete Reconciliation 只依赖 Snapshot Run FK。
-- Outbox 保留 Message Policy Snapshot + 最小 Range，不复制 Target Endpoint/Payload。
-- Checksum Protocol 仅 `ROW_COUNT_CHECKSUM` 保存。
+这是 G-001 最终签字前的唯一阶段阻塞。
 
-## 4. 最终物理一致性 Review 顺序
-
-按用户确认顺序严格一次一个：
-
-1. [x] PostgreSQL 最终表清单 + 数量。
-2. [x] 全量 FK Matrix。
-3. [x] Business / Concurrency Unique Matrix。
-4. [x] Status / Enum / CHECK Matrix。
-5. [x] Delete Behavior Matrix。
-6. [x] Execution / Validation / Outbox Snapshot 最小充分性 Review。
-7. [ ] **`PHASE1_FINAL_REVIEW.md`。**
-
-下一项只处理 Phase 1 Final Review。
-
-## 5. Phase 1 Final Review 目标
-
-Final Review 只做**总验收与阻塞项确认**，不重新设计已经冻结的六项矩阵。
-
-需要核对：
-
-```text
-1. 当前业务主模型是否只有一套且无旧模型 Current Semantics
-2. 39 + 11 = 50 表口径是否与所有字典一致
-3. FK / Unique / Status / Delete / Snapshot 五类矩阵是否互相无冲突
-4. 敏感字段/Secret 是否不存在运行快照与 Audit 泄漏
-5. 前端产品模型与当前 Spec 是否一致
-6. 是否仍存在必须在进入 Flyway/后端前解决的阻塞项
-```
-
-最终只有在 `PHASE1_FINAL_REVIEW.md` 完成并由用户明确签字后，才能进入数据库/后端实施。
-
-## 6. 前端产品完成 100%
-
-当前最高开发优先级：
+### 4.1 信息架构
 
 - [ ] Navigation 与最新模型一致。
-- [ ] Resource：Institution/Business Catalog/Source/Target/医共体标准。
+- [ ] Resource：Institution / Business Catalog / Source / Target / 医共体标准。
 - [ ] 独立 Institution Route。
 - [ ] 不出现 Business System Instance。
-- [ ] Task Current Config，不出现 Task Version。
+- [ ] Task / Precheck / Validation / Operations 分工清晰。
+- [ ] P-002 管理员账号管理入口确认并落页。
+- [ ] P-003 Help/Docs 入口确认并落页。
+
+### 4.2 页面/交互
+
+- [ ] Resource CRUD/启停/Test/引用保护。
+- [ ] Route：Dataset → Source → Schema → Object → Target。
+- [ ] Route Structure Check / Enable / OUTDATED。
+- [ ] Task Current Config UI，不出现 Task Version。
 - [ ] Validation UI 不出现旧 Policy/Override Mode/关闭/容差。
 - [ ] Precheck 与正式同步分离。
-- [ ] Watermark/Backfill/Recollect/Cancel 文案正确。
-- [ ] Alert/Log/Audit/System Settings 完整。
-- [ ] URL/lint/build/逐页原型验收。
+- [ ] Watermark / Backfill / Recollect / Cancel 文案正确。
+- [ ] Alert / Log / Audit / System Settings 完整。
 
-前端验收后再冻结 API Contract。
+### 4.3 前端验收
 
-## 7. 前端之后
+- [ ] 所有菜单真实 URL，可刷新/回退。
+- [ ] `npm run lint` 通过。
+- [ ] `npm run build` 通过。
+- [ ] 逐页核对原型、状态、空态、错误态、处理中和危险确认。
+- [ ] 页面字段与已冻结 Spec 一致。
 
-1. API Contract；
-2. Final P0 Flyway V1；
-3. Java Entity/Repository/Service；
-4. PostgreSQL/External Integration Test；
-5. SeaTunnel/Doris/Quartz/RabbitMQ；
-6. E2E；
-7. Multi-instance/Large Batch Reliability；
-8. Production Acceptance/Cutover。
+## 5. P-002 / P-003
 
-## 8. 阶段门槛
+当前推荐：
 
 ```text
-Active Spec 无冲突
-+ Table/FK/Unique/Status/Delete/Snapshot Matrix 完成
-+ Frontend Model 确认
-+ PHASE1_FINAL_REVIEW
-+ 用户明确签字
+P-002: 系统设置 → 账号管理
+P-003: 顶部右侧 Help → /docs
 ```
 
-在此之前不进入数据库/Java 实施。
+两项必须在 G-001 最终签字前确认并落到最终前端信息架构。
+
+## 6. 不阻塞当前技术模型冻结的事项
+
+- P-004 Delete Apply Safety Threshold：实现前确认；
+- P-005 First Admin Bootstrap：后端实施期确认；
+- P-006 Old/New Cutover & Watermark：上线切换期确认；
+- P-007 GraalVM Native Image：暂缓。
+
+它们不得反向新增 P0 表或恢复已经废止的模型。
+
+## 7. G-001 最终签字
+
+前端全部完成后再次核对：
+
+```text
+Frontend 与 Spec 100% 一致
++ P-002/P-003 已确认
++ PHASE1_FINAL_REVIEW 仍无新增阻塞
+```
+
+然后由用户明确确认：
+
+```text
+目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
+```
+
+只有此时才允许进入数据库/后端实施。
+
+## 8. G-001 之后的实施顺序
+
+```text
+前端确认
+→ G-001 最终签字
+→ API Contract 最终冻结
+→ Flyway V1
+→ Java Entity / Repository / Service
+→ PostgreSQL / External Integration Test
+→ SeaTunnel / Doris / Quartz / RabbitMQ
+→ E2E
+→ Multi-instance / Large Batch Reliability
+→ Production Acceptance / Cutover
+```
+
+在 G-001 之前不得提前创建 Flyway V1 或批量整改 Java 后端。
