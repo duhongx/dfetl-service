@@ -1,10 +1,11 @@
 # P0 物理表字典：机构、业务目录与数据源
 
-> 状态：阶段 1 Resource FK + Unique + Status/Enum/CHECK Matrix 已确认并收口  
+> 状态：阶段 1 Resource FK + Unique + Status/CHECK + Delete Behavior Matrix 已确认并收口  
 > 最近更新：2026-08-17  
 > 总体字典：`spec/P0_PHYSICAL_TABLE_DICTIONARY.md`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
-> Status/CHECK 基线：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
+> Status/CHECK：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
+> Delete Behavior：`spec/P0_DELETE_BEHAVIOR_MATRIX_REVIEW.md`  
 > 限制：本文不是 Flyway SQL；阶段 1 最终签字前不得创建 `V1__baseline.sql`。
 
 ## 1. 当前对象
@@ -19,15 +20,16 @@ target_datasource_fe_endpoint
 
 没有 Business System Instance 或实例—机构/数据源关联表。
 
-## 2. 通用规则
+## 2. Resource 通用规则
 
-- 稳定 `code` 创建后普通编辑不可修改。
-- Code 业务唯一按 `lower(code)`。
+- 稳定 `code` 创建后普通编辑不可修改，按 `lower(code)` 唯一。
 - 可变资源使用 `revision` 乐观锁。
-- 用户启停状态与连接测试结果保持独立。
-- 已被 Route/Task/历史引用的资源不得物理删除。
+- 用户启停状态与连接测试结果独立。
 - Password 使用加密密文，接口只返回掩码。
 - 普通 `created_by/updated_by → app_user(id) ON DELETE SET NULL`。
+- Institution/Business Catalog/Source/Target **不增加 `deleted_at`**。
+- 这四类 Resource：无任何当前/历史引用时允许物理删除；存在引用时数据库 `RESTRICT`，产品引导用户停用。
+- 删除前 Service 必须返回引用/阻塞摘要，不能通过级联删除历史来“删干净”。
 
 ## 3. `institution`
 
@@ -45,9 +47,7 @@ created_*/updated_*
 ```
 
 ```text
-status:
-ENABLED
-DISABLED
+status: ENABLED / DISABLED
 ```
 
 CHECK：
@@ -61,30 +61,21 @@ revision >= 0
 Business Unique：
 
 ```text
-UNIQUE INDEX uk_institution_code_ci
-ON institution(lower(code))
+UNIQUE INDEX uk_institution_code_ci ON institution(lower(code))
 ```
 
-不建立机构树字段。
+删除：未被 Source、External Client Institution 等对象引用时可物理删除；有引用时只能 `DISABLED`。不建立机构树字段。
 
 ## 4. `business_catalog`
 
 核心字段：`id/code/name/description/status/revision/created_*/updated_*`。
 
 ```text
-status:
-ENABLED
-DISABLED
+status: ENABLED / DISABLED
+UNIQUE INDEX uk_business_catalog_code_ci ON business_catalog(lower(code))
 ```
 
-Business Unique：
-
-```text
-UNIQUE INDEX uk_business_catalog_code_ci
-ON business_catalog(lower(code))
-```
-
-被 Source 引用后不得物理删除；可停用。
+未被 Source 引用时可物理删除；有引用时只能停用。
 
 ## 5. `source_datasource`
 
@@ -107,17 +98,10 @@ description/revision/created_*/updated_*
 枚举：
 
 ```text
-db_type:
-MYSQL / POSTGRESQL / ORACLE / SQLSERVER
-
-connection_mode:
-HOST_PORT / JDBC_URL
-
-status:
-ENABLED / DISABLED
-
-last_test_status:
-UNTESTED / SUCCESS / FAILED
+db_type: MYSQL / POSTGRESQL / ORACLE / SQLSERVER
+connection_mode: HOST_PORT / JDBC_URL
+status: ENABLED / DISABLED
+last_test_status: UNTESTED / SUCCESS / FAILED
 ```
 
 FK：
@@ -127,16 +111,11 @@ institution_id → institution(id) RESTRICT
 business_catalog_id → business_catalog(id) RESTRICT
 ```
 
-连接模式 CHECK：
+连接模式：
 
 ```text
-HOST_PORT
-→ host/port/database_name 非空
-→ jdbc_url 为空
-
-JDBC_URL
-→ jdbc_url 非空
-→ host/port/database_name 为空
+HOST_PORT → host/port/database_name 非空，jdbc_url 为空
+JDBC_URL  → jdbc_url 非空，host/port/database_name 为空
 ```
 
 基础 CHECK：
@@ -148,32 +127,22 @@ pool_max_size > 0
 revision >= 0
 ```
 
-连接测试 CHECK：
+测试状态：
 
 ```text
-UNTESTED
-→ last_tested_at IS NULL
-→ last_test_error IS NULL
-
-SUCCESS
-→ last_tested_at IS NOT NULL
-→ last_test_error IS NULL
-
-FAILED
-→ last_tested_at IS NOT NULL
-→ last_test_error IS NOT NULL
+UNTESTED → last_tested_at/error 均为空
+SUCCESS  → last_tested_at 非空，error 为空
+FAILED   → last_tested_at 非空，error 非空
 ```
 
 Business Unique / FK Support：
 
 ```text
-UNIQUE INDEX uk_source_datasource_code_ci
-ON source_datasource(lower(code))
-
+UNIQUE INDEX uk_source_datasource_code_ci ON source_datasource(lower(code))
 UNIQUE(id,institution_id)
 ```
 
-Route 只能选择当前 Institution 所属且 `ENABLED` 的 Source；`ENABLED` 不要求最近 Test 必须 SUCCESS。
+删除：从未进入 Route/Route Version/历史链且没有其他引用时可物理删除；一旦被引用只能 `DISABLED`。
 
 ## 6. `target_datasource`
 
@@ -188,11 +157,8 @@ created_*/updated_*
 ```
 
 ```text
-status:
-ENABLED / DISABLED
-
-last_test_status:
-UNTESTED / SUCCESS / PARTIAL / FAILED
+status: ENABLED / DISABLED
+last_test_status: UNTESTED / SUCCESS / PARTIAL / FAILED
 ```
 
 测试组合：
@@ -204,9 +170,7 @@ PARTIAL  → last_tested_at 非空，error 非空
 FAILED   → last_tested_at 非空，error 非空
 ```
 
-`PARTIAL` 只表示多个 FE 中部分成功；Error 保存失败 FE 的脱敏摘要。
-
-稳定 `code` 按大小写不敏感唯一；不绑定 Institution/Business Catalog/Dataset。
+稳定 `code` 大小写不敏感唯一。删除：未被 Route/Route Version/Delete Snapshot 等引用时可物理删除；有引用只能 `DISABLED`。
 
 ## 7. `target_datasource_fe_endpoint`
 
@@ -235,30 +199,24 @@ UNIQUE(target_datasource_id,host,query_port)
 UNIQUE(target_datasource_id,ordinal_no)
 ```
 
-测试状态：
+这是纯当前配置：管理员从 Target 移除 FE 时直接物理删除 Endpoint；它不承担独立历史。
 
-```text
-UNTESTED / SUCCESS / FAILED
-```
+## 8. 状态与删除独立
 
-使用与 Source 相同的 `last_tested_at/last_test_error` 组合 CHECK。
+资源启停、Test Status、Delete Eligibility 是三个不同事实：
 
-## 8. 状态独立性
+- `ENABLED` 不要求最近 Test 必须 SUCCESS。
+- `DISABLED` 不等于已删除。
+- “可删除”只由当前/历史引用情况决定。
 
-资源启停和 Test Status 不做数据库耦合：
-
-```text
-status=ENABLED + last_test_status=UNTESTED/FAILED
-```
-
-是允许的配置事实。创建 Route、执行启动等入口再按业务规则检查当前资源可用性。
+创建 Route、执行启动等入口按当前业务 Gate 检查资源状态。
 
 ## 9. 验收
 
-- 资源表固定为 5 张。
-- Source 直接且唯一归属一个 Institution + Business Catalog。
-- Source/FE 单点测试使用 `UNTESTED/SUCCESS/FAILED`。
-- Target 聚合测试额外允许 `PARTIAL`。
-- Test Status 与时间/错误字段组合由 CHECK 保证。
-- Resource Business Status 与 Test Status 保持独立。
+- Resource 表固定 5 张。
+- Source 直接属于一个 Institution + Business Catalog。
+- Resource 不增加逻辑删除字段。
+- Institution/Business Catalog/Source/Target 无引用可物理删，有引用只能停用。
+- FE Endpoint 是纯当前配置，可直接物理删除。
+- Test Status 与 Business Status 保持独立。
 - 不恢复 Business System Instance。
