@@ -1,11 +1,12 @@
 # P0 支撑对象 Review
 
-> 状态：阶段 1 FK + Unique Matrix 已确认并收口  
+> 状态：阶段 1 FK + Unique + Status/Enum/CHECK Matrix 已确认并收口  
 > 最近更新：2026-08-17  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`  
 > 目标模型：`spec/TARGET_METADATA_MODEL.md`  
 > FK 基线：`spec/P0_FOREIGN_KEY_MATRIX_REVIEW.md`  
 > Unique 基线：`spec/P0_UNIQUE_CONSTRAINT_MATRIX_REVIEW.md`  
+> Status/CHECK 基线：`spec/P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md`  
 > Quartz：`spec/QUARTZ_JOBSTORE_REVIEW.md`
 
 ## 1. 范围
@@ -13,219 +14,231 @@
 P0 支撑对象：
 
 ```text
-本地管理员账号
-Audit
-Registered System Setting
-Alert
-External API
-Quartz JDBC JobStore
+app_user
+audit_log
+system_setting
+alert_channel
+alert_rule
+alert_rule_channel
+alert_event
+alert_delivery
+external_api_client
+external_api_client_institution
+external_api_request_nonce
+external_api_request
+Quartz 官方 JobStore
 ```
 
-支撑对象不得重新定义 Resource/Route/Task/Validation 主模型；阶段 1 最终签字前不创建 Flyway V1。
+共 12 张 DFETL 支撑表；Quartz 11 张官方表单独统计。
 
-## 2. 本地管理员账号
+## 2. `app_user`
 
-P0 使用少量同权限管理员：
-
-- 允许一个或多个账号，实际通常 1～3 人。
-- 不建立 RBAC/角色/权限/机构数据权限。
-- 账号不物理删除，只启用/停用。
-- 当前登录账号不能停用自己；最后一个启用账号不能停用。
-- 停用、重置密码使既有 Refresh Token 失效。
-- 初始化 SQL 不写固定管理员密码/Hash。
-
-账号管理：列表、新增、启停、重置密码。
-
-Business Unique：
+少量同权限管理员，通常 1～3 人；不建设 RBAC。
 
 ```text
 UNIQUE INDEX uk_app_user_username_ci
 ON app_user(lower(username))
 ```
 
-Username 是稳定登录身份；不增加显示名称类唯一约束。
+- 账号不物理删除，只启用/停用。
+- 当前用户不能停用自己。
+- 最后一个启用账号不能停用。
+- 停用/重置密码使 Refresh Token 失效。
+- 初始化 SQL 不写固定管理员密码或 Hash。
 
-## 3. User FK 统一规则
+## 3. User FK
 
-普通审计字段：
-
-```text
-created_by
-updated_by
-deleted_by
-imported_by
-retired_by
-```
-
-统一：
+普通审计：
 
 ```text
+created_by/updated_by/deleted_by/imported_by/retired_by
 → app_user(id) ON DELETE SET NULL
 ```
 
-业务运行责任字段：
+运行责任：
 
 ```text
-requested_by
-requested_by_user_id
-confirmed_by
-triggered_by
-cancel_requested_by
-```
-
-统一：
-
-```text
+requested_by/requested_by_user_id/confirmed_by/triggered_by/cancel_requested_by
 → app_user(id) ON DELETE RESTRICT
 ```
 
-虽然 `app_user` 产品上不提供物理删除，但数据库仍显式区分普通审计引用和运行责任引用。
-
 ## 4. `audit_log`
 
-业务写操作同时记录 SUCCESS/FAILED。
-
-至少保存：
+枚举：
 
 ```text
-actor_type / actor identity snapshot
-source = WEB/EXTERNAL_API/SCHEDULER/SYSTEM
-operation_code
-target type/id/name snapshot
-result
-request/correlation id
-client ip
-脱敏 summary
-error_code/error_message
-occurred_at
+actor_type:
+LOCAL_USER
+EXTERNAL_CLIENT
+SCHEDULER
+SYSTEM
+
+source:
+WEB
+EXTERNAL_API
+SCHEDULER
+SYSTEM
+
+result:
+SUCCESS
+FAILED
+```
+
+Actor/Source 固定一一对应：
+
+```text
+LOCAL_USER      ↔ WEB
+EXTERNAL_CLIENT ↔ EXTERNAL_API
+SCHEDULER       ↔ SCHEDULER
+SYSTEM          ↔ SYSTEM
+```
+
+Actor FK 组合：
+
+```text
+LOCAL_USER
+→ actor_user_id 非空
+→ actor_client_id 为空
+
+EXTERNAL_CLIENT
+→ actor_client_id 非空
+→ actor_user_id 为空
+
+SCHEDULER/SYSTEM
+→ actor_user_id/actor_client_id 均为空
+```
+
+Result：
+
+```text
+SUCCESS → error_code/error_message 均为空
+FAILED  → error_code 非空
 ```
 
 FK：
 
 ```text
-actor_user_id   → app_user(id)            ON DELETE SET NULL
-actor_client_id → external_api_client(id) ON DELETE SET NULL
+actor_user_id   → app_user(id) SET NULL
+actor_client_id → external_api_client(id) SET NULL
 ```
 
-Audit 已保存 Actor Name Snapshot，因此主体引用允许为空。
-
-不记录 Password/Hash、DB/RabbitMQ Credential、API Secret、HMAC Signature、完整 Authorization Header。Audit 追加写，不提供普通 Update/Delete。
-
-`audit_log` 不设置业务 Unique；同一业务动作的多次成功/失败审计都是独立事实。
+Audit 保存 Actor Name Snapshot，追加写，不提供普通 Update/Delete；不设置业务 Unique。
 
 ## 5. `system_setting`
 
-`system_setting` 只保存应用已注册 Key。
+`setting_key` 是 PK，只允许应用注册 Key；Value 类型、默认值、范围和敏感性由 Setting Registry 定义。
 
-- `setting_key` 是 PK，也是 Business Unique。
-- 类型、默认值、范围、敏感性由统一 Setting Registry 定义。
-- `revision` 乐观锁。
-- 规范库 Password 可保存密文并掩码返回。
-- RabbitMQ、应用数据库、JWT、Encryption Master Key 等部署 Secret 不进入本表。
-- 普通 `created_by/updated_by → app_user ON DELETE SET NULL`。
-
-Validation 全局默认唯一入口：
+Validation 全局默认：
 
 ```text
 validation.default_method
+= ROW_COUNT / ROW_COUNT_CHECKSUM
+默认 ROW_COUNT
 ```
 
-允许 `ROW_COUNT/ROW_COUNT_CHECKSUM`，注册默认 `ROW_COUNT`。
-
-解析：
-
-```text
-sync_task.validation_method_override
-→ standard_dataset.validation_method_override
-→ system_setting[validation.default_method]
-→ ROW_COUNT
-→ Dataset 合同能力
-```
-
-不恢复 Validation Enabled/Tolerance/Lookback/Auto Revalidate/Fail Block/Override Mode。
+不恢复独立 Validation Policy Table、Enable/Tolerance/Lookback/Auto Revalidate 等旧配置。
 
 ## 6. Alert
 
-P0 表：
+### 6.1 Channel
 
 ```text
-alert_channel
-alert_rule
-alert_rule_channel
-alert_event
-alert_delivery
+channel_type:
+DINGTALK
+WECOM
+
+message_format:
+TEXT
+MARKDOWN
+
+last_test_status:
+UNTESTED
+SUCCESS
+FAILED
 ```
 
-Alert Channel / Rule 没有独立稳定 Code，管理端同名会产生直接歧义，因此保留：
+Channel Test 使用 Resource 单点测试相同组合：
+
+```text
+UNTESTED → last_tested_at/error 均为空
+SUCCESS  → last_tested_at 非空，error 为空
+FAILED   → last_tested_at 非空，error 非空
+```
+
+Business Unique：
 
 ```text
 UNIQUE INDEX uk_alert_channel_name_ci
 ON alert_channel(lower(name))
+```
 
+### 6.2 Rule
+
+```text
+condition_op:
+EQ / NE / GT / GTE / LT / LTE
+
+severity:
+INFO / WARNING / CRITICAL
+
+scope_type:
+ALL / TASK
+```
+
+```text
+ALL  → scope_task_id IS NULL
+TASK → scope_task_id IS NOT NULL
+```
+
+Business Unique：
+
+```text
 UNIQUE INDEX uk_alert_rule_name_ci
 ON alert_rule(lower(name))
 ```
 
-### 6.1 Rule ↔ Channel
-
-```text
-alert_rule 1 ── N alert_rule_channel N ── 1 alert_channel
-```
-
-`alert_rule_channel` 使用：
-
-```text
-rule_id    → alert_rule(id)    ON DELETE CASCADE
-channel_id → alert_channel(id) ON DELETE RESTRICT
-created_by → app_user(id)      ON DELETE SET NULL
-```
-
-Business Pair：
+### 6.3 Rule ↔ Channel
 
 ```text
 PRIMARY KEY(rule_id,channel_id)
+rule_id → alert_rule(id) CASCADE
+channel_id → alert_channel(id) RESTRICT
 ```
 
-反向索引 `(channel_id,rule_id)`。
-
-### 6.2 `alert_rule`
-
-Task Scope：
-
-```text
-scope_task_id → sync_task(id) ON DELETE RESTRICT
-```
-
-### 6.3 `alert_event`
+### 6.4 Event
 
 ```text
 UNIQUE(event_uuid)
+severity = INFO/WARNING/CRITICAL
 ```
 
-Rule 配置可删除，但 Event 保存完整 Rule Snapshot：
+`source_type` 与对应业务来源 FK 必须通过 CHECK 一一匹配；`SYSTEM` 允许全部来源 FK 为空。
+
+### 6.5 Delivery
 
 ```text
-rule_id → alert_rule(id) ON DELETE SET NULL
+status:
+PENDING
+SENDING
+SUCCEEDED
+FAILED
 ```
 
-运行来源属于历史事实，全部 RESTRICT：
-
 ```text
-task_id                → sync_task(id)
-execution_id           → sync_execution(id)
-precheck_run_id        → precheck_run(id)
-validation_run_id      → validation_run(id)
-message_outbox_id      → message_outbox(id)
-delete_snapshot_run_id → delete_snapshot_run(id)
-```
+PENDING
+→ delivered_at IS NULL
 
-为上述可空来源 FK 分别建立反向索引。
+SENDING
+→ last_attempt_at IS NOT NULL
+→ delivered_at IS NULL
 
-### 6.4 `alert_delivery`
+SUCCEEDED
+→ delivered_at IS NOT NULL
+→ last_error_code/last_error IS NULL
 
-```text
-event_id   → alert_event(id)   ON DELETE CASCADE
-channel_id → alert_channel(id) ON DELETE SET NULL
+FAILED
+→ delivered_at IS NULL
+→ last_error_code IS NOT NULL
 ```
 
 Business Unique：
@@ -234,177 +247,114 @@ Business Unique：
 UNIQUE(event_id,channel_id)
 ```
 
-Delivery 保存 Channel Name/Type Snapshot，因此历史 Channel 引用允许为空。PostgreSQL Unique 对 NULL 的语义不会阻止多个历史已删 Channel 的 Delivery 行保留。
-
-Alert 不建设确认、认领、工单、审批、逐次投递明细。
+Alert 不建设确认/认领/工单/审批/逐次投递明细。
 
 ## 7. External API
 
-P0 表：
+### 7.1 Client
 
 ```text
-external_api_client
-external_api_client_institution
-external_api_request_nonce
-external_api_request
+authorization_mode:
+ALL
+SELECTED
 ```
 
-Client 不物理删除，只启停；Secret 重置后旧值立即失效，不支持双 Secret。
-
-### 7.1 Client Identity
-
-唯一程序身份只使用：
+唯一程序身份：
 
 ```text
-UNIQUE(external_api_client.client_id)
+UNIQUE(client_id)
 ```
 
-固定规则：
+`client_name` 只是可编辑显示名称，可重复，不建立 Name Unique。
 
-```text
-client_id   = 稳定、大小写敏感、不可复用的程序身份
-client_name = 可编辑展示名称，可重复
-```
-
-**不建立 `UNIQUE(lower(client_name))`。**
-
-生产 Client、灾备 Client 或不同接入实例可以使用同一展示名称，只要 `client_id` 不同。
+Client 不物理删除，只启停；Secret Reset 后旧 Secret 立即失效，不保存双 Key。
 
 ### 7.2 Institution Scope
-
-```text
-external_api_client_institution.client_id
-→ external_api_client(id) ON DELETE RESTRICT
-
-institution_id
-→ institution(id) ON DELETE RESTRICT
-
-created_by
-→ app_user(id) ON DELETE SET NULL
-```
-
-Business Pair：
 
 ```text
 PRIMARY KEY(client_id,institution_id)
 ```
 
-反向索引 `(institution_id,client_id)`。
+`ALL/SELECTED` 与关联行数量由服务事务检查，不引入状态表。
 
 ### 7.3 Nonce
 
 ```text
-external_api_request_nonce.client_id
-→ external_api_client(id) ON DELETE RESTRICT
-```
-
-```text
 UNIQUE(client_id,nonce)
+expires_at > created_at
 ```
 
 Nonce 保留 1 小时。
 
-### 7.4 Idempotency Request
+### 7.4 `external_api_request`
 
 ```text
-external_api_request.client_id
-→ external_api_client(id) ON DELETE RESTRICT
+operation_code:
+TASK_ENSURE
+TASK_RUN
+TASK_DELETE
+MESSAGE_RETRY
+
+status:
+PROCESSING
+SUCCEEDED
+FAILED
 ```
 
-必须提供：
+Business Unique：
 
 ```text
 UNIQUE(client_id,request_id)
 ```
 
-这既承担 External API 幂等，也作为：
+状态 CHECK：
 
 ```text
-sync_execution(external_client_id,external_request_id)
-→ external_api_request(client_id,request_id)
+PROCESSING
+→ completed_at IS NULL
+
+SUCCEEDED
+→ completed_at IS NOT NULL
+→ response_body IS NOT NULL
+→ error_code/error_message IS NULL
+
+FAILED
+→ completed_at IS NOT NULL
+→ error_code IS NOT NULL
 ```
 
-的父键。
+不增加 `RECOVERING/RETRYING` 状态；超时恢复继续操作原 `PROCESSING` 行并核对真实副作用。
 
-外部写操作统一 Request ID；P0 不做应用层 Rate Limit。
+## 8. Quartz
 
-## 8. Quartz JDBC JobStore
-
-Quartz 只是当前 Task 调度配置的可重建投影。
-
-业务事实：
+Quartz 只作为当前 Task 调度配置的可重建投影。
 
 ```text
 sync_task.deleted_at IS NULL
 AND schedule_enabled=true
-AND schedule_mode<>MANUAL
+AND schedule_mode<>'MANUAL'
 AND schedule_cron 有效
 ```
 
-JobDataMap 只保存 `taskId`；Trigger 后重新读当前 Task 并创建 Execution Snapshot。
+Quartz 11 张官方 PostgreSQL 表按项目锁定版本的官方 DDL 建立，不参与 DFETL 自定义 FK/Unique/Status CHECK Review。
 
-Quartz 官方 PostgreSQL 表固定 11 张：
-
-```text
-qrtz_job_details
-qrtz_triggers
-qrtz_simple_triggers
-qrtz_cron_triggers
-qrtz_simprop_triggers
-qrtz_blob_triggers
-qrtz_calendars
-qrtz_paused_trigger_grps
-qrtz_fired_triggers
-qrtz_scheduler_state
-qrtz_locks
-```
-
-使用项目锁定 Quartz 版本官方 DDL，不自行重设计其 FK/Unique。
-
-## 9. 支撑对象清单
+## 9. 明确不建立
 
 ```text
-app_user
-audit_log
-system_setting
-
-alert_channel
-alert_rule
-alert_rule_channel
-alert_event
-alert_delivery
-
-external_api_client
-external_api_client_institution
-external_api_request_nonce
-external_api_request
-```
-
-共 12 张，计入 DFETL P0 39 张表。
-
-## 10. 明确不建立
-
-```text
-RBAC 表
-Global/Dataset/Task Validation Policy 表
-Scheduler Reconciliation 表
-External API Rate Limit/Quota 表
-Secret History/Dual Key 表
-Alert Workflow/Approval 表
+RBAC
+Global/Dataset/Task Validation Policy
+Scheduler Reconciliation
+External API Rate Limit/Quota
+Secret History/Dual Key
+Alert Workflow/Approval
 External Client Name Unique
 ```
 
-## 11. 当前状态
+## 10. 验收
 
-- [x] 支撑对象业务范围确认。
-- [x] `alert_rule_channel` 保留。
-- [x] 普通审计用户 SET NULL / 运行责任用户 RESTRICT 已确认。
-- [x] Alert/External API FK 纳入最终 FK Matrix。
-- [x] External Request `(client_id,request_id)` 同时作为 Execution 外部请求来源父键。
-- [x] Business/Concurrency Unique Matrix 已确认。
-- [x] External Client 只保证 `client_id` 唯一，`client_name` 可重复。
-- [x] Alert Channel/Rule Name 继续大小写不敏感唯一。
-- [x] Quartz 官方表固定 11 张并排除自定义 FK/Unique Review。
-- [ ] Status/Enum/CHECK Matrix。
-- [ ] Delete Behavior Matrix。
-- [ ] Phase 1 Final Review。
+- Audit Actor/Source/Result 组合无歧义。
+- Alert Channel 测试状态与时间/错误字段一致。
+- Alert Delivery 终态时间/错误组合一致。
+- External Request `PROCESSING/SUCCEEDED/FAILED` 组合严格。
+- External Client Name 不唯一，只保证 Client ID。
+- Support Object 所有状态/CHECK 与 `P0_STATUS_ENUM_CHECK_MATRIX_REVIEW.md` 一致。
