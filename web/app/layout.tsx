@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./editor.css";
 
 export const metadata: Metadata = {
   title: "DFETL 医共体数据采集平台",
