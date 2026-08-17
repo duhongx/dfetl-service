@@ -24,15 +24,9 @@ jobs:
           python scripts/a3_patch_common.py
           python scripts/a3_patch_resources.py
           python scripts/a3_patch_dataset_route.py
+          python scripts/a3_fix_generated_syntax.py
           python scripts/a3_patch_precheck_monitor.py
           python scripts/a3_patch_validation.py
-
-      - name: Upload generated source for diagnosis
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-a3-source
-          path: web/app/etl/app-shell-final.tsx
-          retention-days: 1
 
       - name: Install dependencies
         working-directory: web
@@ -50,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f scripts/a3_patch_*.py
+          rm -f scripts/a3_patch_*.py scripts/a3_fix_generated_syntax.py
           rm -f .github/workflows/a3-core-finalize-once.yml
           git add -A
           git config user.name "github-actions[bot]"
