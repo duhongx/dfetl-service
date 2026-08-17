@@ -73,7 +73,7 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     checksumProtocol: "DFETL-CHECKSUM-V1",
     sourceRuntime: { datasourceId: "S01", revision: 7, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
     targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: true, revision: 6, routingKey: "YL.HUANZHEJBXX", pageSize: 1000 },
+    messagePolicy: { enabled: true, revision: 6, routingKey: "YL_HUANZHEJBXX", pageSize: 1000 },
   },
   "EXE-260816-006": {
     taskRevision: 18,
@@ -92,7 +92,7 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     checksumProtocol: "DFETL-CHECKSUM-V1",
     sourceRuntime: { datasourceId: "S01", revision: 7, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
     targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: true, revision: 6, routingKey: "YL.HUANZHEJBXX", pageSize: 1000 },
+    messagePolicy: { enabled: true, revision: 6, routingKey: "YL_HUANZHEJBXX", pageSize: 1000 },
   },
   "EXE-260816-007": {
     taskRevision: 11,
