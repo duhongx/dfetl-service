@@ -1,6 +1,6 @@
 # Phase 1 Final Review
 
-> 状态：技术模型 Review 通过；Phase 1 总体等待前端验收与最终签字  
+> 状态：技术模型 Review 通过；P-002 已确认；Phase 1 总体等待前端验收、P-003 与最终签字  
 > 日期：2026-08-17  
 > 分支：`duhongx/dfetl-service/main`  
 > 业务基线：`spec/PRODUCT_AND_BUSINESS_DECISIONS.md`
@@ -126,19 +126,15 @@ Secret 永不快照
 business_system_instance
 business_system_instance_institution
 business_system_instance_datasource
-
 collection_route_institution
 collection_route_version_institution
-
 sync_task_version
 sync_task.current_version_id
 task_version_id
-
 global_validation_policy
 dataset_validation_policy
 task_validation_policy
 override_mode
-
 Task-level Message Policy
 Redis Stream P0 通道
 Standard Task CUSTOM_SQL
@@ -165,6 +161,7 @@ Institution Route Pages
 Task Current Config UI
 Precheck / Validation / Operations
 Alert / Log / Audit / System Settings
+账号管理实际落页
 所有菜单真实 URL
 lint / build
 逐页原型、状态、空态、错误态、危险确认
@@ -192,7 +189,7 @@ G-001 = PENDING_FINAL_SIGNOFF
 目标元数据模型 Review 通过，允许进入数据库/后端实施阶段。
 ```
 
-只有完成前端产品模型 100% 对齐并收口当前产品入口决策后，用户再次明确确认该签字语句，才能：
+只有完成前端产品模型 100% 对齐并收口剩余产品入口决策后，用户再次明确确认该签字语句，才能：
 
 ```text
 PHASE1_OVERALL = PASS
@@ -207,19 +204,23 @@ DATABASE_BACKEND_IMPLEMENTATION = AUTHORIZED
 
 ## 7. 当前必须在最终签字前收口的产品事项
 
-### P-002：管理员账号管理前端入口
+### P-002：管理员账号管理前端入口——已确认
 
-当前推荐：
+最终入口固定：
 
 ```text
 系统设置 → 账号管理
 ```
 
-能力固定为：列表、新增、启停、重置密码；不建设 RBAC。
+页面能力固定为：列表、新增、启停、重置密码；不建设 RBAC。
 
-### P-003：使用文档/帮助入口
+个人中心只维护当前账号自身资料和修改密码，不替代系统级账号管理页面。
 
-当前推荐：
+P-002 的产品决策已经完成；账号管理页面仍须在前端 100% 验收中实际落页。
+
+### P-003：使用文档/帮助入口——待确认
+
+当前建议：
 
 ```text
 顶部右侧 Help → /docs
@@ -227,7 +228,7 @@ DATABASE_BACKEND_IMPLEMENTATION = AUTHORIZED
 
 不占用核心业务左侧导航。
 
-P-002/P-003 属于当前前端产品模型收口项，必须在 G-001 最终签字前确认并落到页面。
+因此当前产品决策层面只剩 P-003 未收口。
 
 ## 8. 不阻塞当前技术模型冻结的 Pending Decisions
 
@@ -245,8 +246,8 @@ P-002/P-003 属于当前前端产品模型收口项，必须在 G-001 最终签�
 当前唯一正确推进顺序：
 
 ```text
-完成前端页面/导航/交互/文案 100%
-→ 收口 P-002 / P-003
+确认 P-003 Help/Docs 入口
+→ 完成前端页面/导航/交互/文案 100%
 → 核对 Frontend 与已冻结 Spec 一致
 → 执行 G-001 最终签字
 → 才允许冻结 API Contract / Flyway V1 / Java 后端实施
@@ -254,4 +255,4 @@ P-002/P-003 属于当前前端产品模型收口项，必须在 G-001 最终签�
 
 ## 10. Final Review 结论
 
-> 阶段 1 的目标元数据/物理模型技术 Review 已经通过，不再继续新增表/FK/Unique/Status/Delete/Snapshot 设计问题；但 Phase 1 总体尚未最终签字，因为前端产品模型与 Spec 的 100% 对齐尚未完成。当前仍不得创建 Flyway V1 或推进 Java 后端实施。待前端完成并收口 P-002/P-003 后，再执行 G-001 最终签字。
+> 阶段 1 的目标元数据/物理模型技术 Review 已经通过，不再继续新增表/FK/Unique/Status/Delete/Snapshot 设计问题。P-002 已确认采用“系统设置 → 账号管理”；但 Phase 1 总体尚未最终签字，因为前端产品模型与 Spec 的 100% 对齐尚未完成，且 P-003 仍待确认。当前仍不得创建 Flyway V1 或推进 Java 后端实施。待 P-003 与前端完成后，再执行 G-001 最终签字。
