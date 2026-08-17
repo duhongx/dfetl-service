@@ -17,23 +17,88 @@ export type ExecutionSnapshotView = {
     datasourceId: string;
     revision: number;
     dbType: string;
-    endpoint: string;
+    connectionMode: "HOST_PORT" | "JDBC_URL";
+    host: string;
+    port: number | null;
     database: string;
+    jdbcUrl: string | null;
     username: string;
+    sslEnabled: boolean;
+    readOnly: boolean;
+    queryTimeoutSeconds: number;
+    connectTimeoutSeconds: number;
+    socketTimeoutSeconds: number;
   };
   targetRuntime: {
     datasourceId: string;
     revision: number;
     database: string;
     username: string;
-    feEndpoints: string[];
+    feEndpoints: Array<{ host: string; queryPort: number; httpPort: number; ordinalNo: number }>;
   };
   messagePolicy: {
     enabled: boolean;
     revision: number;
+    sourceSystem: string;
+    tenantId: string;
     routingKey: string;
+    topic: string;
+    keyTemplate: string;
+    rateLimitPerSecond: number;
     pageSize: number;
   };
+};
+
+const sourceRuntime = (revision: number): ExecutionSnapshotView["sourceRuntime"] => ({
+  datasourceId: "S01",
+  revision,
+  dbType: "POSTGRESQL",
+  connectionMode: "HOST_PORT",
+  host: "192.168.1.154",
+  port: 5432,
+  database: "df_his",
+  jdbcUrl: null,
+  username: "df_reader",
+  sslEnabled: false,
+  readOnly: true,
+  queryTimeoutSeconds: 60,
+  connectTimeoutSeconds: 10,
+  socketTimeoutSeconds: 60,
+});
+
+const targetRuntime: ExecutionSnapshotView["targetRuntime"] = {
+  datasourceId: "T01",
+  revision: 4,
+  database: "df_ygt",
+  username: "df_load",
+  feEndpoints: [
+    { host: "192.168.1.41", queryPort: 9030, httpPort: 8030, ordinalNo: 1 },
+    { host: "192.168.1.42", queryPort: 9030, httpPort: 8030, ordinalNo: 2 },
+  ],
+};
+
+const disabledMessagePolicy: ExecutionSnapshotView["messagePolicy"] = {
+  enabled: false,
+  revision: 3,
+  sourceSystem: "DFETL",
+  tenantId: "YL",
+  routingKey: "",
+  topic: "",
+  keyTemplate: "${institutionCode}:${businessKey}",
+  rateLimitPerSecond: 1000,
+  pageSize: 1000,
+};
+
+const patientMessagePolicy: ExecutionSnapshotView["messagePolicy"] = {
+  enabled: true,
+  revision: 6,
+  sourceSystem: "DFETL",
+  tenantId: "YL",
+  routingKey: "YL_HUANZHEJBXX",
+  topic: "ODS_YL_HUANZHEJBXX",
+  keyTemplate: "${institutionCode}:${businessKey}",
+  rateLimitPerSecond: 1000,
+  pageSize: 1000,
 };
 
 export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
@@ -52,9 +117,9 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     validationMethod: "ROW_COUNT",
     validationSource: "TASK",
     checksumProtocol: null,
-    sourceRuntime: { datasourceId: "S01", revision: 8, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
-    targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: false, revision: 3, routingKey: "", pageSize: 1000 },
+    sourceRuntime: sourceRuntime(8),
+    targetRuntime,
+    messagePolicy: disabledMessagePolicy,
   },
   "EXE-260817-002": {
     taskRevision: 19,
@@ -71,9 +136,9 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     validationMethod: "ROW_COUNT_CHECKSUM",
     validationSource: "DATASET",
     checksumProtocol: "DFETL-CHECKSUM-V1",
-    sourceRuntime: { datasourceId: "S01", revision: 7, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
-    targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: true, revision: 6, routingKey: "YL_HUANZHEJBXX", pageSize: 1000 },
+    sourceRuntime: sourceRuntime(7),
+    targetRuntime,
+    messagePolicy: patientMessagePolicy,
   },
   "EXE-260816-006": {
     taskRevision: 18,
@@ -90,9 +155,9 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     validationMethod: "ROW_COUNT_CHECKSUM",
     validationSource: "DATASET",
     checksumProtocol: "DFETL-CHECKSUM-V1",
-    sourceRuntime: { datasourceId: "S01", revision: 7, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
-    targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: true, revision: 6, routingKey: "YL_HUANZHEJBXX", pageSize: 1000 },
+    sourceRuntime: sourceRuntime(7),
+    targetRuntime,
+    messagePolicy: patientMessagePolicy,
   },
   "EXE-260816-007": {
     taskRevision: 11,
@@ -109,8 +174,8 @@ export const executionSnapshotSeed: Record<string, ExecutionSnapshotView> = {
     validationMethod: "ROW_COUNT",
     validationSource: "TASK",
     checksumProtocol: null,
-    sourceRuntime: { datasourceId: "S01", revision: 7, dbType: "POSTGRESQL", endpoint: "192.168.1.154:5432", database: "df_his", username: "df_reader" },
-    targetRuntime: { datasourceId: "T01", revision: 4, database: "df_ygt", username: "df_load", feEndpoints: ["192.168.1.41:9030", "192.168.1.42:9030"] },
-    messagePolicy: { enabled: false, revision: 3, routingKey: "", pageSize: 1000 },
+    sourceRuntime: sourceRuntime(7),
+    targetRuntime,
+    messagePolicy: disabledMessagePolicy,
   },
 };
