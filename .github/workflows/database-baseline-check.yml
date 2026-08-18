@@ -1,0 +1,199 @@
+name: PostgreSQL V1 baseline check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/src/main/resources/db/migration/**"
+      - "spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md"
+      - "scripts/generate_postgresql_v1_dictionary.py"
+      - "scripts/validate_postgresql_v1.py"
+      - ".github/workflows/database-baseline-check.yml"
+  pull_request:
+    paths:
+      - "server/src/main/resources/db/migration/**"
+      - "spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md"
+      - "scripts/generate_postgresql_v1_dictionary.py"
+      - "scripts/validate_postgresql_v1.py"
+      - ".github/workflows/database-baseline-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-v1:
+    name: PostgreSQL ${{ matrix.postgresql }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgresql: ["14", "16"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgresql }}
+        env:
+          POSTGRES_DB: dfetl_v1_check
+          POSTGRES_USER: dfetl
+          POSTGRES_PASSWORD: dfetl-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dfetl -d dfetl_v1_check"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: dfetl_v1_check
+      PGUSER: dfetl
+      PGPASSWORD: dfetl-ci-only
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Static schema and dictionary validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/validate_postgresql_v1.py server/src/main/resources/db/migration/V1__baseline.sql
+          python scripts/generate_postgresql_v1_dictionary.py --check
+
+      - name: Execute V1 on PostgreSQL ${{ matrix.postgresql }} empty database
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f server/src/main/resources/db/migration/V1__baseline.sql
+
+      - name: Validate catalog invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(psql -Atc "select count(*) from pg_tables where schemaname='df_etl'")" = "79"
+          test "$(psql -Atc "select count(*) from pg_tables where schemaname='df_etl' and tablename like 'qrtz_%'")" = "11"
+          test "$(psql -Atc "select count(*) from df_etl.security_permission")" = "106"
+          test "$(psql -Atc "select count(*) from df_etl.security_role")" = "4"
+          test "$(psql -Atc "select count(*) from df_etl.field_conversion_rule")" = "8"
+          test "$(psql -Atc "select count(*) from df_etl.user_account")" = "0"
+          test "$(psql -Atc "select count(*) from pg_constraint where connamespace='df_etl'::regnamespace and not convalidated")" = "0"
+          test "$(psql -Atc "select count(*) from pg_tables where schemaname='public'")" = "0"
+          test "$(psql -Atc "select count(*) from pg_proc where pronamespace='df_etl'::regnamespace")" = "5"
+          test "$(psql -Atc "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where not t.tgisinternal and n.nspname='df_etl'")" = "18"
+          test "$(psql -Atc "select count(*) from pg_trigger where not tgisinternal and tgname in ('trg_sync_task_version_dataset_contract','trg_delete_apply_requires_successful_dry_run','trg_operation_audit_append_only','trg_external_api_request_log_append_only')")" = "4"
+          test "$(psql -Atc "select count(*) from pg_constraint where connamespace='df_etl'::regnamespace and conname in ('fk_route_field_resolution_route_dataset','fk_sync_task_version_task_institution','fk_sync_task_version_route_institution','fk_delete_apply_dry_run','fk_doris_scope_replace_partition','fk_external_api_request_identity')")" = "6"
+          test "$(psql -Atc "select count(*) from pg_indexes where schemaname='df_etl' and indexname in ('idx_operation_audit_id','uq_external_client_secret_active')")" = "2"
+
+      - name: Validate deferred current-version transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          INSERT INTO df_etl.user_account(username, display_name, password_hash)
+          VALUES ('ci-bootstrap', 'CI Bootstrap', '{noop}not-a-production-password')
+          RETURNING id AS bootstrap_user_id \gset
+
+          SELECT id AS conversion_contract_id
+            FROM df_etl.field_conversion_contract
+           WHERE contract_version = 'MEDICAL_V1' \gset
+
+          INSERT INTO df_etl.dataset_definition_sync_run(
+              id, registry_config_revision, status, requested_by, started_at, finished_at
+          ) VALUES (
+              '00000000-0000-0000-0000-000000000001', 0, 'SUCCEEDED',
+              :bootstrap_user_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          );
+
+          INSERT INTO df_etl.standard_dataset(
+              external_dataset_id, dataset_code, name, last_sync_result, created_by
+          ) VALUES (
+              'CI-DS-1', 'CI_DS_1', 'CI Dataset', 'CREATED', :bootstrap_user_id
+          ) RETURNING id AS dataset_id \gset
+
+          INSERT INTO df_etl.standard_dataset_version(
+              dataset_id, version_no, definition_hash, conversion_contract_id,
+              institution_code_field_code, field_count, business_key_count,
+              source_sync_run_id, imported_by
+          ) VALUES (
+              :dataset_id, 1, 'ci-definition-hash', :conversion_contract_id,
+              'JIGOUBM', 1, 0,
+              '00000000-0000-0000-0000-000000000001', :bootstrap_user_id
+          ) RETURNING id AS dataset_version_id \gset
+
+          UPDATE df_etl.standard_dataset
+             SET current_version_id = :dataset_version_id
+           WHERE id = :dataset_id;
+          COMMIT;
+
+          SELECT 1 / CASE WHEN count(*) = 1 THEN 1 ELSE 0 END
+            FROM df_etl.standard_dataset
+           WHERE id = :dataset_id
+             AND current_version_id = :dataset_version_id;
+          SQL
+
+      - name: Validate signed state and secret constraints
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+              BEGIN
+                  INSERT INTO df_etl.export_job(
+                      id, export_type, subject_type, subject_id, format, status,
+                      requested_by, idempotency_key, request_hash,
+                      permission_code_snapshot, object_storage_config_revision
+                  ) VALUES (
+                      '00000000-0000-0000-0000-000000000010',
+                      'AUDIT', 'AUDIT', 'CI', 'CSV', 'RUNNING',
+                      (SELECT id FROM df_etl.user_account WHERE username_normalized = 'ci-bootstrap'),
+                      'ci-running-forbidden', 'hash', 'audit.export', 0
+                  );
+                  RAISE EXCEPTION 'RUNNING export status was unexpectedly accepted';
+              EXCEPTION WHEN check_violation THEN
+                  NULL;
+              END;
+          END;
+          $$;
+
+          INSERT INTO df_etl.export_job(
+              id, export_type, subject_type, subject_id, format, status,
+              requested_by, idempotency_key, request_hash,
+              permission_code_snapshot, object_storage_config_revision
+          ) VALUES (
+              '00000000-0000-0000-0000-000000000011',
+              'AUDIT', 'AUDIT', 'CI', 'CSV', 'GENERATING',
+              (SELECT id FROM df_etl.user_account WHERE username_normalized = 'ci-bootstrap'),
+              'ci-generating-valid', 'hash', 'audit.export', 0
+          );
+
+          INSERT INTO df_etl.external_client(
+              client_id, display_name, authorization_mode
+          ) VALUES ('ci-client', 'CI Client', 'ALL')
+          RETURNING id AS external_client_id \gset
+
+          INSERT INTO df_etl.external_client_secret(
+              id, external_client_id, secret_version, secret_hash
+          ) VALUES (
+              '00000000-0000-0000-0000-000000000020',
+              :external_client_id, 1, '{noop}ci-secret-1'
+          );
+
+          DO $$
+          BEGIN
+              BEGIN
+                  INSERT INTO df_etl.external_client_secret(
+                      id, external_client_id, secret_version, secret_hash
+                  ) VALUES (
+                      '00000000-0000-0000-0000-000000000021',
+                      (SELECT id FROM df_etl.external_client WHERE client_id_normalized = 'ci-client'),
+                      2, '{noop}ci-secret-2'
+                  );
+                  RAISE EXCEPTION 'second active external client secret was unexpectedly accepted';
+              EXCEPTION WHEN unique_violation THEN
+                  NULL;
+              END;
+          END;
+          $$;
+          SQL
