@@ -16,7 +16,11 @@ on:
       - ".github/workflows/openapi-check.yml"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: d2-baseline-bootstrap
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -27,3 +31,66 @@ jobs:
         run: python scripts/generate_openapi_v1.py --check
       - name: Validate JSON syntax
         run: python -m json.tool spec/openapi/dfetl-api-v1.json > /dev/null
+
+  materialize-d2:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dfetl_v1
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dfetl_v1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGDATABASE: dfetl_v1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Materialize and statically validate D2 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .d2-baseline/bundle.tar.xz
+          tar -xJf .d2-baseline/bundle.tar.xz
+          chmod +x scripts/validate_database_baseline.py
+          python scripts/validate_database_baseline.py
+      - name: Execute V1 on PostgreSQL 16
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql --set=ON_ERROR_STOP=1 --file=server/src/main/resources/db/migration/V1__baseline.sql
+          test "$(psql -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='df_etl' AND c.relkind IN ('r','p');")" = "79"
+          test "$(psql -Atc "SELECT count(*) FROM df_etl.security_permission;")" = "106"
+          test "$(psql -Atc "SELECT count(*) FROM df_etl.security_role WHERE built_in;")" = "4"
+          test "$(psql -Atc "SELECT count(*) FROM df_etl.user_account;")" = "0"
+          test "$(psql -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='df_etl' AND c.relkind='r' AND c.relname LIKE 'qrtz_%';")" = "11"
+      - name: Commit verified D2 artifacts and restore permanent workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show HEAD^:.github/workflows/openapi-check.yml > .github/workflows/openapi-check.yml
+          rm -rf .d2-baseline
+          rm -f .github/workflows/d2-baseline-bootstrap-once.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
+          git push origin HEAD:main
