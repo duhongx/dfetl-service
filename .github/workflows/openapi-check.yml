@@ -108,3 +108,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
           git push origin HEAD:main
+
+# Triggered for explicit D2 repository materialization on 2026-08-18.
