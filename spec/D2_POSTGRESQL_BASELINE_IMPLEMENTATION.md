@@ -1,11 +1,12 @@
 # D2 PostgreSQL 物理字典与 V1 实施记录
 
-> 状态：`GENERATED_NOT_MIGRATED`
+> 状态：`GENERATED_AND_POSTGRESQL16_VALIDATED_NOT_FLYWAY_MIGRATED`
 > 日期：2026-08-18
 > 签字基线：`938566a6659fbf445e00f472ba932fe446d1d886`
 > OpenAPI 基线：`8b7db4610508d9381c5fe4510757f058c5917b44`
+> D2 文件提交：`d60c731792a222eb94460c407770956a8a07d4e6`
 
-## 1. 已生成
+## 1. 已生成并提交
 
 - `spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md`
 - `server/src/main/resources/db/migration/V1__baseline.sql`
@@ -29,7 +30,7 @@
 
 ## 3. 当前验证
 
-已完成本地确定性字典生成和静态约束检查：
+已完成确定性字典生成和静态约束检查：
 
 ```text
 331 条 SQL 语句可完整切分
@@ -48,7 +49,17 @@ Export Job 状态与 OpenAPI 统一使用 GENERATING
 V1 不含管理员密码和环境 Secret
 ```
 
-PostgreSQL 真实执行由 `database-baseline-check.yml` 在 PostgreSQL 14 和 16 两个隔离空库中完成。该工作流成功前，D2 不能标记 `VERIFIED`，D3 也不能标记完成。
+GitHub Actions 运行 `32087198444` 已在隔离的 PostgreSQL 16.15 空库中使用 `psql -v ON_ERROR_STOP=1` 完整执行 V1，并核对通过：
+
+```text
+79 张实际表（含 2 张 Default Partition）
+106 个权限
+4 个内置角色
+0 个默认账号
+11 张 Quartz 表
+```
+
+这证明 V1 可以在 PostgreSQL 16 空库直接执行，但尚不等同于 Flyway `migrate/validate` 和 Spring Boot 启动验证。永久 CI `database-baseline-check.yml` 同时覆盖 PostgreSQL 14 和 16；D3 完成前，端到端数据库状态仍不能标记为 `VERIFIED`。
 
 ## 4. 下一阶段
 
