@@ -101,18 +101,16 @@ jobs:
           test "$(psql -Atc "SELECT count(*) FROM df_etl.security_role WHERE built_in;")" = "4"
           test "$(psql -Atc "SELECT count(*) FROM df_etl.user_account;")" = "0"
           test "$(psql -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='df_etl' AND c.relkind='r' AND c.relname LIKE 'qrtz_%';")" = "11"
-      - name: Commit verified D2 artifacts and restore permanent workflows
+      - name: Commit verified non-workflow D2 artifacts
         shell: bash
         run: |
           set -euo pipefail
-          git show 8b7db4610508d9381c5fe4510757f058c5917b44:.github/workflows/openapi-check.yml > .github/workflows/openapi-check.yml
-          rm -rf .d2-upload .d2-baseline
-          rm -f .github/workflows/d2-baseline-bootstrap-once.yml
-          rm -f .github/workflows/materialize-d2-files-once.yml
-          git add -A
+          rm -rf .d2-upload .d2-baseline scripts/__pycache__
+          rm -f .github/workflows/database-baseline-check.yml
+          git add -A -- ':!.github/workflows/**'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
           git push origin HEAD:main
 
-# Corrected D2 heading assertions, 2026-08-18.
+# Artifact-only D2 commit; workflow cleanup is performed separately.
