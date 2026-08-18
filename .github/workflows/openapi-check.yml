@@ -85,7 +85,7 @@ jobs:
           python scripts/validate_postgresql_v1.py server/src/main/resources/db/migration/V1__baseline.sql
           python scripts/generate_postgresql_v1_dictionary.py --check
           test "$(wc -l < server/src/main/resources/db/migration/V1__baseline.sql)" -ge 2600
-          grep -F '# P0 PostgreSQL 物理表字典' spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md
+          grep -F '# DFETL PostgreSQL V1 物理表字典' spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md
           grep -F '# D2 PostgreSQL 物理字典与 V1 实施记录' spec/D2_POSTGRESQL_BASELINE_IMPLEMENTATION.md
       - name: Execute V1 on PostgreSQL 16
         shell: bash
@@ -109,11 +109,10 @@ jobs:
           rm -rf .d2-upload .d2-baseline
           rm -f .github/workflows/d2-baseline-bootstrap-once.yml
           rm -f .github/workflows/materialize-d2-files-once.yml
-          rm -f .github/workflows/materialize-d2-files-once.yml
           git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
           git push origin HEAD:main
 
-# Verified D2 upload trigger, 2026-08-18.
+# Corrected D2 heading assertions, 2026-08-18.
