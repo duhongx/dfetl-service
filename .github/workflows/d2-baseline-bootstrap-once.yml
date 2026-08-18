@@ -79,4 +79,4 @@ jobs:
           git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
           git push origin HEAD:main
 
-# Triggered after phase-1 sign-off on 2026-08-18.
+# Retriggered after explicit user request on 2026-08-18.
