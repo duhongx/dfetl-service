@@ -69,19 +69,24 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d "{\"state\":\"pending\",\"context\":\"d2-baseline-bootstrap\",\"description\":\"run ${GITHUB_RUN_ID}\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
+            -d "{\"state\":\"pending\",\"context\":\"d2-baseline-materialize\",\"description\":\"run ${GITHUB_RUN_ID}\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-      - name: Materialize and statically validate D2 artifacts
+      - name: Reconstruct and statically validate D2 artifacts
         shell: bash
         run: |
           set -euo pipefail
-          test -f .d2-baseline/bundle.tar.xz
-          tar -xJf .d2-baseline/bundle.tar.xz
-          chmod +x scripts/validate_database_baseline.py
-          python scripts/validate_database_baseline.py
+          cat .d2-upload/part* | tr -d '\n\r' | base64 -d > /tmp/d2-baseline.tar.xz
+          echo "c1bc5f7d5c125ebd41af655b0f35a397758d84f0426eb0fabd4ca66a9b7ff9f4  /tmp/d2-baseline.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/d2-baseline.tar.xz
+          chmod +x scripts/validate_postgresql_v1.py scripts/generate_postgresql_v1_dictionary.py
+          python scripts/validate_postgresql_v1.py server/src/main/resources/db/migration/V1__baseline.sql
+          python scripts/generate_postgresql_v1_dictionary.py --check
+          test "$(wc -l < server/src/main/resources/db/migration/V1__baseline.sql)" -ge 2600
+          grep -F '# P0 PostgreSQL 物理表字典' spec/P0_POSTGRESQL_PHYSICAL_TABLE_DICTIONARY.md
+          grep -F '# D2 PostgreSQL 物理字典与 V1 实施记录' spec/D2_POSTGRESQL_BASELINE_IMPLEMENTATION.md
       - name: Execute V1 on PostgreSQL 16
         shell: bash
         run: |
@@ -100,13 +105,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git show HEAD^:.github/workflows/openapi-check.yml > .github/workflows/openapi-check.yml
-          rm -rf .d2-baseline
+          git show 8b7db4610508d9381c5fe4510757f058c5917b44:.github/workflows/openapi-check.yml > .github/workflows/openapi-check.yml
+          rm -rf .d2-upload .d2-baseline
           rm -f .github/workflows/d2-baseline-bootstrap-once.yml
+          rm -f .github/workflows/materialize-d2-files-once.yml
+          rm -f .github/workflows/materialize-d2-files-once.yml
           git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(db): add PostgreSQL V1 baseline and physical dictionary"
           git push origin HEAD:main
 
-# Triggered for explicit D2 repository materialization on 2026-08-18.
+# Verified D2 upload trigger, 2026-08-18.
